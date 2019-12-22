@@ -68,6 +68,99 @@ public:
 #define BTLE_ADVDATA_FLAG_SIMUL_BREDR_CONTROLLER    (1 << 3)
 #define BTLE_ADVDATA_FLAG_SIMUL_BREDR_HOST          (1 << 4)
 
+/*
+ * Implements Bluetooth Vol 6, Part B, Section 3.1.1 (ref Figure 3.2)
+ *
+ * At entry: tvb is entire BTLE packet without preamble
+ *           payload_len is the Length field from the BTLE PDU header
+ *           crc_init as defined in the specifications
+ *
+ * This implementation operates on nibbles and is therefore
+ * endian-neutral.
+ *
+ * Taken from the Wireshark implementation
+ */
+uint32_t kis_btle_phy::calc_btle_crc(uint32_t crc_init, uint8_t *payload, size_t len) {
+    static const uint16_t btle_crc_next_state_flips[256] = {
+        0x0000, 0x32d8, 0x196c, 0x2bb4, 0x0cb6, 0x3e6e, 0x15da, 0x2702,
+        0x065b, 0x3483, 0x1f37, 0x2def, 0x0aed, 0x3835, 0x1381, 0x2159,
+        0x065b, 0x3483, 0x1f37, 0x2def, 0x0aed, 0x3835, 0x1381, 0x2159,
+        0x0000, 0x32d8, 0x196c, 0x2bb4, 0x0cb6, 0x3e6e, 0x15da, 0x2702,
+        0x0cb6, 0x3e6e, 0x15da, 0x2702, 0x0000, 0x32d8, 0x196c, 0x2bb4,
+        0x0aed, 0x3835, 0x1381, 0x2159, 0x065b, 0x3483, 0x1f37, 0x2def,
+        0x0aed, 0x3835, 0x1381, 0x2159, 0x065b, 0x3483, 0x1f37, 0x2def,
+        0x0cb6, 0x3e6e, 0x15da, 0x2702, 0x0000, 0x32d8, 0x196c, 0x2bb4,
+        0x196c, 0x2bb4, 0x0000, 0x32d8, 0x15da, 0x2702, 0x0cb6, 0x3e6e,
+        0x1f37, 0x2def, 0x065b, 0x3483, 0x1381, 0x2159, 0x0aed, 0x3835,
+        0x1f37, 0x2def, 0x065b, 0x3483, 0x1381, 0x2159, 0x0aed, 0x3835,
+        0x196c, 0x2bb4, 0x0000, 0x32d8, 0x15da, 0x2702, 0x0cb6, 0x3e6e,
+        0x15da, 0x2702, 0x0cb6, 0x3e6e, 0x196c, 0x2bb4, 0x0000, 0x32d8,
+        0x1381, 0x2159, 0x0aed, 0x3835, 0x1f37, 0x2def, 0x065b, 0x3483,
+        0x1381, 0x2159, 0x0aed, 0x3835, 0x1f37, 0x2def, 0x065b, 0x3483,
+        0x15da, 0x2702, 0x0cb6, 0x3e6e, 0x196c, 0x2bb4, 0x0000, 0x32d8,
+        0x32d8, 0x0000, 0x2bb4, 0x196c, 0x3e6e, 0x0cb6, 0x2702, 0x15da,
+        0x3483, 0x065b, 0x2def, 0x1f37, 0x3835, 0x0aed, 0x2159, 0x1381,
+        0x3483, 0x065b, 0x2def, 0x1f37, 0x3835, 0x0aed, 0x2159, 0x1381,
+        0x32d8, 0x0000, 0x2bb4, 0x196c, 0x3e6e, 0x0cb6, 0x2702, 0x15da,
+        0x3e6e, 0x0cb6, 0x2702, 0x15da, 0x32d8, 0x0000, 0x2bb4, 0x196c,
+        0x3835, 0x0aed, 0x2159, 0x1381, 0x3483, 0x065b, 0x2def, 0x1f37,
+        0x3835, 0x0aed, 0x2159, 0x1381, 0x3483, 0x065b, 0x2def, 0x1f37,
+        0x3e6e, 0x0cb6, 0x2702, 0x15da, 0x32d8, 0x0000, 0x2bb4, 0x196c,
+        0x2bb4, 0x196c, 0x32d8, 0x0000, 0x2702, 0x15da, 0x3e6e, 0x0cb6,
+        0x2def, 0x1f37, 0x3483, 0x065b, 0x2159, 0x1381, 0x3835, 0x0aed,
+        0x2def, 0x1f37, 0x3483, 0x065b, 0x2159, 0x1381, 0x3835, 0x0aed,
+        0x2bb4, 0x196c, 0x32d8, 0x0000, 0x2702, 0x15da, 0x3e6e, 0x0cb6,
+        0x2702, 0x15da, 0x3e6e, 0x0cb6, 0x2bb4, 0x196c, 0x32d8, 0x0000,
+        0x2159, 0x1381, 0x3835, 0x0aed, 0x2def, 0x1f37, 0x3483, 0x065b,
+        0x2159, 0x1381, 0x3835, 0x0aed, 0x2def, 0x1f37, 0x3483, 0x065b,
+        0x2702, 0x15da, 0x3e6e, 0x0cb6, 0x2bb4, 0x196c, 0x32d8, 0x0000
+    };
+
+    uint8_t offset = 4;
+    uint32_t state = crc_init;
+
+    for (size_t pos = offset; pos < len; pos++) {
+        uint8_t byte = payload[pos];
+        uint8_t nibble = (byte & 0xF);
+        uint8_t byte_index = ((state >> 16) & 0xF0) | nibble;
+
+        state = ((state << 4) ^ btle_crc_next_state_flips[byte_index]) & 0xFFFFFF;
+        nibble = ((byte >> 4) & 0xF);
+        byte_index = ((state >> 16) & 0xF0) | nibble;
+        state = ((state << 4) ^ btle_crc_next_state_flips[byte_index]) & 0xFFFFFF;
+    }
+
+    return state;
+}
+
+/*
+ * Reverses the bits in each byte of a 32-bit word.
+ *
+ * Needed because CRCs are transmitted in bit-reversed order compared
+ * to the rest of the BTLE packet.  See BT spec, Vol 6, Part B,
+ * Section 1.2.
+ *
+ * Taken from the Wireshark implementation
+ */
+uint32_t kis_btle_phy::reverse_bits(const uint32_t val) {
+    const uint8_t nibble_rev[16] = {
+        0x0, 0x8, 0x4, 0xc, 0x2, 0xa, 0x6, 0xe,
+        0x1, 0x9, 0x5, 0xd, 0x3, 0xb, 0x7, 0xf
+    };
+
+    uint32_t retval = 0;
+    unsigned byte_index;
+    for (byte_index=0; byte_index<4; byte_index++) {
+        uint32_t shiftA = byte_index*8;
+        uint32_t shiftB = shiftA+4;
+
+        retval |= (nibble_rev[((val >> shiftA) & 0xf)] << shiftB);
+        retval |= (nibble_rev[((val >> shiftB) & 0xf)] << shiftA);
+    }
+
+    return retval;
+}
+
 
 kis_btle_phy::kis_btle_phy(global_registry *in_globalreg, int in_phyid) :
     kis_phy_handler(in_globalreg, in_phyid) {
@@ -93,6 +186,17 @@ kis_btle_phy::kis_btle_phy(global_registry *in_globalreg, int in_phyid) :
         entrytracker->register_field("btle.device",
                 tracker_element_factory<btle_tracked_device>(),
                 "BTLE device");
+
+    btle_uuid_id = 
+        entrytracker->register_field("btle.common.uuid_vendor",
+                tracker_element_factory<tracker_element_string>(),
+                "UUID vendor");
+
+    ignore_random =
+        Globalreg::globalreg->kismet_config->fetch_opt_bool("btle_ignore_random", false);
+
+    if (ignore_random)
+        _MSG_INFO("Ignoring BTLE devices with random MAC addresses");
 
     // Register js module for UI
     auto httpregistry = Globalreg::fetch_mandatory_global_as<kis_httpd_registry>();
@@ -120,10 +224,35 @@ int kis_btle_phy::dissector(CHAINCALL_PARMS) {
     if (packdata == NULL || (packdata != NULL && packdata->dlt != KDLT_BLUETOOTH_LE_LL))
         return 0;
 
+    // If this packet hasn't been checksummed already at the capture layer, 
+    // do a checksum now.  We assume the last 3 bytes are the checksum.
+    if (!in_pack->crc_ok) {
+        // We need at least the AA, header, and CRC bytes
+        if (packdata->length < (4 + 2 + 3)) {
+            in_pack->error = 1;
+            return 0;
+        }
+
+        uint32_t line_crc;
+        line_crc = 
+            packdata->data[packdata->length - 3] << 16 |
+            packdata->data[packdata->length - 2] << 8 |
+            packdata->data[packdata->length - 1];
+
+        // Get the CRC as if it was a broadcast; we'll redo this later if we get
+        // data packets
+        uint32_t packet_crc = calc_btle_crc(0x555555, packdata->data, 
+                packdata->length - 3);
+
+        if (reverse_bits(packet_crc) != line_crc) {
+            in_pack->error = 1;
+            return 0;
+        }
+    }
+
     membuf btle_membuf((char *) packdata->data, (char *) &packdata->data[packdata->length]);
     std::istream btle_istream(&btle_membuf);
-    auto btle_stream = 
-        std::make_shared<kaitai::kstream>(&btle_istream);
+    auto btle_stream = std::make_shared<kaitai::kstream>(&btle_istream);
 
     common = new kis_common_info();
     common->phyid = mphy->fetch_phy_id();
@@ -166,6 +295,10 @@ int kis_btle_phy::common_classifier(CHAINCALL_PARMS) {
         return 0;
 
     if (btle_info->btle_decode == nullptr)
+        return 0;
+
+    // Drop randoms 
+    if (btle_info->btle_decode->is_txaddr_random() && mphy->ignore_random)
         return 0;
 
     // Update with all the options in case we can add signal and frequency

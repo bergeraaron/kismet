@@ -14,11 +14,7 @@
 
 #include "../capture_framework.h"
 
-volatile int STOP=FALSE;
-
 #define CRTSCTS  020000000000 /*should be defined but isn't with the C99*/
-
-#define CHECK_BIT(var,pos) ((var) & (1<<(pos)))
 
 /* Unique instance data passed around by capframework */
 typedef struct {
@@ -34,9 +30,6 @@ typedef struct {
     char *name;
     char *interface;
 
-    /* flag to let use know when we are ready to capture */
-    bool ready;
-
     kis_capture_handler_t *caph;
 } local_nxp_t;
 
@@ -50,29 +43,18 @@ int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len)
     uint8_t buf[255];
     uint8_t res = 0;
     local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
-    pthread_mutex_lock(&(localnxp->serial_mutex));
-
-    printf("write:");
-    for(int xp=0;xp<tx_len;xp++)
-	    printf("%02X",tx_buf[xp]);
-    printf("\n");
 
     write(localnxp->fd,tx_buf,tx_len);
     res = read(localnxp->fd,buf,255);
 
-    printf("read(%d):",res);
-    for(int px=0;px<res;px++)
-	    printf("%02X",buf[px]);
-    printf("\n");
-
-    pthread_mutex_unlock(&(localnxp->serial_mutex));
     return 1;
 }
 
 int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan)
 {
     local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
-    localnxp->ready = false;
+    pthread_mutex_lock(&(localnxp->serial_mutex));
+
     //multi step to get us ready
     uint8_t cmd_1[6] = {0x02,0x52,0x00,0x00,0x00,0x52};
     nxp_write_cmd(caph,cmd_1,6);
@@ -95,16 +77,22 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan)
     uint8_t cmd_5[7] = {0x02,0x4E,0x00,0x01,0x00,0x01,0x4E};
     nxp_write_cmd(caph,cmd_5,7);
 
-    localnxp->ready = true;
+    pthread_mutex_unlock(&(localnxp->serial_mutex));
     return 1;
 }
 
 int nxp_exit_promisc_mode(kis_capture_handler_t *caph)
 {
     local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
+
+    pthread_mutex_lock(&(localnxp->serial_mutex));
+
     uint8_t cmd[7] = {0x02,0x4E,0x00,0x01,0x00,0x00,0x4F};
+
     nxp_write_cmd(caph,cmd,7);
-    localnxp->ready = false;
+
+    pthread_mutex_unlock(&(localnxp->serial_mutex));
+    
     return 1;
 }
 
@@ -119,14 +107,11 @@ int nxp_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_t rx_
     
     local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
     int res = 0;
-
-    while(1) {
-        pthread_mutex_lock(&(localnxp->serial_mutex));
-	    res = read(localnxp->fd,rx_buf,rx_max);
-        pthread_mutex_unlock(&(localnxp->serial_mutex));
-	    if(res > 0)
-		    break;
-    }
+    
+    pthread_mutex_lock(&(localnxp->serial_mutex));
+    res = read(localnxp->fd,rx_buf,rx_max);
+    pthread_mutex_unlock(&(localnxp->serial_mutex));
+    
     return res;
 }
 
@@ -261,7 +246,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     }
 
     (*ret_interface)->channels_len = 3;
-
+    
     pthread_mutex_lock(&(localnxp->serial_mutex));
     /* open for r/w but no tty */
     localnxp->fd = open(device, O_RDWR | O_NOCTTY);
@@ -291,8 +276,6 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     tcsetattr(localnxp->fd, TCSANOW, &localnxp->newtio);
 
     pthread_mutex_unlock(&(localnxp->serial_mutex));
-
-    nxp_enter_promisc_mode(caph,37);
 
     return 1;
 }
@@ -355,17 +338,19 @@ void capture_thread(kis_capture_handler_t *caph) {
             pthread_mutex_unlock(&(localnxp->serial_mutex));
             break;
 	    }
-        if(localnxp->ready)
-        {
-            buf_rx_len = nxp_receive_payload(caph, buf, 256);
+           
+	    buf_rx_len = nxp_receive_payload(caph, buf, 256);
             if (buf_rx_len < 0) {
                 cf_send_error(caph, 0, errstr);
                 cf_handler_spindown(caph);
                 break;
             }
 
+            /* a stray reply from changing channels */
+            if (buf_rx_len <= 10)
+                continue;
+
             //send the packet along
-            if(buf_rx_len > 0)
             while (1) {
                 struct timeval tv;
 
@@ -385,7 +370,6 @@ void capture_thread(kis_capture_handler_t *caph) {
                     break;
                 }
             }
-        }
     }
     cf_handler_spindown(caph);
 }
@@ -397,6 +381,8 @@ int main(int argc, char *argv[]) {
         .interface = NULL,
         .fd = -1,
     };
+
+    pthread_mutex_init(&(localnxp.serial_mutex), NULL);
 
     kis_capture_handler_t *caph = cf_handler_init("nxp_kw41z");
 
