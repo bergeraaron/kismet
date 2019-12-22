@@ -45,7 +45,7 @@ typedef struct {
     unsigned int channel;
 } local_channel_t;
 
-int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len, bool resp)
+int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,bool resp, uint8_t *rx_buf, size_t rx_max)
 {
     uint8_t buf[255];
     uint16_t ctr = 0;
@@ -53,48 +53,53 @@ int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len, b
     local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
     pthread_mutex_lock(&(localnxp->serial_mutex));
 
-    printf("write(%d):",tx_len);
-    for(int xp=0;xp<tx_len;xp++)
-	    printf("%02X",tx_buf[xp]);
-    printf("\n");
+    if(tx_len > 0) {
+    //we are transmitting something
+        printf("write(%d):",tx_len);
+        for(int xp=0;xp<tx_len;xp++)
+                printf("%02X",tx_buf[xp]);
+        printf("\n");
 
-    write(localnxp->fd,tx_buf,tx_len);
-    if(resp) {
-	while(ctr < 5000) {
-	    res = read(localnxp->fd,buf,255);
-	    if(res > 0) {
-                printf("read(%d):",res);
-                for(int px=0;px<res;px++)
-                    printf("%02X",buf[px]);
-                printf("\n");
-                break;
-	    }
-	    ctr++;
-	}
+        write(localnxp->fd,tx_buf,tx_len);
+        if(resp) {
+            while(ctr < 5000) {
+                res = read(localnxp->fd,buf,255);
+                if(res > 0) {
+                    printf("read(%d):",res);
+                    for(int px=0;px<res;px++)
+                        printf("%02X",buf[px]);
+                    printf("\n");
+                    break;
+                }
+                ctr++;
+            }
+        }
     }
-
+    else if(rx_max > 0) {
+	//printf("read\n");
+        res = read(localnxp->fd,rx_buf,rx_max);
+    }
     pthread_mutex_unlock(&(localnxp->serial_mutex));
-    return 1;
+    return res;
 }
 
 int nxp_reset(kis_capture_handler_t *caph)
 {
     local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
     uint8_t cmd_1[6] = {0x02,0xA3,0x08,0x00,0x00,0xAB};
-    nxp_write_cmd(caph,cmd_1,6,false);
+    nxp_write_cmd(caph,cmd_1,6,false,NULL,0);
     return 1;
 }
 
 int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan)
 {
     local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
-    //localnxp->ready = false;
     //multi step to get us ready
     uint8_t cmd_1[6] = {0x02,0x52,0x00,0x00,0x00,0x52};
-    nxp_write_cmd(caph,cmd_1,6,true);
+    nxp_write_cmd(caph,cmd_1,6,true,NULL,0);
 
     uint8_t cmd_2[7] = {0x02,0x4E,0x00,0x01,0x00,0x00,0x4F};
-    nxp_write_cmd(caph,cmd_2,7,true);
+    nxp_write_cmd(caph,cmd_2,7,true,NULL,0);
 
     //chan 37
     uint8_t cmd_3[7] = {0x02,0x4E,0x02,0x01,0x00,0x01,0x4C};
@@ -103,15 +108,14 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan)
     if(chan == 39) {
     cmd_3[5] = 0x04; cmd_3[6] = 0x49;}
     
-    nxp_write_cmd(caph,cmd_3,7,true);
+    nxp_write_cmd(caph,cmd_3,7,true,NULL,0);
 
     uint8_t cmd_4[7] = {0x02,0x4E,0x01,0x01,0x00,0x00,0x4E};
-    nxp_write_cmd(caph,cmd_4,7,true);
+    nxp_write_cmd(caph,cmd_4,7,true,NULL,0);
 
     uint8_t cmd_5[7] = {0x02,0x4E,0x00,0x01,0x00,0x01,0x4E};
-    nxp_write_cmd(caph,cmd_5,7,true);
+    nxp_write_cmd(caph,cmd_5,7,true,NULL,0);
 
-    //localnxp->ready = true;
     return 1;
 }
 
@@ -119,30 +123,38 @@ int nxp_exit_promisc_mode(kis_capture_handler_t *caph)
 {
     local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
     uint8_t cmd[7] = {0x02,0x4E,0x00,0x01,0x00,0x00,0x4F};
-    nxp_write_cmd(caph,cmd,7,true);
-    //localnxp->ready = false;
+    nxp_write_cmd(caph,cmd,7,true,NULL,0);
     return 1;
 }
 
 int nxp_set_channel(kis_capture_handler_t *caph, uint8_t channel)
 {
-    nxp_exit_promisc_mode(caph);
-    nxp_enter_promisc_mode(caph,channel);
+    //nxp_exit_promisc_mode(caph);
+    //nxp_enter_promisc_mode(caph,channel);
+
+    //chan 37
+    uint8_t cmd_3[7] = {0x02,0x4E,0x02,0x01,0x00,0x01,0x4C};
+    if (channel == 38) {
+    cmd_3[5] = 0x02; cmd_3[6] = 0x4F;}
+    if(channel == 39) {
+    cmd_3[5] = 0x04; cmd_3[6] = 0x49;}
+
+    nxp_write_cmd(caph,cmd_3,7,true,NULL,0);
+
+    uint8_t cmd_4[7] = {0x02,0x4E,0x01,0x01,0x00,0x00,0x4E};
+    nxp_write_cmd(caph,cmd_4,7,true,NULL,0);
+
+    uint8_t cmd_5[7] = {0x02,0x4E,0x00,0x01,0x00,0x01,0x4E};
+    nxp_write_cmd(caph,cmd_5,7,true,NULL,0);
+
+
     return 1;
 }
 
 int nxp_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_t rx_max) {
     
-    local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
-    int res = 0;
+    int res = nxp_write_cmd(caph,NULL,0,false,rx_buf,rx_max);
 
-    while(1) {
-        pthread_mutex_lock(&(localnxp->serial_mutex));
-	    res = read(localnxp->fd,rx_buf,rx_max);
-        pthread_mutex_unlock(&(localnxp->serial_mutex));
-	    if(res > 0)
-		    break;
-    }
     return res;
 }
 
