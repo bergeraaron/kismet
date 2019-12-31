@@ -41,28 +41,57 @@ typedef struct {
     unsigned int channel;
 } local_channel_t;
 
-int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len, bool resp, uint8_t *rx_buf, size_t rx_max)
+int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len, uint8_t *resp, size_t resp_len, uint8_t *rx_buf, size_t rx_max)
 {
     uint8_t buf[255];
     uint16_t ctr = 0;
     uint8_t res = 0;
+    bool found = false;
     local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
     pthread_mutex_lock(&(localnxp->serial_mutex));
 
     if(tx_len > 0) {
-        // we are transmitting something
+
+     // we are transmitting something
+/*
+printf("write:");
+for(int xp=0;xp<tx_len;xp++)
+{
+	printf("%02X",tx_buf[xp]);
+}
+printf("\n");
+*/
         write(localnxp->fd,tx_buf,tx_len);
-        if(resp) {
+        if(resp_len > 0) {
 	    // looking for a response
             while(ctr < 5000) {
+		    usleep(10);
                 res = read(localnxp->fd,buf,255);
-		// currently if we get something back that is fine and continue
+/*
+if(res>0)
+{
+printf("read:");
+for(int xp=0;xp<res;xp++)
+{
+        printf("%02X",buf[xp]);
+}
+printf("\n");
+}
+*/
+                // currently if we get something back that is fine and continue
 		// if needed we can look for a specific response
+                if(memcmp(buf,resp,resp_len) == 0)
+	        {
+		    found = true;
+		    break; 
+		}
                 if(res > 0) {
                     break;
                 }
                 ctr++;
             }
+            if(!found)
+            return -1;// we fell through
         }
     }
     else if(rx_max > 0) {
@@ -75,7 +104,7 @@ int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len, b
 int nxp_reset(kis_capture_handler_t *caph)
 {
     uint8_t cmd_1[6] = {0x02,0xA3,0x08,0x00,0x00,0xAB};
-    nxp_write_cmd(caph,cmd_1,6,false,NULL,0);
+    nxp_write_cmd(caph,cmd_1,6,NULL,0,NULL,0);
     return 1;
 }
 
@@ -84,28 +113,90 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan)
     // first byte is header, last byte is checksum
     // checksum is basic xor of other bits
     // for these we can jsut used precomputed packets
+    printf("chan:%d\n",chan);
+    if(chan < 30)
+    {
+        // zigbee
 
-    // multi step to get us ready
-    uint8_t cmd_1[6] = {0x02,0x52,0x00,0x00,0x00,0x52};
-    nxp_write_cmd(caph,cmd_1,6,true,NULL,0);
+	uint8_t cmd_1[14] = {0x02,0x85,0x09,0x08,0x00,0x52,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xD6};
+	uint8_t rep_1[8] = {0x02,0x84,0x0D,0x02,0x00,0x00,0x52,0xD9};
+        nxp_write_cmd(caph,cmd_1,14,rep_1,8,NULL,0);
 
-    uint8_t cmd_2[7] = {0x02,0x4E,0x00,0x01,0x00,0x00,0x4F};
-    nxp_write_cmd(caph,cmd_2,7,true,NULL,0);
+	uint8_t cmd_2[14] = {0x02,0x85,0x09,0x08,0x00,0x21,0x0B,0x00,0x00,0x00,0x00,0x00,0x00,0xAE};
+	uint8_t rep_2[8] = {0x02,0x84,0x0D,0x02,0x00,0x00,0x21,0xAA};
+	// channel
+	cmd_2[6] = chan;
+	if(chan == 12)
+            cmd_2[13] = 0xA9;
+	else if(chan == 13)
+            cmd_2[13] = 0xA8;
+	else if(chan == 14)
+            cmd_2[13] = 0xAB;
+	else if(chan == 15)
+            cmd_2[13] = 0xAA;
+	else if(chan == 16)
+            cmd_2[13] = 0xB5;
+	else if(chan == 17)
+            cmd_2[13] = 0xB4;
+	else if(chan == 18)
+            cmd_2[13] = 0xB7;
+	else if(chan == 19)
+            cmd_2[13] = 0xB6;
+	else if(chan == 20)
+            cmd_2[13] = 0xB1;
+	else if(chan == 21)
+            cmd_2[13] = 0xB0;
+	else if(chan == 22)
+            cmd_2[13] = 0xB3;
+	else if(chan == 23)
+            cmd_2[13] = 0xB2;
+	else if(chan == 24)
+            cmd_2[13] = 0xBD;
+	else if(chan == 25)
+            cmd_2[13] = 0xBC;
+	else if(chan == 26)
+            cmd_2[13] = 0xBF;
 
-    // chan 37 by default
-    uint8_t cmd_3[7] = {0x02,0x4E,0x02,0x01,0x00,0x01,0x4C};
-    if (chan == 38) {
-    cmd_3[5] = 0x02; cmd_3[6] = 0x4F;}
-    if(chan == 39) {
-    cmd_3[5] = 0x04; cmd_3[6] = 0x49;}
-    
-    nxp_write_cmd(caph,cmd_3,7,true,NULL,0);
+	nxp_write_cmd(caph,cmd_2,14,rep_2,8,NULL,0);
 
-    uint8_t cmd_4[7] = {0x02,0x4E,0x01,0x01,0x00,0x00,0x4E};
-    nxp_write_cmd(caph,cmd_4,7,true,NULL,0);
+        uint8_t cmd_3[14] = {0x02,0x85,0x09,0x08,0x00,0x51,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xD4};
+	uint8_t rep_3[8] = {0x02,0x84,0x0D,0x02,0x00,0x00,0x51,0xDA};
+	nxp_write_cmd(caph,cmd_3,14,rep_3,8,NULL,0);
 
-    uint8_t cmd_5[7] = {0x02,0x4E,0x00,0x01,0x00,0x01,0x4E};
-    nxp_write_cmd(caph,cmd_5,7,true,NULL,0);
+	uint8_t cmd_4[14] = {0x02,0x85,0x09,0x08,0x00,0x52,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xD7};
+	uint8_t rep_4[8] = {0x02,0x84,0x0D,0x02,0x00,0x00,0x52,0xD9};
+	nxp_write_cmd(caph,cmd_4,14,rep_4,8,NULL,0);
+
+    }
+    else
+    {
+        // bluetooth
+        uint8_t cmd_1[6] = {0x02,0x52,0x00,0x00,0x00,0x52};
+        uint8_t rep_1[6] = {0x02,0x52,0x02,0x00,0x00,0x50};
+        nxp_write_cmd(caph,cmd_1,6,rep_1,6,NULL,0);
+
+        uint8_t cmd_2[7] = {0x02,0x4E,0x00,0x01,0x00,0x00,0x4F};
+	uint8_t rep_2[7] = {0x02,0x4E,0x80,0x01,0x00,0x00,0xCF};
+        nxp_write_cmd(caph,cmd_2,7,rep_2,7,NULL,0);
+
+        // chan 37 by default
+        uint8_t cmd_3[7] = {0x02,0x4E,0x02,0x01,0x00,0x01,0x4C};
+	uint8_t rep_3[7] = {0x02,0x4E,0x01,0x01,0x00,0x00,0x4E};
+        if (chan == 38) {
+        cmd_3[5] = 0x02; cmd_3[6] = 0x4F;}
+        if(chan == 39) {
+        cmd_3[5] = 0x04; cmd_3[6] = 0x49;}
+
+        nxp_write_cmd(caph,cmd_3,7,NULL,0,NULL,0);
+
+        uint8_t cmd_4[7] = {0x02,0x4E,0x01,0x01,0x00,0x00,0x4E};
+	uint8_t rep_4[7] = {0x02,0x4E,0x80,0x01,0x00,0x00,0xCF};
+        nxp_write_cmd(caph,cmd_4,7,rep_4,7,NULL,0);
+
+        uint8_t cmd_5[7] = {0x02,0x4E,0x00,0x01,0x00,0x01,0x4E};
+	//uint8_t rep_5[7] = {0x02,0x4E,0x80,0x01,0x00,0x00,0xCF};
+        nxp_write_cmd(caph,cmd_5,7,NULL,0,NULL,0);
+    }
 
     return 1;
 }
@@ -113,7 +204,8 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan)
 int nxp_exit_promisc_mode(kis_capture_handler_t *caph)
 {
     uint8_t cmd[7] = {0x02,0x4E,0x00,0x01,0x00,0x00,0x4F};
-    nxp_write_cmd(caph,cmd,7,true,NULL,0);
+    uint8_t rep[7] = {0x02,0x4E,0x80,0x01,0x00,0x00,0xCF};
+    nxp_write_cmd(caph,cmd,7,rep,7,NULL,0);
     return 1;
 }
 
@@ -127,7 +219,7 @@ int nxp_set_channel(kis_capture_handler_t *caph, uint8_t channel)
 
 int nxp_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_t rx_max) {
     
-    int res = nxp_write_cmd(caph,NULL,0,false,rx_buf,rx_max);
+    int res = nxp_write_cmd(caph,NULL,0,NULL,0,rx_buf,rx_max);
 
     return res;
 }
@@ -186,16 +278,22 @@ int probe_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition
     (*ret_interface)->capif = strdup(cap_if);
     (*ret_interface)->hardware = strdup("nxp_kw41z");
 
-    /* NXP KW41Z supports 37-39 for ble */
-    (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 3);
-    for (int i = 37; i < 40; i++) {
-        char chstr[4];
+    /* NXP KW41Z supports 11-26 for zigbee and 37-39 for ble */
+    char chstr[4];
+    int ctr=0;
+    (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 19);
+    for (int i = 11; i < 27; i++) {
         snprintf(chstr, 4, "%d", i);
-        (*ret_interface)->channels[i - 37] = strdup(chstr);
+        (*ret_interface)->channels[ctr] = strdup(chstr);
+	ctr++;
     }
-
-    (*ret_interface)->channels_len = 3;
-
+    for (int i = 37; i < 40; i++) {
+        snprintf(chstr, 4, "%d", i);
+        (*ret_interface)->channels[ctr] = strdup(chstr);
+	ctr++;
+    }
+    (*ret_interface)->channels_len = 19;
+    
     return 1;
 }
 
@@ -254,15 +352,21 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     (*ret_interface)->capif = strdup(cap_if);
     (*ret_interface)->hardware = strdup("nxp_kw41z");
 
-    /* NXP KW41Z supports 37-39 for ble */
-    (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 3);
-    for (int i = 37; i < 40; i++) {
-        char chstr[4];
+    /* NXP KW41Z supports 11-26 for zigbee and 37-39 for ble */
+    (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 19);
+    char chstr[4];
+    int ctr=0;
+    for (int i = 11; i < 27; i++) {
         snprintf(chstr, 4, "%d", i);
-        (*ret_interface)->channels[i - 37] = strdup(chstr);
+        (*ret_interface)->channels[ctr] = strdup(chstr);
+	ctr++;
     }
-
-    (*ret_interface)->channels_len = 3;
+    for (int i = 37; i < 40; i++) {
+        snprintf(chstr, 4, "%d", i);
+        (*ret_interface)->channels[ctr] = strdup(chstr);
+	ctr++;
+    }
+    (*ret_interface)->channels_len = 19;
 
     pthread_mutex_lock(&(localnxp->serial_mutex));
     /* open for r/w but no tty */
@@ -294,9 +398,9 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
 
     pthread_mutex_unlock(&(localnxp->serial_mutex));
     
-    nxp_reset(caph);
-
-    nxp_enter_promisc_mode(caph,37);
+//    nxp_reset(caph);
+    nxp_exit_promisc_mode(caph);
+    nxp_enter_promisc_mode(caph,11);
 
     return 1;
 }
@@ -307,15 +411,16 @@ void *chantranslate_callback(kis_capture_handler_t *caph, char *chanstr) {
     char errstr[STATUS_MAX];
 
     if (sscanf(chanstr, "%u", &parsechan) != 1) {
-        snprintf(errstr, STATUS_MAX, "1 unable to parse requested channel '%s'; ticc2540 channels "
-                "are from 37 to 39", chanstr);
+        snprintf(errstr, STATUS_MAX, "1 unable to parse requested channel '%s'; nxp kw41z channels "
+                "are from 11 to 26 and 37 to 39", chanstr);
         cf_send_message(caph, errstr, MSGFLAG_INFO);
         return NULL;
     }
 
-    if (parsechan > 39 || parsechan < 37) {
-        snprintf(errstr, STATUS_MAX, "2 unable to parse requested channel '%u'; ticc2540 channels "
-                "are from 37 to 39", parsechan);
+    //if (parsechan > 39 || parsechan < 37) {
+    if (parsechan > 39 || parsechan < 11) {
+        snprintf(errstr, STATUS_MAX, "2 unable to parse requested channel '%u'; nxp kw41z channels "
+                "are from 11 to 26 and 37 to 39", parsechan);
         cf_send_message(caph, errstr, MSGFLAG_INFO);
         return NULL;
     }
@@ -410,7 +515,7 @@ int main(int argc, char *argv[]) {
     localnxp.caph = caph;
 
     /* Limit channel hop rate since it requires multiple usb commands */
-    caph->max_channel_hop_rate = 30;// 30 seconds
+    // caph->max_channel_hop_rate = 30;// 30 seconds
 
     /* Set the local data ptr */
     cf_handler_set_userdata(caph, &localnxp);
