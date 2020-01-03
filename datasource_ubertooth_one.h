@@ -16,38 +16,38 @@
     Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
-#ifndef __DATASOURCE_TI_CC2531_H__
-#define __DATASOURCE_TI_CC2531_H__
+#ifndef __DATASOURCE_UBERTOOTH_ONE_H__
+#define __DATASOURCE_UBERTOOTH_ONE_H__
 
 #include "config.h"
 
-#define HAVE_TI_CC2531_DATASOURCE
+#define HAVE_DATASOURCE_UBERTOOTH_ONE
 
 #include "kis_datasource.h"
 #include "dlttracker.h"
 
-class kis_datasource_ticc2531;
-typedef std::shared_ptr<kis_datasource_ticc2531> shared_datasource_ticc2531;
+class kis_datasource_ubertooth_one;
+typedef std::shared_ptr<kis_datasource_ubertooth_one> shared_datasource_ubertooth_one;
 
-#ifndef KDLT_IEEE802_15_4_TAP
-#define KDLT_IEEE802_15_4_TAP             283 
+#ifndef KDLT_BLUETOOTH_LE_LL
+#define KDLT_BLUETOOTH_LE_LL        251
 #endif
 
-#ifndef KDLT_IEEE802_15_4_NOFCS
-#define KDLT_IEEE802_15_4_NOFCS           230
+#ifndef KDLT_BTLE_RADIO
+#define KDLT_BTLE_RADIO             256
 #endif
 
-class kis_datasource_ticc2531 : public kis_datasource {
+class kis_datasource_ubertooth_one : public kis_datasource {
 public:
-    kis_datasource_ticc2531(shared_datasource_builder in_builder,
+    kis_datasource_ubertooth_one(shared_datasource_builder in_builder,
             std::shared_ptr<kis_recursive_timed_mutex> mutex) :
         kis_datasource(in_builder, mutex) {
 
         // Set the capture binary
-        set_int_source_ipc_binary("kismet_cap_ti_cc_2531");
+        set_int_source_ipc_binary("kismet_cap_ubertooth_one");
 
-	//set_int_source_dlt(KDLT_IEEE802_15_4_NOFCS);
-        set_int_source_dlt(KDLT_IEEE802_15_4_TAP);
+        // We synthesize BTLE_LL_RADIO headers
+        set_int_source_dlt(KDLT_BTLE_RADIO);
 
         pack_comp_decap =
             packetchain->register_packet_component("DECAP");
@@ -55,7 +55,7 @@ public:
             packetchain->register_packet_component("RADIODATA");
     }
 
-    virtual ~kis_datasource_ticc2531() { };
+    virtual ~kis_datasource_ubertooth_one() { };
 
 protected:
     virtual void handle_rx_packet(kis_packet *packet) override;
@@ -64,9 +64,9 @@ protected:
 };
 
 
-class datasource_ticc2531_builder : public kis_datasource_builder {
+class datasource_ubertooth_one_builder : public kis_datasource_builder {
 public:
-    datasource_ticc2531_builder(int in_id) :
+    datasource_ubertooth_one_builder(int in_id) :
         kis_datasource_builder(in_id) {
 
         register_fields();
@@ -74,7 +74,7 @@ public:
         initialize();
     }
 
-    datasource_ticc2531_builder(int in_id, std::shared_ptr<tracker_element_map> e) :
+    datasource_ubertooth_one_builder(int in_id, std::shared_ptr<tracker_element_map> e) :
         kis_datasource_builder(in_id, e) {
 
         register_fields();
@@ -82,7 +82,7 @@ public:
         initialize();
     }
 
-    datasource_ticc2531_builder() :
+    datasource_ubertooth_one_builder() :
         kis_datasource_builder() {
 
         register_fields();
@@ -90,18 +90,18 @@ public:
         initialize();
     }
 
-    virtual ~datasource_ticc2531_builder() { }
+    virtual ~datasource_ubertooth_one_builder() { }
 
     virtual shared_datasource build_datasource(shared_datasource_builder in_sh_this,
             std::shared_ptr<kis_recursive_timed_mutex> mutex) override {
-        return shared_datasource_ticc2531(new kis_datasource_ticc2531(in_sh_this, mutex));
+        return shared_datasource_ubertooth_one(new kis_datasource_ubertooth_one(in_sh_this, mutex));
     }
 
     virtual void initialize() override {
         // Set up our basic parameters for the linux wifi driver
         
-        set_source_type("ticc2531");
-        set_source_description("TI CC2531 with sniffer firmware");
+        set_source_type("ubertooth");
+        set_source_description("Ubertooth One Bluetooth Sniffer");
 
         set_probe_capable(true);
         set_list_capable(true);
@@ -109,6 +109,7 @@ public:
         set_remote_capable(true);
         set_passive_capable(false);
         set_tune_capable(true);
+        set_hop_capable(false);
     }
 };
 

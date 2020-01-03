@@ -17,7 +17,7 @@
 */
 
 #ifndef __DATASOURCE_NXP_KW41Z_H__
-#define __DATASOURCE_NXP_KW41z_H__
+#define __DATASOURCE_NXP_KW41Z_H__
 
 #include "config.h"
 
@@ -37,6 +37,14 @@ typedef std::shared_ptr<kis_datasource_nxpkw41z> shared_datasource_nxpkw41z;
 
 #ifndef KDLT_BTLE_RADIO
 #define KDLT_BTLE_RADIO             256
+#endif
+
+#ifndef KDLT_IEEE802_15_4_TAP
+#define KDLT_IEEE802_15_4_TAP       283 
+#endif
+
+#ifndef KDLT_IEEE802_15_4_NOFCS
+#define KDLT_IEEE802_15_4_NOFCS     230
 #endif
 
 class kis_datasource_nxpkw41z : public kis_datasource {
@@ -111,6 +119,7 @@ public:
         set_remote_capable(true);
         set_passive_capable(false);
         set_tune_capable(true);
+        set_hop_capable(true);
     }
 };
 

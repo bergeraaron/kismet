@@ -73,10 +73,8 @@
 #include "datasource_freaklabs_zigbee.h"
 #include "datasource_nrf_mousejack.h"
 #include "datasource_ti_cc_2540.h"
-#include "datasource_ti_cc_2531.h"
 #include "datasource_nrf_51822.h"
-#include "datasource_nrf_52840.h"
-#include "datasource_rz_killerbee.h"
+#include "datasource_ubertooth_one.h"
 #include "datasource_nxp_kw41z.h"
 
 #include "logtracker.h"
@@ -315,7 +313,7 @@ int usage(char *argv) {
            "     --no-line-wrap           Turn of linewrapping of output\n"
            "                              (for grep, speed, etc)\n"
            " -s, --silent                 Turn off stdout output after setup phase\n"
-           "     --daemonize              Spawn detatched in the background\n"
+           "     --daemonize              Spawn detached in the background\n"
            "     --no-plugins             Do not load plugins\n"
            "     --homedir <path>         Use an alternate path as the home \n"
            "                               directory instead of the user entry\n"
@@ -890,10 +888,8 @@ int main(int argc, char *argv[], char *envp[]) {
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_freaklabs_zigbee_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_nrf_mousejack_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_ticc2540_builder()));
-    datasourcetracker->register_datasource(shared_datasource_builder(new datasource_ticc2531_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_nrf51822_builder()));
-    datasourcetracker->register_datasource(shared_datasource_builder(new datasource_nrf52840_builder()));
-    datasourcetracker->register_datasource(shared_datasource_builder(new datasource_rzkillerbee_builder()));
+    datasourcetracker->register_datasource(shared_datasource_builder(new datasource_ubertooth_one_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_nxpkw41z_builder()));
 
     // Create the database logger as a global because it's a special case

@@ -566,7 +566,11 @@ void cf_handler_assign_hop_channels(kis_capture_handler_t *caph, char **stringch
     caph->channel_hop_list = stringchans;
     caph->custom_channel_hop_list = privchans;
     caph->channel_hop_list_sz = chan_sz;
-    caph->channel_hop_rate = rate;
+
+    if (caph->max_channel_hop_rate != 0 && rate < caph->max_channel_hop_rate)
+        caph->channel_hop_rate = caph->max_channel_hop_rate;
+    else
+        caph->channel_hop_rate = rate;
 
     caph->channel_hop_shuffle = shuffle;
     caph->channel_hop_shuffle_spacing = shuffle_spacing;
@@ -938,7 +942,7 @@ void *cf_int_capture_thread(void *arg) {
 
 /* Launch a capture thread after opening has been successful */
 int cf_handler_launch_capture_thread(kis_capture_handler_t *caph) {
-    /* Set the thread attributes - detatched, cancelable */
+    /* Set the thread attributes - detached, cancelable */
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
@@ -1176,7 +1180,7 @@ void *cf_int_chanhop_thread(void *arg) {
 }
 
 int cf_handler_launch_hopping_thread(kis_capture_handler_t *caph) {
-    /* Set the thread attributes - detatched, cancelable */
+    /* Set the thread attributes - detached, cancelable */
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
@@ -3065,8 +3069,10 @@ int cf_jail_filesystem(kis_capture_handler_t *caph) {
 
     return 1;
 #else
+    /*
     snprintf(errstr, STATUS_MAX, "datasource framework can only jail namespaces on Linux");
     cf_send_warning(caph, errstr);
+    */
     return 0;
 #endif
 }

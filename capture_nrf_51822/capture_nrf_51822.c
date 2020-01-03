@@ -15,7 +15,13 @@
 
 #include "../capture_framework.h"
 
+#include "nrf_51822.h"
+
+#define MODEMDEVICE "/dev/ttyUSB0"
+
+#ifndef CRTSCTS
 #define CRTSCTS  020000000000 /*should be defined but isn't with the C99*/
+#endif
 
 #define CHECK_BIT(var,pos) ((var) & (1<<(pos)))
 
@@ -267,7 +273,6 @@ void capture_thread(kis_capture_handler_t *caph) {
                 }
             }
         }
-
     }
     cf_handler_spindown(caph);
 }

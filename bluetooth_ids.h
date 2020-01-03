@@ -16,14 +16,17 @@
     Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
-#include "bluetooth_parsers/bt_rfinfo.h"
+#ifndef __BLUETOOTH_IDS__
+#define __BLUETOOTH_IDS__ 
 
-void bluetooth_radio_info::parse(std::shared_ptr<kaitai::kstream> p_io) {
-    m_rf_channel = p_io->read_u1();
-    m_dbm_signal = p_io->read_u1();
-    m_dbm_noise = p_io->read_u1();
-    m_address_offenses = p_io->read_u1();
-    m_ref_access_address = mac_addr(p_io->read_bytes(4));
-    m_flags = p_io->read_u2le();
-}
+#include "config.h"
 
+#include <stdint.h>
+
+#include <string>
+#include <unordered_map>
+
+const extern std::unordered_map<uint16_t, std::string> bluetooth_uuid_ids;
+const extern std::unordered_map<uint16_t, std::string> bluetooth_company_ids;
+
+#endif /* ifndef BLUETOOTH_IDS */
