@@ -37,14 +37,14 @@ void kis_datasource_rzkillerbee::handle_rx_packet(kis_packet *packet) {
 
     auto rz_chunk = 
         packet->fetch<kis_datachunk>(pack_comp_linkframe);
-/*
+/**/
     printf("datasource killerbee got a packet\n");
     for(unsigned int i=0;i<rz_chunk->length;i++)
     {
             printf("%02X",rz_chunk->data[i]);
     }
     printf("\n");
-*/
+/**/
 
     if(rz_chunk->data[7])
     {

@@ -87,7 +87,7 @@ int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,
                 }
                 ctr++;
             }
-            if (!found) return -1;  // we fell through
+            if (!found) res = -1;  // we fell through
         } else
             res = 1;  // no response requested
     } else if (rx_max > 0) {

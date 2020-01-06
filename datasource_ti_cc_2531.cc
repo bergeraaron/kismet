@@ -37,14 +37,14 @@ void kis_datasource_ticc2531::handle_rx_packet(kis_packet *packet) {
     auto cc_chunk = 
         packet->fetch<kis_datachunk>(pack_comp_linkframe);
 
-/*
+/**/
     printf("datasource 2531 got a packet\n");
     for(unsigned int i=0;i<cc_chunk->length;i++)
     {
         printf("%02X",cc_chunk->data[i]);
     }
     printf("\n");
-*/
+/**/
 
     // If we can't validate the basics of the packet at the phy capture level, throw it out.
     // We don't get rid of invalid btle contents, but we do get rid of invalid USB frames that

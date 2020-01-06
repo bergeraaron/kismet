@@ -440,7 +440,23 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     pthread_mutex_lock(&(localticc2531->usb_mutex));
     if(libusb_kernel_driver_active(localticc2531->ticc2531_handle, 0)) {
         r = libusb_detach_kernel_driver(localticc2531->ticc2531_handle, 0); // detach driver
-        assert(r == 0);
+
+        if (r < 0) {
+            snprintf(errstr, STATUS_MAX, "Unable to open ticc2531 USB interface, "
+                    "could not disconnect kernel drivers: %s",
+                    libusb_strerror((enum libusb_error) r));
+            pthread_mutex_unlock(&(localticc2531->usb_mutex));
+            return -1;
+        }
+    }
+
+    r = libusb_set_configuration(localticc2531->ticc2531_handle, 1);
+    if (r < 0) {
+        snprintf(errstr, STATUS_MAX,
+                 "Unable to open ticc2531 USB interface; could not set USB configuration.  Has "
+                 "your device been flashed with the sniffer firmware?");
+        pthread_mutex_unlock(&(localticc2531->usb_mutex));
+        return -1;
     }
 
     /* Try to claim it */
@@ -463,8 +479,6 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
             return -1;
         }
     }
-    r = libusb_set_configuration(localticc2531->ticc2531_handle, -1);
-    assert(r < 0);
 
     // read ident
     uint8_t ident[32];
