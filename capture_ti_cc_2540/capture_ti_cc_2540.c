@@ -43,7 +43,6 @@ typedef struct {
 } local_channel_t;
 
 int ticc2540_set_channel(kis_capture_handler_t *caph, uint8_t channel) {
-    /* printf("channel %u\n", channel); */
     local_ticc2540_t *localticc2540 = (local_ticc2540_t *) caph->userdata;
     int ret;
     uint8_t data;
@@ -326,6 +325,30 @@ int list_callback(kis_capture_handler_t *caph, uint32_t seqno, char *msg,
     return num_devs;
 }
 
+void *chantranslate_callback(kis_capture_handler_t *caph, char *chanstr) {
+    local_channel_t *ret_localchan;
+    unsigned int parsechan;
+    char errstr[STATUS_MAX];
+
+    if (sscanf(chanstr, "%u", &parsechan) != 1) {
+        snprintf(errstr, STATUS_MAX, "1 unable to parse requested channel '%s'; ticc2540 channels "
+                "are from 37 to 39", chanstr);
+        cf_send_message(caph, errstr, MSGFLAG_INFO);
+        return NULL;
+    }
+
+    if (parsechan > 39 || parsechan < 37) {
+        snprintf(errstr, STATUS_MAX, "2 unable to parse requested channel '%u'; ticc2540 channels "
+                "are from 37 to 39", parsechan);
+        cf_send_message(caph, errstr, MSGFLAG_INFO);
+        return NULL;
+    }
+
+    ret_localchan = (local_channel_t *) malloc(sizeof(local_channel_t));
+    ret_localchan->channel = parsechan;
+    return ret_localchan;
+}
+
 int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         char *msg, uint32_t *dlt, char **uuid, KismetExternal__Command *frame,
         cf_params_interface_t **ret_interface,
@@ -351,6 +374,9 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     char cap_if[32];
     
     ssize_t i;
+
+    char *localchanstr = NULL;
+    unsigned int *localchan = NULL;
 
     local_ticc2540_t *localticc2540 = (local_ticc2540_t *) caph->userdata;
 
@@ -426,6 +452,25 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     pthread_mutex_unlock(&(localticc2540->usb_mutex));
 
     snprintf(cap_if, 32, "ticc2540-%u-%u", busno, devno);
+
+    // try pulling the channel
+    if ((placeholder_len = cf_find_flag(&placeholder, "channel", definition)) > 0) {
+        localchanstr = strndup(placeholder, placeholder_len);
+        localchan = atoi(localchanstr); 
+        free(localchanstr);
+
+        if (localchan == NULL) {
+            printf("invalid channel %s\n", placeholder);
+            snprintf(msg, STATUS_MAX,
+                    "ticc2540 could not parse channel= option provided in source "
+                    "definition");
+            return -1;
+        }
+    } else {
+        localchan = (unsigned int *) malloc(sizeof(unsigned int));
+        *localchan = 37;
+    }
+
 
     localticc2540->devno = devno;
     localticc2540->busno = busno;
@@ -512,33 +557,14 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     pthread_mutex_unlock(&(localticc2540->usb_mutex));
 
     ticc2540_set_power(caph, 0x04, TICC2540_POWER_RETRIES);
+
+    ticc2540_set_channel(caph, localchan);
+
     ticc2540_enter_promisc_mode(caph);
 
+    localticc2540->ready = true;
+
     return 1;
-}
-
-void *chantranslate_callback(kis_capture_handler_t *caph, char *chanstr) {
-    local_channel_t *ret_localchan;
-    unsigned int parsechan;
-    char errstr[STATUS_MAX];
-
-    if (sscanf(chanstr, "%u", &parsechan) != 1) {
-        snprintf(errstr, STATUS_MAX, "1 unable to parse requested channel '%s'; ticc2540 channels "
-                "are from 37 to 39", chanstr);
-        cf_send_message(caph, errstr, MSGFLAG_INFO);
-        return NULL;
-    }
-
-    if (parsechan > 39 || parsechan < 37) {
-        snprintf(errstr, STATUS_MAX, "2 unable to parse requested channel '%u'; ticc2540 channels "
-                "are from 37 to 39", parsechan);
-        cf_send_message(caph, errstr, MSGFLAG_INFO);
-        return NULL;
-    }
-
-    ret_localchan = (local_channel_t *) malloc(sizeof(local_channel_t));
-    ret_localchan->channel = parsechan;
-    return ret_localchan;
 }
 
 int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *privchan, char *msg) {
