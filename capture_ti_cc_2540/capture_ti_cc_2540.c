@@ -123,7 +123,10 @@ int ticc2540_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_
     r = libusb_bulk_transfer(localticc2540->ticc2540_handle, TICC2540_DATA_EP, rx_buf, rx_max, &actual_len, TICC2540_DATA_TIMEOUT);
     pthread_mutex_unlock(&(localticc2540->usb_mutex));
 
-    if (r == LIBUSB_ERROR_TIMEOUT) {
+    if(actual_len == 4)
+	    printf("CC2540 heartbeat\n");
+
+    if (r < 0) {
         localticc2540->error_ctr++;
         if (localticc2540->error_ctr >= 500) {
             return r;
