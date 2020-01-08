@@ -130,10 +130,11 @@ int ticc2540_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_
 	// do this as we don't hard reset on a heartbeat then
 	localticc2540->soft_reset++;
 	if (localticc2540->soft_reset >= 2) {
-	    printf("reset promisci mode\n");
+	    printf("reset promisci mode chan:%d\n",localticc2540->channel);
 	    localticc2540->ready = false;
 	    ticc2540_exit_promisc_mode(caph);
-            ticc2540_enter_promisc_mode(caph);
+            ticc2540_set_channel(caph, localticc2540->channel); 
+	    ticc2540_enter_promisc_mode(caph);
 	    localticc2540->soft_reset = 0;
 	    localticc2540->ready = true;
 	}
@@ -149,7 +150,8 @@ int ticc2540_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_
             return 1;
         }
     }
-        
+
+    localticc2540->soft_reset = 0; /*we got something valid so reset*/    
     localticc2540->error_ctr = 0; /*we got something valid so reset*/
 
     return actual_len;
@@ -571,6 +573,8 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     ticc2540_set_power(caph, 0x04, TICC2540_POWER_RETRIES);
 
     ticc2540_set_channel(caph, localchan);
+    
+    localticc2540->channel = localchan;
 
     ticc2540_enter_promisc_mode(caph);
 
