@@ -286,7 +286,7 @@ int probe_callback(kis_capture_handler_t *caph, uint32_t seqno,
     /* NXP KW41Z supports 11-26 for zigbee and 37-39 for ble */
     char chstr[4];
     int ctr = 0;
-
+/*
     (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 19);
 
     for (int i = 11; i < 27; i++) {
@@ -294,14 +294,15 @@ int probe_callback(kis_capture_handler_t *caph, uint32_t seqno,
         (*ret_interface)->channels[ctr] = strdup(chstr);
         ctr++;
     }
-
+*/
+    (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 3);
     for (int i = 37; i < 40; i++) {
         snprintf(chstr, 4, "%d", i);
         (*ret_interface)->channels[ctr] = strdup(chstr);
         ctr++;
     }
 
-    (*ret_interface)->channels_len = 19;
+    (*ret_interface)->channels_len = 3;// 19
 
     return 1;
 }
@@ -323,6 +324,9 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
 
     char cap_if[32];
 
+    char *localchanstr = NULL;
+    unsigned int *localchan = NULL;
+
     if ((placeholder_len = cf_parse_interface(&placeholder, definition)) <= 0) {
         snprintf(msg, STATUS_MAX, "Unable to find interface in definition"); 
         return -1;
@@ -342,6 +346,24 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         snprintf(msg, STATUS_MAX, "%s expected device= path to serial device in definition",
                 localnxp->name);
         return -1;
+    }
+
+    // try pulling the channel
+    if ((placeholder_len = cf_find_flag(&placeholder, "channel", definition)) > 0) {
+        localchanstr = strndup(placeholder, placeholder_len);
+        localchan = atoi(localchanstr); 
+        free(localchanstr);
+
+        if (localchan == NULL) {
+            printf("invalid channel %s\n", placeholder);
+            snprintf(msg, STATUS_MAX,
+                    "ticc2540 could not parse channel= option provided in source "
+                    "definition");
+            return -1;
+        }
+    } else {
+        localchan = (unsigned int *) malloc(sizeof(unsigned int));
+        *localchan = 37;
     }
 
     snprintf(cap_if, 32, "nxp_kw41z-%012X",adler32_csum((unsigned char *) device, strlen(device)));
@@ -365,7 +387,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     /* NXP KW41Z supports 11-26 for zigbee and 37-39 for ble */
     char chstr[4];
     int ctr = 0;
-
+/*
     (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 19);
 
     for (int i = 11; i < 27; i++) {
@@ -373,14 +395,15 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         (*ret_interface)->channels[ctr] = strdup(chstr);
         ctr++;
     }
-
+*/
+    (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 3);
     for (int i = 37; i < 40; i++) {
         snprintf(chstr, 4, "%d", i);
         (*ret_interface)->channels[ctr] = strdup(chstr);
         ctr++;
     }
 
-    (*ret_interface)->channels_len = 19;
+    (*ret_interface)->channels_len = 3; // 19
 
     pthread_mutex_lock(&(localnxp->serial_mutex));
     /* open for r/w but no tty */
@@ -418,9 +441,11 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     if (res < 0) 
         return -1;
 
-    res = nxp_enter_promisc_mode(caph, 11);
+    res = nxp_enter_promisc_mode(caph, localchan);
     if (res < 0) 
         return -1;
+
+    localnxp->channel = localchan;
 
     return 1;
 }

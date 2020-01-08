@@ -1,7 +1,4 @@
-
-#include "../config.h"
-
-#include "nrf_52840.h"
+#define _GNU_SOURCE
 
 #include <stdio.h>
 #include <errno.h>
@@ -11,6 +8,10 @@
 #include <string.h>
 #include <termios.h>
 #include <fcntl.h>
+
+#include "../config.h"
+
+#include "nrf_52840.h"
 
 #include "../capture_framework.h"
 
@@ -82,7 +83,7 @@ int nrf_exit_promisc_mode(kis_capture_handler_t *caph)
 
 int nrf_set_channel(kis_capture_handler_t *caph, uint8_t channel)
 {
-    local_nrf_t *localnrf = (local_nrf_t *) caph->userdata;
+    // local_nrf_t *localnrf = (local_nrf_t *) caph->userdata;
     nrf_exit_promisc_mode(caph);
     uint8_t ch[16];
     sprintf(ch,"channel %d\r\n\r\n",channel);
@@ -351,7 +352,9 @@ int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *priv
     }
 
     r = nrf_set_channel(caph, channel->channel);
-    
+   
+    localnrf->channel = channel->channel;
+
     return r;
 }
 
