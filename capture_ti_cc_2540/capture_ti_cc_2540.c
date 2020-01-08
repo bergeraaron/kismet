@@ -31,6 +31,9 @@ typedef struct {
     /* keep track of our errors so we can reset if needed */
     unsigned int error_ctr;
 
+    /* keep track of the soft resets */
+    unsigned int soft_reset;
+
     /* flag to let use know when we are ready to capture */
     bool ready;
 
@@ -122,22 +125,29 @@ int ticc2540_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_
     r = libusb_bulk_transfer(localticc2540->ticc2540_handle, TICC2540_DATA_EP, rx_buf, rx_max, &actual_len, TICC2540_DATA_TIMEOUT);
     pthread_mutex_unlock(&(localticc2540->usb_mutex));
 
-    if(actual_len == 4)
-	    printf("CC2540 heartbeat\n");
+    if (actual_len == 4) {
+        printf("CC2540 heartbeat\n");
+	// do this as we don't reset on a heartbeat then
+        return actual_len;
+    }
 
     if (r < 0) {
         localticc2540->error_ctr++;
         if (localticc2540->error_ctr >= 500) {
-            return r;
+	    localticc2540->soft_reset++;
+	    if(localticc2540->soft_reset < 5) {
+		ticc2540_exit_promisc_mode(caph);
+		ticc2540_enter_promisc_mode(caph);
+                return 1;
+	    } else {
+                return r;
+	    }
         } else {
             /*continue on for now*/
             return 1;
         }
     }
         
-    if (r < 0)
-        return r;
-
     localticc2540->error_ctr = 0; /*we got something valid so reset*/
 
     return actual_len;
@@ -594,36 +604,6 @@ int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *priv
     return 1;
 }
 
-bool verify_packet(unsigned char *data, int len) {
-    unsigned char payload[256];
-    memset(payload, 0x00, 256);
-    int pkt_len = data[1];
-    if (pkt_len != (len - 3)) {
-        /* printf("packet length mismatch\n"); */
-        return false;
-    }
-    /* get the payload */
-    int p_ctr = 0;
-    for (int i = 8; i < (len - 2); i++) {
-        payload[p_ctr] = data[i];
-        p_ctr++;
-    }
-    int payload_len = data[7] - 0x02;
-    if (p_ctr != payload_len) {
-        /* printf("payload size mismatch\n"); */
-        return false;
-    }
-
-    unsigned char fcs2 = data[len - 1];
-    unsigned char crc_ok = fcs2 & (1 << 7);
-    unsigned char channel = fcs2 & 0x7f;
-
-    if (channel < 37 || channel > 39)
-        return false;
-
-    return crc_ok;
-}
-
 /* Run a standard glib mainloop inside the capture thread */
 void capture_thread(kis_capture_handler_t *caph) {
     local_ticc2540_t *localticc2540 = (local_ticc2540_t *) caph->userdata;
@@ -694,6 +674,7 @@ int main(int argc, char *argv[]) {
         .ticc2540_handle = NULL,
         .caph = NULL,
         .error_ctr = 0,
+	.soft_reset = 0,
     };
 
     pthread_mutex_init(&(localticc2540.usb_mutex), NULL);
