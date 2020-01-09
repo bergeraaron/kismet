@@ -72,6 +72,7 @@ printf("nxp_write_cmd tx_len:%d resp_len:%d rx_max:%d\n",tx_len,resp_len,rx_max)
 
     uint8_t buf[255];
     uint16_t ctr = 0;
+    uint16_t try_ctr = 0;
     uint8_t res = 0;
     bool found = false;
     local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
@@ -79,23 +80,49 @@ printf("nxp_write_cmd tx_len:%d resp_len:%d rx_max:%d\n",tx_len,resp_len,rx_max)
 
     if (tx_len > 0) {
         // we are transmitting something
+printf("write(%d):",tx_len);
+for(int x=0;x<tx_len;x++)
+printf("%02X",tx_buf[x]);
+printf("\n");
         write(localnxp->fd, tx_buf, tx_len);
         if (resp_len > 0) {
             // looking for a response
             while (ctr < 5000) {
                 usleep(10);
                 res = read(localnxp->fd, buf, 255);
-                // currently if we get something back that is fine and continue
-                if (memcmp(buf, resp, resp_len) == 0) {
-                    found = true;
-                    break;
-                }
-                if (res > 0) {
-                    break;
-                }
+if(res > 0)
+{
+printf("read(%d):",res);
+for(int x=0;x<res;x++)
+printf("%02X",buf[x]);
+printf("\n");
+}
+		// currently if we get something back that is fine and continue
+		if (true) {
+                    if (memcmp(buf, resp, resp_len) == 0) {
+		        printf("found it\n");
+                        found = true;
+                        break;
+                    }
+                } else {
+		    if(!found) {
+//			printf("try again\n");
+                        try_ctr++;
+			ctr = 0;
+			if (try_ctr >= 50) {
+			    break; // well we tried....
+			}
+		    } else {
+			break;
+		    }
+		}
+
                 ctr++;
-            }
-            if (!found) res = -1;  // we fell through
+            }//looking loop
+            if (!found) {
+	    printf("did not find our response\n");
+		    res = -1;  // we fell through
+	    }
         } else
             res = 1;  // no response requested
     } else if (rx_max > 0) {
@@ -190,7 +217,8 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan) {
 
         // chan 37 by default
         uint8_t cmd_3[7] = {0x02, 0x4E, 0x02, 0x01, 0x00, 0x01, 0x4C};
-        if (chan == 38) {
+	uint8_t rep_3[7] = {0x02, 0x4E, 0x82, 0x01, 0x00, 0x00, 0xCD};
+	if (chan == 38) {
             cmd_3[5] = 0x02;
             cmd_3[6] = 0x4F;
         }
@@ -199,17 +227,18 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan) {
             cmd_3[6] = 0x49;
         }
 
-        res = nxp_write_cmd(caph, cmd_3, 7, NULL, 0, NULL, 0);
+        res = nxp_write_cmd(caph, cmd_3, 7, rep_3, 7, NULL, 0);
         if (res < 0) return res;
 
         uint8_t cmd_4[7] = {0x02, 0x4E, 0x01, 0x01, 0x00, 0x00, 0x4E};
-        uint8_t rep_4[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
+        //uint8_t rep_4[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
+	uint8_t rep_4[7] = {0x02, 0x4E, 0x81, 0x01, 0x00, 0x00, 0xCE};
         res = nxp_write_cmd(caph, cmd_4, 7, rep_4, 7, NULL, 0);
         if (res < 0) return res;
 
         uint8_t cmd_5[7] = {0x02, 0x4E, 0x00, 0x01, 0x00, 0x01, 0x4E};
-        // uint8_t rep_5[7] = {0x02,0x4E,0x80,0x01,0x00,0x00,0xCF};
-        res = nxp_write_cmd(caph, cmd_5, 7, NULL, 0, NULL, 0);
+        uint8_t rep_5[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
+        res = nxp_write_cmd(caph, cmd_5, 7, rep_5, 7, NULL, 0);
         if (res < 0) return res;
     }
     return res;
@@ -451,7 +480,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
    
     localnxp->ready = false;
  
-    nxp_reset(caph);
+    //nxp_reset(caph);
 
     res = nxp_exit_promisc_mode(caph);
     if (res < 0) 
