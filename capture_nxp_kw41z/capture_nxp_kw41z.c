@@ -349,9 +349,11 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     }
 
     // try pulling the channel
+    printf("try pulling the channel\n");
     if ((placeholder_len = cf_find_flag(&placeholder, "channel", definition)) > 0) {
         localchanstr = strndup(placeholder, placeholder_len);
-        localchan = atoi(localchanstr); 
+	localchan = (unsigned int *) malloc(sizeof(unsigned int));
+        *localchan = atoi(localchanstr); 
         free(localchanstr);
 
         if (localchan == NULL) {
@@ -365,7 +367,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         localchan = (unsigned int *) malloc(sizeof(unsigned int));
         *localchan = 37;
     }
-
+    
     snprintf(cap_if, 32, "nxp_kw41z-%012X",adler32_csum((unsigned char *) device, strlen(device)));
 
     /* Make a spoofed, but consistent, UUID based on the adler32 of the interface name 
@@ -441,11 +443,11 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     if (res < 0) 
         return -1;
 
-    res = nxp_enter_promisc_mode(caph, localchan);
+    res = nxp_enter_promisc_mode(caph, *localchan);
     if (res < 0) 
         return -1;
 
-    localnxp->channel = localchan;
+    localnxp->channel = *localchan;
 
     return 1;
 }
