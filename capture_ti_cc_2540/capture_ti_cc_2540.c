@@ -126,11 +126,10 @@ int ticc2540_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_
     pthread_mutex_unlock(&(localticc2540->usb_mutex));
 
     if (actual_len == 4) {
-        printf("CC2540 heartbeat ticc2540-%d-%d\n",localticc2540->busno,localticc2540->devno);
 	// do this as we don't hard reset on a heartbeat then
+	// but we will try resetting the channel instead
 	localticc2540->soft_reset++;
 	if (localticc2540->soft_reset >= 2) {
-	    printf("reset promisci mode chan:%d ticc2540-%d-%d\n",localticc2540->channel,localticc2540->busno,localticc2540->devno);
 	    localticc2540->ready = false;
 	    ticc2540_exit_promisc_mode(caph);
             ticc2540_set_channel(caph, localticc2540->channel); 
@@ -474,7 +473,6 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         free(localchanstr);
 
         if (localchan == NULL) {
-            printf("invalid channel %s\n", placeholder);
             snprintf(msg, STATUS_MAX,
                     "ticc2540 could not parse channel= option provided in source "
                     "definition");
