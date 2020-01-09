@@ -47,8 +47,14 @@ typedef struct {
 
     unsigned int channel;
 
+    unsigned int reads;
+
+    unsigned int pkts;
+
     char *name;
     char *interface;
+    
+    bool ready;
 
     kis_capture_handler_t *caph;
 } local_nxp_t;
@@ -61,7 +67,9 @@ typedef struct {
 int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,
                   uint8_t *resp, size_t resp_len, uint8_t *rx_buf,
                   size_t rx_max) {
-    
+if(tx_len > 0 || resp_len > 0)   
+printf("nxp_write_cmd tx_len:%d resp_len:%d rx_max:%d\n",tx_len,resp_len,rx_max);
+
     uint8_t buf[255];
     uint16_t ctr = 0;
     uint8_t res = 0;
@@ -92,6 +100,7 @@ int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,
             res = 1;  // no response requested
     } else if (rx_max > 0) {
         res = read(localnxp->fd, rx_buf, rx_max);
+	usleep(1);
     }
 
     pthread_mutex_unlock(&(localnxp->serial_mutex));
@@ -213,7 +222,12 @@ int nxp_exit_promisc_mode(kis_capture_handler_t *caph) {
 }
 
 int nxp_set_channel(kis_capture_handler_t *caph, uint8_t channel) {
+    local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
     int res = 0;
+
+    printf("nxp_set_channel channel:%d reads:%d pkts:%d\n",channel,localnxp->reads,localnxp->pkts);
+    localnxp->reads = 0;
+    localnxp->pkts = 0;
 
     res = nxp_exit_promisc_mode(caph);
 
@@ -349,7 +363,6 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     }
 
     // try pulling the channel
-    printf("try pulling the channel\n");
     if ((placeholder_len = cf_find_flag(&placeholder, "channel", definition)) > 0) {
         localchanstr = strndup(placeholder, placeholder_len);
 	localchan = (unsigned int *) malloc(sizeof(unsigned int));
@@ -357,7 +370,6 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         free(localchanstr);
 
         if (localchan == NULL) {
-            printf("invalid channel %s\n", placeholder);
             snprintf(msg, STATUS_MAX,
                     "ticc2540 could not parse channel= option provided in source "
                     "definition");
@@ -436,7 +448,9 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     tcsetattr(localnxp->fd, TCSANOW, &localnxp->newtio);
 
     pthread_mutex_unlock(&(localnxp->serial_mutex));
-    
+   
+    localnxp->ready = false;
+ 
     nxp_reset(caph);
 
     res = nxp_exit_promisc_mode(caph);
@@ -448,6 +462,8 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         return -1;
 
     localnxp->channel = *localchan;
+
+    localnxp->ready = true;
 
     return 1;
 }
@@ -478,15 +494,16 @@ void *chantranslate_callback(kis_capture_handler_t *caph, char *chanstr) {
 }
 
 int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *privchan, char *msg) {
+    local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
     local_channel_t *channel = (local_channel_t *) privchan;
     int r;
 
     if (privchan == NULL) {
         return 0;
     }
-
+    localnxp->ready = false;
     r = nxp_set_channel(caph, channel->channel);
-    
+    localnxp->ready = true;
     return r;
 }
 
@@ -508,14 +525,18 @@ void capture_thread(kis_capture_handler_t *caph) {
             pthread_mutex_unlock(&(localnxp->serial_mutex));
             break;
         }
-
+	buf_rx_len = 0;
+        if (localnxp->ready) {
         buf_rx_len = nxp_receive_payload(caph, buf, 256);
-        if (buf_rx_len < 0) {
-            cf_send_error(caph, 0, errstr);
-            cf_handler_spindown(caph);
-            break;
+	localnxp->reads++;
+	if (buf_rx_len > 0)
+		localnxp->pkts++;
+            if (buf_rx_len < 0) {
+                cf_send_error(caph, 0, errstr);
+                cf_handler_spindown(caph);
+                break;
+            }
         }
-
         if (buf_rx_len > 0) {
             while (1) {
                 struct timeval tv;
@@ -544,6 +565,9 @@ int main(int argc, char *argv[]) {
         .name = NULL,
         .interface = NULL,
         .fd = -1,
+	.ready = false,
+	.reads = 0,
+	.pkts = 0,
     };
 
     pthread_mutex_init(&(localnxp.serial_mutex), NULL);

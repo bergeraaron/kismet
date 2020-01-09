@@ -18,7 +18,10 @@
 
 #include "datasource_ti_cc_2531.h"
 
+//#define TLVHEADER
+
 void kis_datasource_ticc2531::handle_rx_packet(kis_packet *packet) {
+#ifdef TLVHEADER
     typedef struct {
         uint16_t type; //type identifier
         uint16_t length; // number of octets for type in value field (not including padding
@@ -29,43 +32,43 @@ void kis_datasource_ticc2531::handle_rx_packet(kis_packet *packet) {
         uint8_t version; // currently zero
         uint8_t reserved; // must be zero
         uint16_t length; // total length of header and tlvs in octets, min 4 and must be multiple of 4
-        tap_tlv tlv[3];//tap tlvs
+        tap_tlv tlv[2];//tap tlvs 3 if we get channel later
         uint8_t payload[0];	        
         ////payload + fcs per fcs type
     } zigbee_tap;
-
+#endif
     auto cc_chunk = 
         packet->fetch<kis_datachunk>(pack_comp_linkframe);
 
-/**/
+/*
     printf("datasource 2531 got a packet\n");
     for(unsigned int i=0;i<cc_chunk->length;i++)
     {
         printf("%02X",cc_chunk->data[i]);
     }
     printf("\n");
-/**/
+*/
 
     // If we can't validate the basics of the packet at the phy capture level, throw it out.
     // We don't get rid of invalid btle contents, but we do get rid of invalid USB frames that
     // we can't decipher - we can't even log them sanely!
     
     if (cc_chunk->length < 8) {
-        fmt::print(stderr, "debug - cc2531 too short ({} < 8)\n", cc_chunk->length);
+        // fmt::print(stderr, "debug - cc2531 too short ({} < 8)\n", cc_chunk->length);
         delete(packet);
         return;
     }
 
     unsigned int cc_len = cc_chunk->data[1];
     if (cc_len != cc_chunk->length - 3) {
-        fmt::print(stderr, "debug - cc2531 invalid packet length ({} != {})\n", cc_len, cc_chunk->length - 3);
+        // fmt::print(stderr, "debug - cc2531 invalid packet length ({} != {})\n", cc_len, cc_chunk->length - 3);
         delete(packet);
         return;
     }
 
     unsigned int cc_payload_len = cc_chunk->data[7] - 0x02;
     if (cc_payload_len + 8 != cc_chunk->length - 2) {
-        fmt::print(stderr, "debug - cc2531 invalid payload length ({} != {})\n", cc_payload_len + 8, cc_chunk->length - 2);
+        // fmt::print(stderr, "debug - cc2531 invalid payload length ({} != {})\n", cc_payload_len + 8, cc_chunk->length - 2);
         delete(packet);
         return;
     }
@@ -81,11 +84,11 @@ void kis_datasource_ticc2531::handle_rx_packet(kis_packet *packet) {
 
     if(crc_ok > 0)
     {
+        #ifdef TLVHEADER
         // We can make a valid payload from this much
         auto conv_buf_len = sizeof(zigbee_tap) + cc_payload_len;// + (sizeof(tap_tlv))-2;// - 2;
         zigbee_tap *conv_header = reinterpret_cast<zigbee_tap *>(new uint8_t[conv_buf_len]);
         memset(conv_header, 0, conv_buf_len);
-        printf("cc_payload_len:%d conv_buf_len:%d\n",cc_payload_len,conv_buf_len);
 
         // Copy the actual packet payload into the header
         memcpy(conv_header->payload, &cc_chunk->data[8], cc_payload_len);
@@ -101,26 +104,27 @@ void kis_datasource_ticc2531::handle_rx_packet(kis_packet *packet) {
         //rssi
         conv_header->tlv[1].type = 10;
         conv_header->tlv[1].length = 1;
-        conv_header->tlv[1].value = rssi;
-
+        conv_header->tlv[1].value = rssi * -1;
+        /*
         //channel
         conv_header->tlv[2].type = 3;
         conv_header->tlv[2].length = 3;
-        conv_header->tlv[2].value = 11;//need to try to pull from some where
-
+        conv_header->tlv[2].value = 11;//need to try to pull from some where, but it is not in the packet
+        */
         //size
         conv_header->length = sizeof(conv_header)+sizeof(conv_header->tlv)-4;
         cc_chunk->set_data((uint8_t *)conv_header, conv_buf_len, false);
         cc_chunk->dlt = KDLT_IEEE802_15_4_TAP; 	
-	/*
+        #else
+	
         //so this works
         uint8_t payload[256]; memset(payload,0x00,256);
-        memcpy(payload,&cc_chunk->data[9],cc_payload_len);	
+        memcpy(payload,&cc_chunk->data[8],cc_payload_len);	
         // Replace the existing packet data with this and update the DLT
-        rz_chunk->set_data(payload, cc_payload_len, false);
-        rz_chunk->dlt = KDLT_IEEE802_15_4_NOFCS; 
-	*/
-        
+        cc_chunk->set_data(payload, cc_payload_len, false);
+        cc_chunk->dlt = KDLT_IEEE802_15_4_NOFCS; 
+	
+        #endif
 	// Pass the packet on
         packetchain->process_packet(packet);
 
