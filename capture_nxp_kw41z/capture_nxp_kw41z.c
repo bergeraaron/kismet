@@ -556,10 +556,10 @@ void capture_thread(kis_capture_handler_t *caph) {
         }
 	buf_rx_len = 0;
         if (localnxp->ready) {
-        buf_rx_len = nxp_receive_payload(caph, buf, 256);
-	localnxp->reads++;
-	if (buf_rx_len > 0)
-		localnxp->pkts++;
+            buf_rx_len = nxp_receive_payload(caph, buf, 256);
+            localnxp->reads++;
+            if (buf_rx_len > 0)
+                localnxp->pkts++;
             if (buf_rx_len < 0) {
                 cf_send_error(caph, 0, errstr);
                 cf_handler_spindown(caph);

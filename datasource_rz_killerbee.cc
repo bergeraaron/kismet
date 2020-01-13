@@ -18,6 +18,8 @@
 
 #include "datasource_rz_killerbee.h"
 
+//#define TLVHEADER
+
 void kis_datasource_rzkillerbee::handle_rx_packet(kis_packet *packet) {
 
     typedef struct {
@@ -30,7 +32,7 @@ void kis_datasource_rzkillerbee::handle_rx_packet(kis_packet *packet) {
         uint8_t version; // currently zero
         uint8_t reserved; // must be zero
         uint16_t length; // total length of header and tlvs in octets, min 4 and must be multiple of 4
-        tap_tlv tlv[3];//tap tlvs
+        tap_tlv tlv[2];//tap tlvs
         uint8_t payload[0];	        
         ////payload + fcs per fcs type
     } zigbee_tap;
@@ -48,10 +50,10 @@ void kis_datasource_rzkillerbee::handle_rx_packet(kis_packet *packet) {
 
     if(rz_chunk->data[7])
     {
-        int rssi = rz_chunk->data[6];
         int rz_payload_len = rz_chunk->data[8];
-
-        // We can make a valid payload from this much
+#ifdef TLVHEADER
+        int rssi = rz_chunk->data[6];
+	// We can make a valid payload from this much
         auto conv_buf_len = sizeof(zigbee_tap) + rz_payload_len;
         zigbee_tap *conv_header = reinterpret_cast<zigbee_tap *>(new uint8_t[conv_buf_len]);
         memset(conv_header, 0, conv_buf_len);
@@ -71,26 +73,26 @@ void kis_datasource_rzkillerbee::handle_rx_packet(kis_packet *packet) {
         conv_header->tlv[1].type = 10;
         conv_header->tlv[1].length = 1;
         conv_header->tlv[1].value = rssi;
-
+/*
         //channel
         conv_header->tlv[2].type = 3;
         conv_header->tlv[2].length = 3;
         conv_header->tlv[2].value = 11;
-
+*/
         //size
         conv_header->length = sizeof(conv_header)+sizeof(conv_header->tlv)-4;//remove 4 bytes for the length in the header
 
         rz_chunk->set_data((uint8_t *)conv_header, conv_buf_len, false);
         rz_chunk->dlt = KDLT_IEEE802_15_4_TAP; 	
-	/*
+#else	
         //so this works
 	uint8_t payload[256]; memset(payload,0x00,256);
         memcpy(payload,&rz_chunk->data[9],rz_payload_len);	
         // Replace the existing packet data with this and update the DLT
         rz_chunk->set_data(payload, rz_payload_len, false);
         rz_chunk->dlt = KDLT_IEEE802_15_4_NOFCS; 
-	*/
-        
+	
+#endif   
 	    // Pass the packet on
         packetchain->process_packet(packet);
     }
