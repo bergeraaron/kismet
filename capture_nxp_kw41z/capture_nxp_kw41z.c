@@ -67,8 +67,6 @@ typedef struct {
 int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,
                   uint8_t *resp, size_t resp_len, uint8_t *rx_buf,
                   size_t rx_max) {
-if(tx_len > 0 || resp_len > 0)   
-printf("nxp_write_cmd tx_len:%ld resp_len:%ld rx_max:%ld\n",tx_len,resp_len,rx_max);
 
     uint8_t buf[255];
     uint16_t ctr = 0;
@@ -80,10 +78,6 @@ printf("nxp_write_cmd tx_len:%ld resp_len:%ld rx_max:%ld\n",tx_len,resp_len,rx_m
 
     if (tx_len > 0) {
         // we are transmitting something
-printf("write(%ld):",tx_len);
-for(int x=0;x<tx_len;x++)
-printf("%02X",tx_buf[x]);
-printf("\n");
         write(localnxp->fd, tx_buf, tx_len);
         if (resp_len > 0) {
             // looking for a response
@@ -91,37 +85,15 @@ printf("\n");
                 usleep(25);
                 memset(buf,0x00,255);
 		res = read(localnxp->fd, buf, 255);
-if(res > 0)
-{
-printf("read(%d) :",res);
-for(int x=0;x<res;x++)
-printf("%02X",buf[x]);
-printf("\n");
-}
 		// currently if we get something back that is fine and continue
-		if (true) {
-                    if (memcmp(buf, resp, resp_len) == 0) {
-		        printf("found it\n");
-                        found = true;
-                        break;
-                    }
-                } else {
-		    if(!found) {
-			printf("try again\n");
-                        try_ctr++;
-			ctr = 0;
-			if (try_ctr >= 50) {
-			    break; // well we tried....
-			}
-		    } else {
-			break;
-		    }
-		}
+                if (memcmp(buf, resp, resp_len) == 0) {
+                    found = true;
+                    break;
+                }
 
                 ctr++;
             }//looking loop
             if (!found) {
-	    printf("did not find our response\n");
 		    res = -1;  // we fell through
 	    }
         } else
@@ -129,7 +101,7 @@ printf("\n");
     } else if (rx_max > 0) {
         res = read(localnxp->fd, rx_buf, rx_max);
 	if (res <= 0) {
-	usleep(25);
+            usleep(25);
 	}
     }
 
@@ -257,7 +229,6 @@ int nxp_set_channel(kis_capture_handler_t *caph, uint8_t channel) {
     local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
     int res = 0;
 
-    printf("nxp_set_channel channel:%d reads:%d pkts:%d\n",channel,localnxp->reads,localnxp->pkts);
     localnxp->reads = 0;
     localnxp->pkts = 0;
 
