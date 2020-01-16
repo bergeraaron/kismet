@@ -68,7 +68,7 @@ int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,
                   uint8_t *resp, size_t resp_len, uint8_t *rx_buf,
                   size_t rx_max) {
 if(tx_len > 0 || resp_len > 0)   
-printf("nxp_write_cmd tx_len:%d resp_len:%d rx_max:%d\n",tx_len,resp_len,rx_max);
+printf("nxp_write_cmd tx_len:%ld resp_len:%ld rx_max:%ld\n",tx_len,resp_len,rx_max);
 
     uint8_t buf[255];
     uint16_t ctr = 0;
@@ -80,7 +80,7 @@ printf("nxp_write_cmd tx_len:%d resp_len:%d rx_max:%d\n",tx_len,resp_len,rx_max)
 
     if (tx_len > 0) {
         // we are transmitting something
-printf("write(%d):",tx_len);
+printf("write(%ld):",tx_len);
 for(int x=0;x<tx_len;x++)
 printf("%02X",tx_buf[x]);
 printf("\n");
@@ -88,11 +88,12 @@ printf("\n");
         if (resp_len > 0) {
             // looking for a response
             while (ctr < 5000) {
-                usleep(10);
-                res = read(localnxp->fd, buf, 255);
+                usleep(25);
+                memset(buf,0x00,255);
+		res = read(localnxp->fd, buf, 255);
 if(res > 0)
 {
-printf("read(%d):",res);
+printf("read(%d) :",res);
 for(int x=0;x<res;x++)
 printf("%02X",buf[x]);
 printf("\n");
@@ -106,7 +107,7 @@ printf("\n");
                     }
                 } else {
 		    if(!found) {
-//			printf("try again\n");
+			printf("try again\n");
                         try_ctr++;
 			ctr = 0;
 			if (try_ctr >= 50) {
@@ -127,7 +128,9 @@ printf("\n");
             res = 1;  // no response requested
     } else if (rx_max > 0) {
         res = read(localnxp->fd, rx_buf, rx_max);
-	usleep(1);
+	if (res <= 0) {
+	usleep(25);
+	}
     }
 
     pthread_mutex_unlock(&(localnxp->serial_mutex));
@@ -265,7 +268,7 @@ int nxp_set_channel(kis_capture_handler_t *caph, uint8_t channel) {
 
     res = nxp_enter_promisc_mode(caph, channel);
 
-    return 1;
+    return res;
 }
 
 int nxp_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf,
@@ -556,6 +559,7 @@ void capture_thread(kis_capture_handler_t *caph) {
         }
 	buf_rx_len = 0;
         if (localnxp->ready) {
+            memset(buf,0x00,256);
             buf_rx_len = nxp_receive_payload(caph, buf, 256);
             localnxp->reads++;
             if (buf_rx_len > 0)
