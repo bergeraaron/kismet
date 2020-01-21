@@ -78,16 +78,28 @@ int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,
 
     if (tx_len > 0) {
         // we are transmitting something
-    	    write(localnxp->fd, tx_buf, tx_len);
+printf("write(%d):",tx_len);
+for(int i=0;i<tx_len;i++)
+printf("%02X",tx_buf[i]);
+printf("\n");
+	    write(localnxp->fd, tx_buf, tx_len);
         if (resp_len > 0) {
             // looking for a response
             while (ctr < 5000) {
                 usleep(25);
                 memset(buf,0x00,255);
 		res = read(localnxp->fd, buf, 255);
+if(res > 0)
+{
+printf("read(%d):",res);
+for(int i=0;i<res;i++)
+printf("%02X",buf[i]);
+printf("\n");
+}
 		// currently if we get something back that is fine and continue
                 if (memcmp(buf, resp, resp_len) == 0) {
                     found = true;
+		    printf("found\n");
                     break;
                 }
 
@@ -95,6 +107,7 @@ int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,
             }//looking loop
             if (!found) {
 		    res = -1;  // we fell through
+		    printf("not found\n");
 	    }
         } else
             res = 1;  // no response requested
