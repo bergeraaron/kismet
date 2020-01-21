@@ -71,7 +71,7 @@ int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,
     uint8_t buf[255];
     uint16_t ctr = 0;
     uint16_t try_ctr = 0;
-    uint8_t res = 0;
+    int8_t res = 0;
     bool found = false;
     local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
     pthread_mutex_lock(&(localnxp->serial_mutex));
@@ -88,6 +88,7 @@ printf("\n");
             while (ctr < 5000) {
                 usleep(25);
                 memset(buf,0x00,255);
+		found = false;
 		res = read(localnxp->fd, buf, 255);
 if(res > 0)
 {
@@ -97,17 +98,22 @@ printf("%02X",buf[i]);
 printf("\n");
 }
 		// currently if we get something back that is fine and continue
-                if (memcmp(buf, resp, resp_len) == 0) {
+                if (res > 0 && memcmp(buf, resp, resp_len) == 0) {
                     found = true;
 		    printf("found\n");
                     break;
-                }
+                } else if (res > 0) {
+                    if (buf[0] == 0x02) {
+                        //we got something from the device
+			ctr = 0;
+		    }
+		}
 
                 ctr++;
             }//looking loop
             if (!found) {
-		    res = -1;  // we fell through
-		    printf("not found\n");
+                res = -1;  // we fell through
+                printf("not found\n");
 	    }
         } else
             res = 1;  // no response requested
@@ -178,7 +184,8 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan) {
             cmd_2[13] = 0xBF;
 
         res = nxp_write_cmd(caph, cmd_2, 14, rep_2, 8, NULL, 0);
-        if (res < 0) return res;
+	printf("res:%d\n",res);
+	if (res < 0) return res;
 
         uint8_t cmd_3[14] = {0x02, 0x85, 0x09, 0x08, 0x00, 0x51, 0x01,
                              0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD4};
