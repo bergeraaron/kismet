@@ -47,10 +47,6 @@ typedef struct {
 
     unsigned int channel;
 
-    unsigned int reads;
-
-    unsigned int pkts;
-
     char *name;
     char *interface;
     
@@ -77,12 +73,19 @@ int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,
     pthread_mutex_lock(&(localnxp->serial_mutex));
 
     if (tx_len > 0) {
+        // lets flush the buffer
+        printf("flush the buffer\n");
+        tcflush(localnxp->fd, TCIOFLUSH);
         // we are transmitting something
 printf("write(%d):",tx_len);
 for(int i=0;i<tx_len;i++)
 printf("%02X",tx_buf[i]);
 printf("\n");
-	    write(localnxp->fd, tx_buf, tx_len);
+	    res = write(localnxp->fd, tx_buf, tx_len);
+            if (res < 0) {
+                printf("error write:%d\n",res);
+                return res;
+            }
         if (resp_len > 0) {
             // looking for a response
             while (ctr < 5000) {
@@ -106,6 +109,12 @@ printf("\n");
                     if (buf[0] == 0x02) {
                         //we got something from the device
 			ctr = 0;
+                        try_ctr++;
+                        if (try_ctr >= 10) {
+                            res = -1;  // we fell through
+                            printf("too many wrong answers\n");
+                            break;
+                        }
 		    }
 		}
 
@@ -119,7 +128,8 @@ printf("\n");
             res = 1;  // no response requested
     } else if (rx_max > 0) {
         res = read(localnxp->fd, rx_buf, rx_max);
-	if (res <= 0) {
+	if (res < 0) {
+            printf("Read Error %s\n", strerror(errno));
             usleep(25);
 	}
     }
@@ -184,7 +194,6 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan) {
             cmd_2[13] = 0xBF;
 
         res = nxp_write_cmd(caph, cmd_2, 14, rep_2, 8, NULL, 0);
-	printf("res:%d\n",res);
 	if (res < 0) return res;
 
         uint8_t cmd_3[14] = {0x02, 0x85, 0x09, 0x08, 0x00, 0x51, 0x01,
@@ -240,6 +249,10 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan) {
 }
 
 int nxp_exit_promisc_mode(kis_capture_handler_t *caph) {
+    // lets flush the buffer
+    // local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
+    // tcflush(localnxp->fd, TCIOFLUSH);
+
     uint8_t cmd[7] = {0x02, 0x4E, 0x00, 0x01, 0x00, 0x00, 0x4F};
     uint8_t rep[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
     return nxp_write_cmd(caph, cmd, 7, rep, 7, NULL, 0);
@@ -248,9 +261,6 @@ int nxp_exit_promisc_mode(kis_capture_handler_t *caph) {
 int nxp_set_channel(kis_capture_handler_t *caph, uint8_t channel) {
     local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
     int res = 0;
-
-    localnxp->reads = 0;
-    localnxp->pkts = 0;
 
     res = nxp_exit_promisc_mode(caph);
 
@@ -524,6 +534,9 @@ int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *priv
     }
     localnxp->ready = false;
     r = nxp_set_channel(caph, channel->channel);
+    if (r <= 0) {
+        printf("nxp_set_channel:%d\n",r);
+    }
     localnxp->ready = true;
     return r;
 }
@@ -550,10 +563,9 @@ void capture_thread(kis_capture_handler_t *caph) {
         if (localnxp->ready) {
             memset(buf,0x00,256);
             buf_rx_len = nxp_receive_payload(caph, buf, 256);
-            localnxp->reads++;
-            if (buf_rx_len > 0)
-                localnxp->pkts++;
             if (buf_rx_len < 0) {
+                printf("nxp_receive_payload error buf_rx_len:%d\n",buf_rx_len);
+                printf("nxp_receive_payload error %s\n", strerror(errno));
                 cf_send_error(caph, 0, errstr);
                 cf_handler_spindown(caph);
                 break;
@@ -588,8 +600,6 @@ int main(int argc, char *argv[]) {
         .interface = NULL,
         .fd = -1,
 	.ready = false,
-	.reads = 0,
-	.pkts = 0,
     };
 
     pthread_mutex_init(&(localnxp.serial_mutex), NULL);
