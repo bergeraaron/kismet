@@ -131,6 +131,7 @@ printf("\n");
 	if (res < 0) {
             printf("Read Error %s\n", strerror(errno));
             usleep(25);
+            res = 0;
 	}
     }
 
@@ -255,7 +256,17 @@ int nxp_exit_promisc_mode(kis_capture_handler_t *caph) {
 
     uint8_t cmd[7] = {0x02, 0x4E, 0x00, 0x01, 0x00, 0x00, 0x4F};
     uint8_t rep[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
-    return nxp_write_cmd(caph, cmd, 7, rep, 7, NULL, 0);
+    int res = 0;
+    res = nxp_write_cmd(caph, cmd, 7, rep, 7, NULL, 0);
+    if (res < 0) {
+         printf("try a reset\n");
+         nxp_reset(caph);
+         usleep(200);
+    }
+    usleep(50);
+    res = nxp_write_cmd(caph, cmd, 7, rep, 7, NULL, 0);
+    usleep(50);
+    return res;
 }
 
 int nxp_set_channel(kis_capture_handler_t *caph, uint8_t channel) {
