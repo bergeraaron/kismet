@@ -77,7 +77,7 @@ int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,
         printf("flush the buffer\n");
         tcflush(localnxp->fd, TCIOFLUSH);
         // we are transmitting something
-printf("write(%d):",tx_len);
+printf("write(%ld):",tx_len);
 for(int i=0;i<tx_len;i++)
 printf("%02X",tx_buf[i]);
 printf("\n");
@@ -249,6 +249,32 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan) {
     return res;
 }
 
+int nxp_write_cmd_retry(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,
+                  uint8_t *resp, size_t resp_len, uint8_t *rx_buf,
+                  size_t rx_max) {
+    printf("nxp_write_cmd_retry\n");
+    int ret = 0;
+    int retries = 3;
+    int reset = 0;
+    while (retries > 0) {
+        ret = nxp_write_cmd(caph,tx_buf,tx_len,resp,resp_len,rx_buf,rx_max);
+        if (ret >= 0) {
+            usleep(50);
+            break;
+        }
+        usleep(100);
+        retries--;
+        if (retries == 0 && reset == 0) {
+            retries = 3;
+            reset = 1;
+            printf("nxp_reset\n");
+            nxp_reset(caph);
+            usleep(200);
+        }
+    }
+    return ret;
+}
+
 int nxp_exit_promisc_mode(kis_capture_handler_t *caph) {
     // lets flush the buffer
     // local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
@@ -257,20 +283,12 @@ int nxp_exit_promisc_mode(kis_capture_handler_t *caph) {
     uint8_t cmd[7] = {0x02, 0x4E, 0x00, 0x01, 0x00, 0x00, 0x4F};
     uint8_t rep[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
     int res = 0;
-    res = nxp_write_cmd(caph, cmd, 7, rep, 7, NULL, 0);
-    if (res < 0) {
-         printf("try a reset\n");
-         nxp_reset(caph);
-         usleep(200);
-    }
-    usleep(50);
-    res = nxp_write_cmd(caph, cmd, 7, rep, 7, NULL, 0);
-    usleep(50);
+    res = nxp_write_cmd_retry(caph, cmd, 7, rep, 7, NULL, 0);
     return res;
 }
 
 int nxp_set_channel(kis_capture_handler_t *caph, uint8_t channel) {
-    local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
+    // local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
     int res = 0;
 
     res = nxp_exit_promisc_mode(caph);
