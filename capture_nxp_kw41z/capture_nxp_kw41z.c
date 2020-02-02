@@ -46,7 +46,7 @@ typedef struct {
     int fd;
 
     unsigned int channel;
-
+    unsigned int prevchannel;
     char *name;
     char *interface;
     
@@ -113,6 +113,8 @@ printf("\n");
                         if (try_ctr >= 10) {
                             res = -1;  // we fell through
                             printf("too many wrong answers\n");
+			    printf("flush the buffer\n");
+			    tcflush(localnxp->fd,TCIOFLUSH);
                             break;
                         }
 		    }
@@ -289,6 +291,7 @@ int nxp_exit_promisc_mode(kis_capture_handler_t *caph) {
 
 int nxp_set_channel(kis_capture_handler_t *caph, uint8_t channel) {
     // local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
+    printf("nxp_set_channel:%d\n",channel);
     int res = 0;
 
     res = nxp_exit_promisc_mode(caph);
@@ -390,6 +393,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     char *placeholder;
     int placeholder_len;
     char *device = NULL;
+    char *phy = "all";
     char errstr[STATUS_MAX];
     int res = 0;
 
@@ -422,6 +426,12 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
                 localnxp->name);
         return -1;
     }
+
+    // try to pull the phy
+    if ((placeholder_len = cf_find_flag(&placeholder, "phy", definition)) > 0) {
+        phy = strndup(placeholder, placeholder_len);
+    }
+    printf("phy:%s\n",phy);
 
     // try pulling the channel
     if ((placeholder_len = cf_find_flag(&placeholder, "channel", definition)) > 0) {
@@ -462,22 +472,53 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     /* NXP KW41Z supports 11-26 for zigbee and 37-39 for ble */
     char chstr[4];
     int ctr = 0;
+    if (strcmp(phy,"btle") == 0) {
+        printf("btle only!\n");
+        (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 3);
 
-    (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 19);
+        for (int i = 37; i < 40; i++) {
+            snprintf(chstr, 4, "%d", i);
+            (*ret_interface)->channels[ctr] = strdup(chstr);
+            ctr++;
+        }
 
-    for (int i = 11; i < 27; i++) {
-        snprintf(chstr, 4, "%d", i);
-        (*ret_interface)->channels[ctr] = strdup(chstr);
-        ctr++;
+        (*ret_interface)->channels_len = 3;
+	if (*localchan < 37) {
+            *localchan = 37;
+        }
     }
+    else if (strcmp(phy,"zigbee") == 0) {
+        printf("zigbee only!\n");
+        (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 16);
 
-    for (int i = 37; i < 40; i++) {
-        snprintf(chstr, 4, "%d", i);
-        (*ret_interface)->channels[ctr] = strdup(chstr);
-        ctr++;
+        for (int i = 11; i < 27; i++) {
+            snprintf(chstr, 4, "%d", i);
+            (*ret_interface)->channels[ctr] = strdup(chstr);
+            ctr++;
+        }
+
+        (*ret_interface)->channels_len = 16;
+        if (*localchan > 26) {
+            *localchan = 11;
+        }
     }
+    else {
+        (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 19);
 
-    (*ret_interface)->channels_len = 19;
+        for (int i = 11; i < 27; i++) {
+            snprintf(chstr, 4, "%d", i);
+            (*ret_interface)->channels[ctr] = strdup(chstr);
+            ctr++;
+        }
+
+        for (int i = 37; i < 40; i++) {
+            snprintf(chstr, 4, "%d", i);
+            (*ret_interface)->channels[ctr] = strdup(chstr);
+            ctr++;
+        }
+
+        (*ret_interface)->channels_len = 19;
+    }
 
     pthread_mutex_lock(&(localnxp->serial_mutex));
     /* open for r/w but no tty */
@@ -561,12 +602,41 @@ int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *priv
     if (privchan == NULL) {
         return 0;
     }
-    localnxp->ready = false;
-    r = nxp_set_channel(caph, channel->channel);
-    if (r <= 0) {
-        printf("nxp_set_channel:%d\n",r);
+
+    printf("prevchannel:%d channel:%d\n",localnxp->prevchannel,channel->channel);
+
+    if (
+       (localnxp->prevchannel >= 37 && localnxp->prevchannel <= 39)
+       &&
+       (channel->channel >= 11 && channel->channel <= 26)
+       )
+    {
+        printf("**********************************we crossed phy layers**********************************\n");
+        printf("reset\n");
+        nxp_reset(caph);
+        // clear the buffer
+        tcflush(localnxp->fd, TCIOFLUSH);
+        usleep(350);
+	tcflush(localnxp->fd, TCIOFLUSH);
+	printf("back to work\n");
     }
-    localnxp->ready = true;
+
+    if (localnxp->ready == true) {
+        localnxp->ready = false;
+        r = nxp_set_channel(caph, channel->channel);
+        if (r <= 0) {
+            printf("nxp_set_channel:%d\n",r);
+            localnxp->ready = false;
+        }
+        else {
+            tcflush(localnxp->fd, TCIOFLUSH);
+            localnxp->ready = true;
+	    localnxp->prevchannel = channel->channel;
+        }
+    }
+    else {
+	r = 0;
+    }
     return r;
 }
 
@@ -629,6 +699,7 @@ int main(int argc, char *argv[]) {
         .interface = NULL,
         .fd = -1,
 	.ready = false,
+	.prevchannel = 0,
     };
 
     pthread_mutex_init(&(localnxp.serial_mutex), NULL);
@@ -650,7 +721,7 @@ int main(int argc, char *argv[]) {
     cf_handler_set_open_cb(caph, open_callback);
 
     /* Set the callback for probing an interface */
-     cf_handler_set_probe_cb(caph, probe_callback);
+    cf_handler_set_probe_cb(caph, probe_callback);
 
     /* Set the list callback */
     /* cf_handler_set_listdevices_cb(caph, list_callback); */
