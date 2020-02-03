@@ -627,6 +627,16 @@ int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *priv
         if (r <= 0) {
             printf("nxp_set_channel:%d\n",r);
             localnxp->ready = false;
+            printf("**********************************too much junk?**********************************\n");
+	    printf("reset\n");
+            nxp_reset(caph);
+            // clear the buffer
+            tcflush(localnxp->fd, TCIOFLUSH);
+            usleep(350);
+            tcflush(localnxp->fd, TCIOFLUSH);
+            printf("back to work\n");
+            r = 1;
+	    localnxp->ready = true;
         }
         else {
             tcflush(localnxp->fd, TCIOFLUSH);
