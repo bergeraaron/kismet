@@ -37,6 +37,9 @@
 #define CRTSCTS 020000000000 /*should be defined but isn't with the C99*/
 #endif
 
+
+int nxp_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_t rx_max);
+
 /* Unique instance data passed around by capframework */
 typedef struct {
     pthread_mutex_t serial_mutex;
@@ -108,15 +111,15 @@ printf("\n");
                 } else if (res > 0) {
                     if (buf[0] == 0x02) {
                         //we got something from the device
-			ctr = 0;
-                        try_ctr++;
-                        if (try_ctr >= 10) {
+//			ctr = 0;
+//                        try_ctr++;
+//                        if (try_ctr >= 10) {
                             res = -1;  // we fell through
                             printf("too many wrong answers\n");
 			    printf("flush the buffer\n");
 			    tcflush(localnxp->fd,TCIOFLUSH);
                             break;
-                        }
+//                        }
 		    }
 		}
 
@@ -143,13 +146,20 @@ printf("\n");
 
 int nxp_reset(kis_capture_handler_t *caph) {
     uint8_t cmd_1[6] = {0x02, 0xA3, 0x08, 0x00, 0x00, 0xAB};
-    return nxp_write_cmd(caph, cmd_1, 6, NULL, 0, NULL, 0);
+    nxp_write_cmd(caph, cmd_1, 6, NULL, 0, NULL, 0);
+    usleep(100);
+    // lets do some reads, to maybe clear the buffer
+    uint8_t buf[256];
+    for(int i=0;i<100;i++) 
+        nxp_receive_payload(caph, buf, 256);
+    return 1;
 }
 
 int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan) {
-    // first byte is header, last byte is checksum
-    // checksum is basic xor of other bits
-    // for these we can just used precomputed packets
+    /* first byte is header, last byte is checksum
+     * checksum is basic xor of other bits
+     * for these we can just used precomputed packets
+     */
     int res = 0;
     if (chan < 30) {
         uint8_t cmd_1[14] = {0x02, 0x85, 0x09, 0x08, 0x00, 0x52, 0x00,
@@ -162,7 +172,7 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan) {
                              0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAE};
         uint8_t rep_2[8] = {0x02, 0x84, 0x0D, 0x02, 0x00, 0x00, 0x21, 0xAA};
 
-        // channel
+        /* channel */
         cmd_2[6] = chan;
 
         if (chan == 12)
@@ -211,7 +221,7 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan) {
         res = nxp_write_cmd(caph, cmd_4, 14, rep_4, 8, NULL, 0);
         if (res < 0) return res;
     } else {
-        // bluetooth
+        /* bluetooth */
         uint8_t cmd_1[6] = {0x02, 0x52, 0x00, 0x00, 0x00, 0x52};
         uint8_t rep_1[6] = {0x02, 0x52, 0x02, 0x00, 0x00, 0x50};
         res = nxp_write_cmd(caph, cmd_1, 6, rep_1, 6, NULL, 0);
@@ -222,7 +232,7 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan) {
         res = nxp_write_cmd(caph, cmd_2, 7, rep_2, 7, NULL, 0);
         if (res < 0) return res;
 
-        // chan 37 by default
+        /* chan 37 by default */
         uint8_t cmd_3[7] = {0x02, 0x4E, 0x02, 0x01, 0x00, 0x01, 0x4C};
 	uint8_t rep_3[7] = {0x02, 0x4E, 0x82, 0x01, 0x00, 0x00, 0xCD};
 	if (chan == 38) {
@@ -241,13 +251,16 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan) {
         //uint8_t rep_4[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
 	uint8_t rep_4[7] = {0x02, 0x4E, 0x81, 0x01, 0x00, 0x00, 0xCE};
         res = nxp_write_cmd(caph, cmd_4, 7, rep_4, 7, NULL, 0);
-        if (res < 0) return res;
+
+        if (res < 0)
+            return res;
 
         uint8_t cmd_5[7] = {0x02, 0x4E, 0x00, 0x01, 0x00, 0x01, 0x4E};
         uint8_t rep_5[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
         res = nxp_write_cmd(caph, cmd_5, 7, rep_5, 7, NULL, 0);
         if (res < 0) return res;
     }
+
     return res;
 }
 
@@ -304,8 +317,7 @@ int nxp_set_channel(kis_capture_handler_t *caph, uint8_t channel) {
     return res;
 }
 
-int nxp_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf,
-                        size_t rx_max) {
+int nxp_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_t rx_max) {
     return nxp_write_cmd(caph, NULL, 0, NULL, 0, rx_buf, rx_max);
 }
 
@@ -365,7 +377,7 @@ int probe_callback(kis_capture_handler_t *caph, uint32_t seqno,
     /* NXP KW41Z supports 11-26 for zigbee and 37-39 for ble */
     char chstr[4];
     int ctr = 0;
-
+/*
     (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 19);
 
     for (int i = 11; i < 27; i++) {
@@ -373,14 +385,15 @@ int probe_callback(kis_capture_handler_t *caph, uint32_t seqno,
         (*ret_interface)->channels[ctr] = strdup(chstr);
         ctr++;
     }
-
+*/
+    (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 3);
     for (int i = 37; i < 40; i++) {
         snprintf(chstr, 4, "%d", i);
         (*ret_interface)->channels[ctr] = strdup(chstr);
         ctr++;
     }
 
-    (*ret_interface)->channels_len = 19;
+    (*ret_interface)->channels_len = 3;// 19
 
     return 1;
 }
@@ -552,7 +565,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
    
     localnxp->ready = false;
  
-    //nxp_reset(caph);
+    /* nxp_reset(caph); */
 
     res = nxp_exit_promisc_mode(caph);
     if (res < 0) 
@@ -581,7 +594,7 @@ void *chantranslate_callback(kis_capture_handler_t *caph, char *chanstr) {
         return NULL;
     }
 
-    //if (parsechan > 39 || parsechan < 37) {
+    /* if (parsechan > 39 || parsechan < 37) { */
     if (parsechan > 39 || parsechan < 11) {
         snprintf(errstr, STATUS_MAX, "2 unable to parse requested channel '%u'; nxp kw41z channels "
                 "are from 11 to 26 and 37 to 39", parsechan);
@@ -647,6 +660,7 @@ int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *priv
     else {
 	r = 0;
     }
+    
     return r;
 }
 

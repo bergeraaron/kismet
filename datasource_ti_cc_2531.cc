@@ -93,31 +93,31 @@ void kis_datasource_ticc2531::handle_rx_packet(kis_packet *packet) {
         // Copy the actual packet payload into the header
         memcpy(conv_header->payload, &cc_chunk->data[8], cc_payload_len);
 
-        conv_header->version = 0;//currently only one version
-        conv_header->reserved = 0;//must be set to 0
+        conv_header->version = 0;// currently only one version
+        conv_header->reserved = 0;// must be set to 0
 
-        //fcs setting
+        // fcs setting
         conv_header->tlv[0].type = 0;
         conv_header->tlv[0].length = 1;
         conv_header->tlv[0].value = 0;
 
-        //rssi
+        // rssi
         conv_header->tlv[1].type = 10;
         conv_header->tlv[1].length = 1;
         conv_header->tlv[1].value = rssi * -1;
         /*
-        //channel
+        // channel
         conv_header->tlv[2].type = 3;
         conv_header->tlv[2].length = 3;
         conv_header->tlv[2].value = 11;//need to try to pull from some where, but it is not in the packet
         */
-        //size
+        // size
         conv_header->length = sizeof(conv_header)+sizeof(conv_header->tlv)-4;
         cc_chunk->set_data((uint8_t *)conv_header, conv_buf_len, false);
         cc_chunk->dlt = KDLT_IEEE802_15_4_TAP; 	
         #else
 	
-        //so this works
+        // so this works
         uint8_t payload[256]; memset(payload,0x00,256);
         memcpy(payload,&cc_chunk->data[8],cc_payload_len);	
         // Replace the existing packet data with this and update the DLT

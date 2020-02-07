@@ -12538,8 +12538,6 @@ sharedatadir=${sharedatadir}
 
 
 
-
-
 #AC_SUBST(CPPFLAGS)
 #AC_SUBST(CFLAGS)
 #AC_SUBST(CXXFLAGS)

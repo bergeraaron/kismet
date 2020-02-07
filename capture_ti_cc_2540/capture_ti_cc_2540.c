@@ -466,10 +466,11 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
 
     snprintf(cap_if, 32, "ticc2540-%u-%u", busno, devno);
 
-    // try pulling the channel
+    /* try pulling the channel */
     if ((placeholder_len = cf_find_flag(&placeholder, "channel", definition)) > 0) {
         localchanstr = strndup(placeholder, placeholder_len);
-        localchan = atoi(localchanstr); 
+        localchan = (unsigned int *) malloc(sizeof(unsigned int));
+        *localchan = atoi(localchanstr);
         free(localchanstr);
 
         if (localchan == NULL) {
@@ -482,7 +483,6 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         localchan = (unsigned int *) malloc(sizeof(unsigned int));
         *localchan = 37;
     }
-
 
     localticc2540->devno = devno;
     localticc2540->busno = busno;
@@ -570,9 +570,9 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
 
     ticc2540_set_power(caph, 0x04, TICC2540_POWER_RETRIES);
 
-    ticc2540_set_channel(caph, localchan);
+    ticc2540_set_channel(caph, *localchan);
     
-    localticc2540->channel = localchan;
+    localticc2540->channel = *localchan;
 
     ticc2540_enter_promisc_mode(caph);
 
