@@ -77,16 +77,10 @@ int nxp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,
 
     if (tx_len > 0) {
         // lets flush the buffer
-        printf("flush the buffer\n");
         tcflush(localnxp->fd, TCIOFLUSH);
         // we are transmitting something
-printf("write(%ld):",tx_len);
-for(int i=0;i<tx_len;i++)
-printf("%02X",tx_buf[i]);
-printf("\n");
 	    res = write(localnxp->fd, tx_buf, tx_len);
             if (res < 0) {
-                printf("error write:%d\n",res);
                 return res;
             }
         if (resp_len > 0) {
@@ -96,17 +90,9 @@ printf("\n");
                 memset(buf,0x00,255);
 		found = false;
 		res = read(localnxp->fd, buf, 255);
-if(res > 0)
-{
-printf("read(%d):",res);
-for(int i=0;i<res;i++)
-printf("%02X",buf[i]);
-printf("\n");
-}
 		// currently if we get something back that is fine and continue
                 if (res > 0 && memcmp(buf, resp, resp_len) == 0) {
                     found = true;
-		    printf("found\n");
                     break;
                 } else if (res > 0) {
                     if (buf[0] == 0x02) {
@@ -115,8 +101,6 @@ printf("\n");
 //                        try_ctr++;
 //                        if (try_ctr >= 10) {
                             res = -1;  // we fell through
-                            printf("too many wrong answers\n");
-			    printf("flush the buffer\n");
 			    tcflush(localnxp->fd,TCIOFLUSH);
                             break;
 //                        }
@@ -127,14 +111,12 @@ printf("\n");
             }//looking loop
             if (!found) {
                 res = -1;  // we fell through
-                printf("not found\n");
 	    }
         } else
             res = 1;  // no response requested
     } else if (rx_max > 0) {
         res = read(localnxp->fd, rx_buf, rx_max);
 	if (res < 0) {
-            printf("Read Error %s\n", strerror(errno));
             usleep(25);
             res = 0;
 	}
@@ -267,7 +249,6 @@ int nxp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan) {
 int nxp_write_cmd_retry(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,
                   uint8_t *resp, size_t resp_len, uint8_t *rx_buf,
                   size_t rx_max) {
-    printf("nxp_write_cmd_retry\n");
     int ret = 0;
     int retries = 3;
     int reset = 0;
@@ -282,7 +263,6 @@ int nxp_write_cmd_retry(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_
         if (retries == 0 && reset == 0) {
             retries = 3;
             reset = 1;
-            printf("nxp_reset\n");
             nxp_reset(caph);
             usleep(200);
         }
@@ -304,7 +284,6 @@ int nxp_exit_promisc_mode(kis_capture_handler_t *caph) {
 
 int nxp_set_channel(kis_capture_handler_t *caph, uint8_t channel) {
     // local_nxp_t *localnxp = (local_nxp_t *) caph->userdata;
-    printf("nxp_set_channel:%d\n",channel);
     int res = 0;
 
     res = nxp_exit_promisc_mode(caph);
@@ -444,7 +423,6 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     if ((placeholder_len = cf_find_flag(&placeholder, "phy", definition)) > 0) {
         phy = strndup(placeholder, placeholder_len);
     }
-    printf("phy:%s\n",phy);
 
     // try pulling the channel
     if ((placeholder_len = cf_find_flag(&placeholder, "channel", definition)) > 0) {
@@ -486,7 +464,6 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     char chstr[4];
     int ctr = 0;
     if (strcmp(phy,"btle") == 0) {
-        printf("btle only!\n");
         (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 3);
 
         for (int i = 37; i < 40; i++) {
@@ -501,7 +478,6 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         }
     }
     else if (strcmp(phy,"zigbee") == 0) {
-        printf("zigbee only!\n");
         (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 16);
 
         for (int i = 11; i < 27; i++) {
@@ -616,38 +592,29 @@ int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *priv
         return 0;
     }
 
-    printf("prevchannel:%d channel:%d\n",localnxp->prevchannel,channel->channel);
-
     if (
        (localnxp->prevchannel >= 37 && localnxp->prevchannel <= 39)
        &&
        (channel->channel >= 11 && channel->channel <= 26)
        )
     {
-        printf("**********************************we crossed phy layers**********************************\n");
-        printf("reset\n");
         nxp_reset(caph);
         // clear the buffer
         tcflush(localnxp->fd, TCIOFLUSH);
         usleep(350);
 	tcflush(localnxp->fd, TCIOFLUSH);
-	printf("back to work\n");
     }
 
     if (localnxp->ready == true) {
         localnxp->ready = false;
         r = nxp_set_channel(caph, channel->channel);
         if (r <= 0) {
-            printf("nxp_set_channel:%d\n",r);
             localnxp->ready = false;
-            printf("**********************************too much junk?**********************************\n");
-	    printf("reset\n");
             nxp_reset(caph);
             // clear the buffer
             tcflush(localnxp->fd, TCIOFLUSH);
             usleep(350);
             tcflush(localnxp->fd, TCIOFLUSH);
-            printf("back to work\n");
             r = 1;
 	    localnxp->ready = true;
         }
@@ -687,8 +654,6 @@ void capture_thread(kis_capture_handler_t *caph) {
             memset(buf,0x00,256);
             buf_rx_len = nxp_receive_payload(caph, buf, 256);
             if (buf_rx_len < 0) {
-                printf("nxp_receive_payload error buf_rx_len:%d\n",buf_rx_len);
-                printf("nxp_receive_payload error %s\n", strerror(errno));
                 cf_send_error(caph, 0, errstr);
                 cf_handler_spindown(caph);
                 break;
