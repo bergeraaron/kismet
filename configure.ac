@@ -41,6 +41,7 @@ BUILD_CAPTURE_TI_CC_2531=0
 BUILD_CAPTURE_UBERTOOTH_ONE=0
 BUILD_CAPTURE_NRF_51822=0
 BUILD_CAPTURE_NXP_KW41Z=0
+BUILD_CAPTURE_ATZB_233=0
 
 DATASOURCE_BINS="\$(CAPTURE_KISMETDB)"
 
@@ -1502,6 +1503,8 @@ DATASOURCE_BINS="$DATASOURCE_BINS \$(CAPTURE_NRF_51822)"
 BUILD_CAPTURE_NXP_KW41Z=1
 DATASOURCE_BINS="$DATASOURCE_BINS \$(CAPTURE_NXP_KW41Z)"
 
+BUILD_CAPTURE_ATZB_233=1
+DATASOURCE_BINS="$DATASOURCE_BINS \$(CAPTURE_ATZB_233)"
 
 if test "$darwin" = "yes"; then
 	suidgroup="staff"
@@ -1628,12 +1631,13 @@ AC_SUBST(BUILD_CAPTURE_TI_CC_2531)
 AC_SUBST(BUILD_CAPTURE_UBERTOOTH_ONE)
 AC_SUBST(BUILD_CAPTURE_NRF_51822)
 AC_SUBST(BUILD_CAPTURE_NXP_KW41Z)
+AC_SUBST(BUILD_CAPTURE_ATZB_233)
 
 #AC_SUBST(CPPFLAGS)
 #AC_SUBST(CFLAGS)
 #AC_SUBST(CXXFLAGS)
 
-AC_CONFIG_FILES([Makefile Makefile.inc packaging/kismet.pc packaging/systemd/kismet.service packaging/systemd/debug/kismet-debug.service capture_linux_bluetooth/Makefile capture_linux_wifi/Makefile capture_osx_corewlan_wifi/Makefile capture_sdr_rtl433/Makefile capture_sdr_rtlamr/Makefile capture_sdr_rtladsb/Makefile capture_freaklabs_zigbee/Makefile capture_nrf_mousejack/Makefile capture_ti_cc_2540/Makefile capture_ti_cc_2531/Makefile capture_ubertooth_one/Makefile capture_nrf_51822/Makefile capture_nxp_kw41z/Makefile])
+AC_CONFIG_FILES([Makefile Makefile.inc packaging/kismet.pc packaging/systemd/kismet.service packaging/systemd/debug/kismet-debug.service capture_linux_bluetooth/Makefile capture_linux_wifi/Makefile capture_osx_corewlan_wifi/Makefile capture_sdr_rtl433/Makefile capture_sdr_rtlamr/Makefile capture_sdr_rtladsb/Makefile capture_freaklabs_zigbee/Makefile capture_nrf_mousejack/Makefile capture_ti_cc_2540/Makefile capture_ti_cc_2531/Makefile capture_ubertooth_one/Makefile capture_nrf_51822/Makefile capture_nxp_kw41z/Makefile capture_atzb_x_233_usb/Makefile])
 AC_OUTPUT
 
 echo
@@ -1750,6 +1754,14 @@ if test "$BUILD_CAPTURE_NXP_KW41Z" = 1; then
 else
         echo "no";
 fi
+
+printf " ATMEL ATZB 233 Zigbee: "
+if test "$BUILD_CAPTURE_ATZB_233" = 1; then
+	echo "yes";
+else
+	echo "no";
+fi
+
 
 printf "        Python Modules: "
 if test "$BUILD_PYTHON_MODULES" = 1; then

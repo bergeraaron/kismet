@@ -133,6 +133,9 @@ BUILD_CAPTURE_NRF_51822 = @BUILD_CAPTURE_NRF_51822@
 CAPTURE_NXP_KW41Z = capture_nxp_kw41z/kismet_cap_nxp_kw41z
 BUILD_CAPTURE_NXP_KW41Z = @BUILD_CAPTURE_NXP_KW41Z@
 
+CAPTURE_ATZB_233 = capture_atzb_x_233_usb/kismet_cap_atzb_x_233_usb
+BUILD_CAPTURE_ATZB_233 = @BUILD_CAPTURE_ATZB_233@
+
 # Capture binaries to build
 DATASOURCE_BINS = @DATASOURCE_BINS@
 
@@ -197,7 +200,7 @@ PSO	= util.cc.o macaddr.cc.o uuid.cc.o xxhash.cc.o boost_like_hash.cc.o sqlite3_
 	dlttracker.cc.o antennatracker.cc.o datasourcetracker.cc.o kis_datasource.cc.o \
 	datasource_linux_bluetooth.cc.o datasource_rtl433.cc.o datasource_rtlamr.cc.o datasource_rtladsb.cc.o \
 	datasource_ti_cc_2540.cc.o datasource_ti_cc_2531.cc.o datasource_ubertooth_one.cc.o datasource_nrf_51822.cc.o \
-	datasource_nxp_kw41z.cc.o\
+	datasource_nxp_kw41z.cc.o datasource_atzb_x_233_usb.cc.o \
 	kis_net_microhttpd.cc.o kis_net_microhttpd_handlers.cc.o system_monitor.cc.o base64.cc.o \
 	kis_httpd_websession.cc.o kis_httpd_registry.cc.o \
 	gpstracker.cc.o kis_gps.cc.o gpsnmea.cc.o gpsserial2.cc.o gpstcp.cc.o \
@@ -319,6 +322,9 @@ $(CAPTURE_NRF_51822): $(PROTOBUF_C_H) $(DATASOURCE_COMMON_A) FORCE
 $(CAPTURE_NXP_KW41Z): $(PROTOBUF_C_H) $(DATASOURCE_COMMON_A) FORCE
 	(cd capture_nxp_kw41z && $(MAKE))
 
+$(CAPTURE_ATZB_233): $(PROTOBUF_C_H) $(DATASOURCE_COMMON_A) FORCE
+	(cd capture_atzb_x_233_usb && $(MAKE))
+
 $(CAPTURE_FREAKLABS_ZIGBEE): FORCE
 	(cd capture_freaklabs_zigbee && $(MAKE))
 
@@ -366,6 +372,10 @@ binsuidinstall: $(DATASOURCE_BINS)
 
 	@if test "$(BUILD_CAPTURE_NXP_KW41Z)"x = "1"x; then \
 		$(INSTALL) -o $(INSTUSR) -g $(SUIDGROUP) -m 4550 $(CAPTURE_NXP_KW41Z) $(BIN)/`basename $(CAPTURE_NXP_KW41Z)`; \
+	fi;
+
+	@if test "$(BUILD_CAPTURE_ATZB_233)"x = "1"x; then \
+		$(INSTALL) -o $(INSTUSR) -g $(SUIDGROUP) -m 4550 $(CAPTURE_ATZB_233) $(BIN)/`basename $(CAPTURE_ATZB_233)`; \
 	fi;
 
 commoninstall: $(INSTBINS)
@@ -432,6 +442,10 @@ commoninstall: $(INSTBINS)
 
 	@if test "$(BUILD_CAPTURE_NXP_KW41Z)"x = "1"x; then \
 		$(INSTALL) -o $(INSTUSR) -g $(INSTGRP) $(CAPTURE_NXP_KW41Z) $(BIN)/`basename $(CAPTURE_NXP_KW41Z)`; \
+	fi;
+
+	@if test "$(BUILD_CAPTURE_ATZB_233)"x = "1"x; then \
+		$(INSTALL) -o $(INSTUSR) -g $(INSTGRP) $(CAPTURE_ATZB_233) $(BIN)/`basename $(CAPTURE_ATZB_233)`; \
 	fi;
 
 	@if test "$(BUILD_CAPTURE_SDR_RTL433)"x = "1"x; then \
@@ -616,6 +630,7 @@ clean:
 	@(cd capture_ubertooth_one && make clean)
 	@(cd capture_nrf_51822 && make clean)
 	@(cd capture_nxp_kw41z && make clean)
+	@(cd capture_atzb_x_233_usb && make clean)
 
 	@-rm -f $(DATASOURCE_COMMON_A)
 	@-rm -f protobuf_cpp/*.pb.*

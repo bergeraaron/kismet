@@ -68,55 +68,77 @@ int atzb_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len, 
 
     uint8_t buf[255];
     uint16_t ctr = 0;
+    uint16_t try_ctr = 0;
     int8_t res = 0;
     bool found = false;
     local_atzb_t *localatzb = (local_atzb_t *) caph->userdata;
     pthread_mutex_lock(&(localatzb->serial_mutex));
 
     if (tx_len > 0) {
-        /* lets flush the buffer */
+        // lets flush the buffer
+        printf("flush the buffer\n");
         tcflush(localatzb->fd, TCIOFLUSH);
-        /* we are transmitting something */
+        // we are transmitting something
+printf("write(%ld):",tx_len);
+for(int i=0;i<tx_len;i++)
+printf("%02X",tx_buf[i]);
+printf("\n");
 	    res = write(localatzb->fd, tx_buf, tx_len);
-        if (res < 0) {
-            return res;
-        }
+            if (res < 0) {
+                printf("error write:%d\n",res);
+                return res;
+            }
         if (resp_len > 0) {
-            /* looking for a response */
+            // looking for a response
             while (ctr < 5000) {
                 usleep(25);
                 memset(buf,0x00,255);
-                found = false;
-                res = read(localatzb->fd, buf, 255);
-                /* currently if we get something back that is fine and continue */
+		found = false;
+		res = read(localatzb->fd, buf, 255);
+if(res > 0)
+{
+printf("read(%d):",res);
+for(int i=0;i<res;i++)
+printf("%02X",buf[i]);
+printf("\n");
+}
+		// currently if we get something back that is fine and continue
                 if (res > 0 && memcmp(buf, resp, resp_len) == 0) {
                     found = true;
+		    printf("found\n");
                     break;
                 } else if (res > 0) {
-                    if (buf[0] == 0x02) {
-                        /* we got something from the device */
-                        res = -1;  // we fell through
-                        tcflush(localatzb->fd,TCIOFLUSH);
-                        break;
-                    }
-                }
+                        //we got something from the device
+//			ctr = 0;
+//                        try_ctr++;
+//                        if (try_ctr >= 10) {
+                            res = -1;  // we fell through
+                            printf("too many wrong answers\n");
+			    printf("flush the buffer\n");
+			    tcflush(localatzb->fd,TCIOFLUSH);
+                            break;
+//                        }
+		}
+
                 ctr++;
-            }
+            }//looking loop
             if (!found) {
                 res = -1;  // we fell through
-            }
-        } else {
+                printf("not found\n");
+	    }
+        } else
             res = 1;  // no response requested
-        }
     } else if (rx_max > 0) {
         res = read(localatzb->fd, rx_buf, rx_max);
-	    if (res < 0) {
+	if (res < 0) {
+            printf("Read Error %s\n", strerror(errno));
             usleep(25);
             res = 0;
-        }
+	}
     }
 
     pthread_mutex_unlock(&(localatzb->serial_mutex));
+
     return res;
 }
 
@@ -125,14 +147,7 @@ int atzb_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_t rx
 }
 
 int atzb_reset(kis_capture_handler_t *caph) {
-    uint8_t cmd_1[6] = {0x02, 0xA3, 0x08, 0x00, 0x00, 0xAB};
-    uint8_t buf[256];
-
-    atzb_write_cmd(caph, cmd_1, 6, NULL, 0, NULL, 0);
-    usleep(100);
-    /* lets do some reads, to maybe clear the buffer */
-    for (int i = 0; i < 100; i++) 
-        atzb_receive_payload(caph, buf, 256);
+    printf("not really reset\n");
 
     return 1;
 }
@@ -143,111 +158,43 @@ int atzb_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan) {
      * for these we can just used precomputed packets
      */
     int res = 0;
-    if (chan < 30) {
-        uint8_t cmd_1[14] = {0x02, 0x85, 0x09, 0x08, 0x00, 0x52, 0x00,
-                             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD6};
-        uint8_t rep_1[8] = {0x02, 0x84, 0x0D, 0x02, 0x00, 0x00, 0x52, 0xD9};
-        res = atzb_write_cmd(caph, cmd_1, 14, rep_1, 8, NULL, 0);
-        if (res < 0)
-            return res;
+        
+    uint8_t cmd_1[5] = {0x01, 0x02, 0x02, 0x04, 0x04};
+    uint8_t rep_1[6] = {0x01, 0x03, 0x02, 0x04, 0x38, 0x04};
+    res = atzb_write_cmd(caph, cmd_1, 5, rep_1, 6, NULL, 0);
+    if (res < 0)
+        return res;
 
-        uint8_t cmd_2[14] = {0x02, 0x85, 0x09, 0x08, 0x00, 0x21, 0x0B,
-                             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAE};
-        uint8_t rep_2[8] = {0x02, 0x84, 0x0D, 0x02, 0x00, 0x00, 0x21, 0xAA};
+    uint8_t cmd_2[5] = {0x01, 0x02, 0x02, 0x0B, 0x04};
+    uint8_t rep_2[6] = {0x01, 0x03, 0x02, 0x0B, 0x0B, 0x04};
+    res = atzb_write_cmd(caph, cmd_2, 5, rep_2, 6, NULL, 0);
+    if (res < 0)
+        return res;
 
-        /* channel */
-        cmd_2[6] = chan;
+    uint8_t cmd_3[5] = {0x01, 0x02, 0x02, 0x03, 0x04};
+    uint8_t rep_3[9] = {0x01, 0x06, 0x02, 0x03, 0xC8, 0x00, 0x00, 0x00, 0x04};
+    res = atzb_write_cmd(caph, cmd_3, 5, rep_3, 9, NULL, 0);
+    if (res < 0)
+        return res;
 
-        if (chan == 12)
-            cmd_2[13] = 0xA9;
-        else if (chan == 13)
-            cmd_2[13] = 0xA8;
-        else if (chan == 14)
-            cmd_2[13] = 0xAB;
-        else if (chan == 15)
-            cmd_2[13] = 0xAA;
-        else if (chan == 16)
-            cmd_2[13] = 0xB5;
-        else if (chan == 17)
-            cmd_2[13] = 0xB4;
-        else if (chan == 18)
-            cmd_2[13] = 0xB7;
-        else if (chan == 19)
-            cmd_2[13] = 0xB6;
-        else if (chan == 20)
-            cmd_2[13] = 0xB1;
-        else if (chan == 21)
-            cmd_2[13] = 0xB0;
-        else if (chan == 22)
-            cmd_2[13] = 0xB3;
-        else if (chan == 23)
-            cmd_2[13] = 0xB2;
-        else if (chan == 24)
-            cmd_2[13] = 0xBD;
-        else if (chan == 25)
-            cmd_2[13] = 0xBC;
-        else if (chan == 26)
-            cmd_2[13] = 0xBF;
+    uint8_t cmd_4[6] = {0x01, 0x03, 0x02, 0x01, 0x0B, 0x04};
+    cmd_4[4] = chan;//set the chan
+    uint8_t rep_4[6] = {0x01, 0x03, 0x02, 0x01, 0x01, 0x04};
+    res = atzb_write_cmd(caph, cmd_4, 6, rep_4, 6, NULL, 0);
+    if (res < 0)
+        return res;
 
-        res = atzb_write_cmd(caph, cmd_2, 14, rep_2, 8, NULL, 0);
-        if (res < 0)
-            return res;
+    uint8_t cmd_5[6] = {0x01, 0x03, 0x02, 0x02, 0x00, 0x04};
+    uint8_t rep_5[6] = {0x01, 0x03, 0x02, 0x02, 0x01, 0x04};
+    res = atzb_write_cmd(caph, cmd_5, 6, rep_5, 6, NULL, 0);
+    if (res < 0)
+        return res;
 
-        uint8_t cmd_3[14] = {0x02, 0x85, 0x09, 0x08, 0x00, 0x51, 0x01,
-                             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD4};
-        uint8_t rep_3[8] = {0x02, 0x84, 0x0D, 0x02, 0x00, 0x00, 0x51, 0xDA};
-        res = atzb_write_cmd(caph, cmd_3, 14, rep_3, 8, NULL, 0);
-        if (res < 0)
-            return res;
-
-        uint8_t cmd_4[14] = {0x02, 0x85, 0x09, 0x08, 0x00, 0x52, 0x01,
-                             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD7};
-        uint8_t rep_4[8] = {0x02, 0x84, 0x0D, 0x02, 0x00, 0x00, 0x52, 0xD9};
-        res = atzb_write_cmd(caph, cmd_4, 14, rep_4, 8, NULL, 0);
-        if (res < 0)
-            return res;
-    } else {
-        /* bluetooth */
-        uint8_t cmd_1[6] = {0x02, 0x52, 0x00, 0x00, 0x00, 0x52};
-        uint8_t rep_1[6] = {0x02, 0x52, 0x02, 0x00, 0x00, 0x50};
-        res = atzb_write_cmd(caph, cmd_1, 6, rep_1, 6, NULL, 0);
-        if (res < 0)
-            return res;
-
-        uint8_t cmd_2[7] = {0x02, 0x4E, 0x00, 0x01, 0x00, 0x00, 0x4F};
-        uint8_t rep_2[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
-        res = atzb_write_cmd(caph, cmd_2, 7, rep_2, 7, NULL, 0);
-        if (res < 0)
-            return res;
-
-        /* chan 37 by default */
-        uint8_t cmd_3[7] = {0x02, 0x4E, 0x02, 0x01, 0x00, 0x01, 0x4C};
-        uint8_t rep_3[7] = {0x02, 0x4E, 0x82, 0x01, 0x00, 0x00, 0xCD};
-        if (chan == 38) {
-            cmd_3[5] = 0x02;
-            cmd_3[6] = 0x4F;
-        }
-        if (chan == 39) {
-            cmd_3[5] = 0x04;
-            cmd_3[6] = 0x49;
-        }
-
-        res = atzb_write_cmd(caph, cmd_3, 7, rep_3, 7, NULL, 0);
-        if (res < 0) return res;
-
-        uint8_t cmd_4[7] = {0x02, 0x4E, 0x01, 0x01, 0x00, 0x00, 0x4E};
-        uint8_t rep_4[7] = {0x02, 0x4E, 0x81, 0x01, 0x00, 0x00, 0xCE};
-        res = atzb_write_cmd(caph, cmd_4, 7, rep_4, 7, NULL, 0);
-
-        if (res < 0)
-            return res;
-
-        uint8_t cmd_5[7] = {0x02, 0x4E, 0x00, 0x01, 0x00, 0x01, 0x4E};
-        uint8_t rep_5[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
-        res = atzb_write_cmd(caph, cmd_5, 7, rep_5, 7, NULL, 0);
-        if (res < 0)
-            return res;
-    }
+    uint8_t cmd_6[5] = {0x01, 0x02, 0x02, 0x05, 0x04};
+    uint8_t rep_6[6] = {0x01, 0x03, 0x02, 0x05, 0x01, 0x04};
+    res = atzb_write_cmd(caph, cmd_6, 5, rep_6, 6, NULL, 0);
+    if (res < 0)
+        return res;
 
     return res;
 }
@@ -276,11 +223,11 @@ int atzb_write_cmd_retry(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx
 }
 
 int atzb_exit_promisc_mode(kis_capture_handler_t *caph) {
-    uint8_t cmd[7] = {0x02, 0x4E, 0x00, 0x01, 0x00, 0x00, 0x4F};
-    uint8_t rep[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
+    uint8_t cmd[5] = {0x01, 0x02, 0x02, 0x08, 0x04};
+    //uint8_t rep[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
     int res = 0;
 
-    res = atzb_write_cmd_retry(caph, cmd, 7, rep, 7, NULL, 0);
+    res = atzb_write_cmd_retry(caph, cmd, 5, NULL, 0, NULL, 0);
 
     return res;
 }
@@ -355,14 +302,15 @@ int probe_callback(kis_capture_handler_t *caph, uint32_t seqno,
     char chstr[4];
     int ctr = 0;
 
-    (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 3);
-    for (int i = 37; i < 40; i++) {
+    (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 16);
+
+    for (int i = 11; i < 27; i++) {
         snprintf(chstr, 4, "%d", i);
         (*ret_interface)->channels[ctr] = strdup(chstr);
         ctr++;
     }
 
-    (*ret_interface)->channels_len = 3;// 19
+    (*ret_interface)->channels_len = 16;
 
     return 1;
 }
@@ -371,6 +319,8 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         char *msg, uint32_t *dlt, char **uuid, KismetExternal__Command *frame,
         cf_params_interface_t **ret_interface,
         cf_params_spectrum_t **ret_spectrum) {
+
+printf("open_callback\n");
 
     char *placeholder;
     int placeholder_len;
@@ -461,6 +411,8 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         *localchan = 11;
     }
 
+printf("opendevice\n");
+
     pthread_mutex_lock(&(localatzb->serial_mutex));
     /* open for r/w but no tty */
     localatzb->fd = open(device, O_RDWR | O_NOCTTY);
@@ -494,10 +446,15 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     localatzb->ready = false;
  
     /* atzb_reset(caph); */
+/**
+    printf("atzb_exit_promisc_mode\n");
 
     res = atzb_exit_promisc_mode(caph);
     if (res < 0) 
         return -1;
+**/
+
+printf("atzb_enter_promisc_mode\n");
 
     res = atzb_enter_promisc_mode(caph, *localchan);
     if (res < 0) 
@@ -539,17 +496,10 @@ int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *priv
     local_channel_t *channel = (local_channel_t *) privchan;
     int r;
 
+printf("chancontrol_callback\n");
+
     if (privchan == NULL) {
         return 0;
-    }
-    /* crossing the phy layer */
-    if ( (localatzb->prevchannel >= 37 && localatzb->prevchannel <= 39) &&
-       (channel->channel >= 11 && channel->channel <= 26) ) {
-        atzb_reset(caph);
-        // clear the buffer
-        tcflush(localatzb->fd, TCIOFLUSH);
-        usleep(350);
-        tcflush(localatzb->fd, TCIOFLUSH);
     }
 
     if (localatzb->ready == true) {

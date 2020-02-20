@@ -48,8 +48,8 @@ public:
         // Set the capture binary
         set_int_source_ipc_binary("kismet_cap_atzb_x_233_usb");
 
-        // We synthesize BTLE_LL_RADIO headers
-        set_int_source_dlt(KDLT_BTLE_RADIO);
+        // We synthesize ZIGBEE headers
+        set_int_source_dlt(KDLT_IEEE802_15_4_NOFCS);
 
         pack_comp_decap =
             packetchain->register_packet_component("DECAP");
