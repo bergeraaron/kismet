@@ -40,6 +40,12 @@ void kis_datasource_atzbx233usb::handle_rx_packet(kis_packet *packet) {
 
     printf("received zigbee packet\n");
 
+    for(int i=0;i<atzb_chunk->length;i++)
+    {
+        printf("%02X",atzb_chunk->data[i]);
+    }
+    printf("\n");
+
     delete (packet);
     return;
 }

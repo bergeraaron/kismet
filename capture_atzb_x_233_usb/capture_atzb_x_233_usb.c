@@ -109,15 +109,16 @@ printf("\n");
                     break;
                 } else if (res > 0) {
                         //we got something from the device
-//			ctr = 0;
-//                        try_ctr++;
-//                        if (try_ctr >= 10) {
+			printf("we got something from the device\n");
+			ctr = 0;
+                        try_ctr++;
+                        if (try_ctr >= 10) {
                             res = -1;  // we fell through
                             printf("too many wrong answers\n");
 			    printf("flush the buffer\n");
 			    tcflush(localatzb->fd,TCIOFLUSH);
                             break;
-//                        }
+                        }
 		}
 
                 ctr++;
@@ -224,10 +225,10 @@ int atzb_write_cmd_retry(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx
 
 int atzb_exit_promisc_mode(kis_capture_handler_t *caph) {
     uint8_t cmd[5] = {0x01, 0x02, 0x02, 0x08, 0x04};
-    //uint8_t rep[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
+    uint8_t rep[6] = {0x01, 0x03, 0x02, 0x08, 0x01, 0x04};
     int res = 0;
 
-    res = atzb_write_cmd_retry(caph, cmd, 5, NULL, 0, NULL, 0);
+    res = atzb_write_cmd_retry(caph, cmd, 5, rep, 7, NULL, 0);
 
     return res;
 }
@@ -446,13 +447,13 @@ printf("opendevice\n");
     localatzb->ready = false;
  
     /* atzb_reset(caph); */
-/**
+/**/
     printf("atzb_exit_promisc_mode\n");
 
     res = atzb_exit_promisc_mode(caph);
     if (res < 0) 
         return -1;
-**/
+/**/
 
 printf("atzb_enter_promisc_mode\n");
 
@@ -496,7 +497,7 @@ int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *priv
     local_channel_t *channel = (local_channel_t *) privchan;
     int r;
 
-printf("chancontrol_callback\n");
+printf("chancontrol_callback channel:%d\n",channel->channel);
 
     if (privchan == NULL) {
         return 0;
