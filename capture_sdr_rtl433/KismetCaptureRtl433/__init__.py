@@ -133,7 +133,10 @@ class KismetRtl433(object):
         self.kismet.set_opensource_cb(self.datasource_opensource)
         self.kismet.set_probesource_cb(self.datasource_probesource)
 
-        self.kismet.start()
+        r = self.kismet.start()
+
+        if r < 0:
+            return
 
         # If we're connecting remote, kick a newsource
         if self.proberet:
@@ -308,7 +311,7 @@ class KismetRtl433(object):
         intnum = -1
 
         # Try it as a serial number; try this first to deal with serial numbers like 00000000001
-        intnum = self.rtlsdr.rtl_get_index_by_serial(devselector.encode('utf-8'))
+        intnum = self.rtl_get_index_by_serial(devselector.encode('utf-8'))
 
         # Try to find the device as an index
         if intnum < 0:
@@ -316,7 +319,7 @@ class KismetRtl433(object):
                 intnum = int(devselector)
 
                 # Abort if we're not w/in the range
-                if intnum >= self.rtlsdr.rtl_get_device_count():
+                if intnum >= self.rtl_get_device_count():
                     raise ValueError("n/a")
 
             except ValueError:
