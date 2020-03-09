@@ -143,6 +143,8 @@ BUILD_CAPTURE_RZ_KILLERBEE = @BUILD_CAPTURE_RZ_KILLERBEE@
 DATASOURCE_BINS = @DATASOURCE_BINS@
 
 LOGTOOL_KISMETDB_STRIP = log_tools/kismetdb_strip_packets
+LOGTOOL_KISMETDB_STRIP_O = \
+	log_tools/kismetdb_strip_packet_content.c.o
 
 LOGTOOL_KISMETDB_WIGLE = log_tools/kismetdb_to_wiglecsv
 LOGTOOL_KISMETDB_WIGLE_O = \
@@ -152,7 +154,7 @@ LOGTOOL_KISMETDB_WIGLE_O = \
 LOGTOOL_KISMETDB_JSON = log_tools/kismetdb_dump_devices
 LOGTOOL_KISMETDB_JSON_O = \
 	log_tools/kismetdb_dump_devices.cc.o \
-	sqlite3_cpp11.cc.o
+	sqlite3_cpp11.cc.o jsoncpp.cc.o
 
 LOGTOOL_KISMETDB_STATS = log_tools/kismetdb_statistics
 LOGTOOL_KISMETDB_STATS_O = \
@@ -262,8 +264,8 @@ $(PS):	$(PROTOBUF_CPP_O_TARGET) $(PROTOBUF_CPP_H_TARGET) $(PSO) $(patsubst %c.o,
 	@rm -f kismet
 	$(LD) $(LDFLAGS) -o $(PS) $(PSO) version.c.o $(LIBS) $(CXXLIBS) $(PCAPLIBS) $(KSLIBS) -rdynamic
 
-$(LOGTOOL_KISMETDB_STRIP):	log_tools/kismetdb_strip_packet_content.c.o log_tools/kismetdb_strip_packet_content.c.d
-	$(CC) $(LDFLAGS) -o $(LOGTOOL_KISMETDB_STRIP) log_tools/kismetdb_strip_packet_content.c.o -lsqlite3
+$(LOGTOOL_KISMETDB_STRIP):	$(LOGTOOL_KISMETDB_STRIP_O) $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_STRIP_O))
+	$(CC) $(LDFLAGS) -o $(LOGTOOL_KISMETDB_STRIP) $(LOGTOOL_KISMETDB_STRIP_O) -lsqlite3 -rdynamic
 
 $(LOGTOOL_KISMETDB_WIGLE):	$(LOGTOOL_KISMETDB_WIGLE_O) $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_WIGLE_O))
 	$(LD) $(LDFLAGS) -o $(LOGTOOL_KISMETDB_WIGLE) $(LOGTOOL_KISMETDB_WIGLE_O) $(LIBS) $(CXXLIBS) -rdynamic
@@ -599,6 +601,8 @@ release-%:
 	@git checkout -B kismet-`echo $* | cut -d- -f1,2`
 	@git submodule update --remote docs/
 	@git commit docs -m "Doc update for $*" -m "Update docs submodule for release $*"
+	@make manuf
+	@git commit conf/kismet_manuf.txt -m "Manuf update for $*" -m "Update OUI manuf for release $*"
 	@./tools/make_version_h.py $* > version.h
 	@git commit version.h -m "Version bump for $*" -m "Bump versioning for release $*"
 	@git tag kismet-$*
@@ -740,7 +744,6 @@ protobuf_c/%.pb-c.h: protobuf_definitions/%.proto
 
 .PRECIOUS: %.c %.cc %.h %.Td %.c.d %.cc.d protobuf_cpp/%.pb.cc protobuf_cpp/%.pb.h protobuf_c/%.pb-c.c protouf_c/%.pb-c.h
 
-include $(wildcard $(patsubst %cc.o,%cc.d,$(PSO)))
 include $(wildcard $(patsubst %c.o,%c.d,$(PSO)))
 include $(wildcard $(patsubst %c.o,%c.d,$(DATASOURCE_COMMON_C_O)))
 ifneq ($(BUILD_CAPTURE_PCAPFILE)x, "x")
@@ -749,11 +752,11 @@ endif
 ifneq ($(BUILD_CAPTURE_KISMETDB)x, "x")
 	include $(wildcard $(patsubst %c.o,%c.d,$(CAPTURE_KISMETDB_O)))
 endif
-include $(wildcard $(patsubst %cc.o,%cc.d,$(LOGTOOL_KISMETDB_WIGLE_O)))
-include $(wildcard $(patsubst %cc.o,%cc.d,$(LOGTOOL_KISMETDB_STRIP_O)))
-include $(wildcard $(patsubst %cc.o,%cc.d,$(LOGTOOL_KISMETDB_JSON_O)))
-include $(wildcard $(patsubst %cc.o,%cc.d,$(LOGTOOL_KISMETDB_STATS_O)))
-include $(wildcard $(patsubst %cc.o,%cc.d,$(LOGTOOL_KISMETDB_KML_O)))
+include $(wildcard $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_WIGLE_O)))
+include $(wildcard $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_STRIP_O)))
+include $(wildcard $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_JSON_O)))
+include $(wildcard $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_STATS_O)))
+include $(wildcard $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_KML_O)))
 
 .SUFFIXES: .c .cc .o 
 
