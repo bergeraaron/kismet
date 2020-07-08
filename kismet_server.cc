@@ -79,6 +79,8 @@
 #include "datasource_rz_killerbee.h"
 #include "datasource_nrf_52840.h"
 #include "datasource_ti_cc_2531.h"
+#include "datasource_virtual.h"
+#include "datasource_dot11_scan.h"
 
 #include "logtracker.h"
 #include "kis_ppilogfile.h"
@@ -313,7 +315,7 @@ int usage(char *argv) {
            "     --debug                  Disable the console wrapper and the crash\n"
            "                              handling functions, for debugging\n"
            " -f, --config-file <file>     Use alternate configuration file\n"
-           "     --no-line-wrap           Turn of linewrapping of output\n"
+           "     --no-line-wrap           Turn off linewrapping of output\n"
            "                              (for grep, speed, etc)\n"
            " -s, --silent                 Turn off stdout output after setup phase\n"
            "     --daemonize              Spawn detached in the background\n"
@@ -326,6 +328,9 @@ int usage(char *argv) {
            "     --datadir <path>         Use an alternate path as the data\n"
            "                               directory instead of the default set at \n"
            "                               compile time.\n"
+           "     --override <flavor>      Load an alternate configuration override \n"
+           "                               from {confdir}/kismet_{flavor}.conf\n"
+           "                               or as a specific override file.\n"
            );
 
     log_tracker::usage(argv);
@@ -386,7 +391,7 @@ void Load_Kismet_UUID(global_registry *globalreg) {
                 "(or included file)", MSGFLAG_INFO);
 
         globalreg->server_uuid = confuuid;
-        globalreg->server_uuid_hash = adler32_checksum((const char *) confuuid.uuid_block, 16);
+        globalreg->server_uuid_hash = confuuid.hash;
         return;
     }
 
@@ -412,7 +417,7 @@ void Load_Kismet_UUID(global_registry *globalreg) {
 
     _MSG_INFO("Setting server UUID {}", confuuid.uuid_to_string());
     globalreg->server_uuid = confuuid;
-    globalreg->server_uuid_hash = adler32_checksum((const char *) confuuid.uuid_block, 16);
+    globalreg->server_uuid_hash = confuuid.hash;
 }
 
 static sigset_t core_signal_mask;
@@ -473,7 +478,6 @@ int main(int argc, char *argv[], char *envp[]) {
     static struct option wrapper_longopt[] = {
         { "no-ncurses-wrapper", no_argument, 0, 'w' },
         { "no-console-wrapper", no_argument, 0, 'w' },
-        { "show-admin-password", no_argument, 0, 'p' },
         { "daemonize", no_argument, 0, 'D' },
         { "debug", no_argument, 0, 'd' },
         { 0, 0, 0, 0 }
@@ -485,7 +489,6 @@ int main(int argc, char *argv[], char *envp[]) {
     opterr = 0;
 
     bool wrapper = true;
-    bool show_pass = false;
 
     while (1) {
         int r = getopt_long(argc, argv, "-", wrapper_longopt, &option_idx);
@@ -494,8 +497,6 @@ int main(int argc, char *argv[], char *envp[]) {
         if (r == 'w') {
             wrapper = false; 
             glob_linewrap = false;
-        } else if (r == 'p') {
-            show_pass = true;
         } else if (r == 'd') {
             debug_mode = true;
             wrapper = false;
@@ -574,6 +575,9 @@ int main(int argc, char *argv[], char *envp[]) {
     const int hdwc = globalregistry->getopt_long_num++;
     const int cdwc = globalregistry->getopt_long_num++;
     const int ddwc = globalregistry->getopt_long_num++;
+    const int ovwc = globalregistry->getopt_long_num++;
+
+    std::string override_fname;
 
     // Standard getopt parse run
     static struct option main_longopt[] = {
@@ -587,6 +591,7 @@ int main(int argc, char *argv[], char *envp[]) {
         { "homedir", required_argument, 0, hdwc },
         { "confdir", required_argument, 0, cdwc },
         { "datadir", required_argument, 0, ddwc },
+        { "override", required_argument, 0, ovwc },
         { 0, 0, 0, 0 }
     };
 
@@ -626,6 +631,8 @@ int main(int argc, char *argv[], char *envp[]) {
             globalregistry->etc_dir = std::string(optarg);
         } else if (r == ddwc) {
             globalregistry->data_dir = std::string(optarg);
+        } else if (r == ovwc) {
+            override_fname = std::string(optarg);
         }
     }
 
@@ -669,6 +676,27 @@ int main(int argc, char *argv[], char *envp[]) {
     }
 
     conf = new config_file(globalregistry);
+
+    if (override_fname.length() > 0) {
+        struct stat sbuf;
+        if (stat(override_fname.c_str(), &sbuf) == 0) {
+            _MSG_INFO("Adding config override {}", override_fname);
+            conf->set_final_override(override_fname);
+        } else {
+            auto override_fpath = 
+                conf->expand_log_path(fmt::format("%E/kismet_{}.conf", override_fname), "", "", 0, 1);
+
+            if (stat(override_fpath.c_str(), &sbuf) != 0) {
+                _MSG_FATAL("Could not find override option '{}' as a file or in the Kismet config directory as '{}'.",
+                        override_fname, override_fpath);
+                exit(1);
+            }
+
+            _MSG_INFO("Adding config override {}", override_fpath);
+            conf->set_final_override(override_fpath);
+        }
+    }
+
     if (conf->parse_config(configfilename) < 0) {
         exit(1);
     }
@@ -898,6 +926,9 @@ int main(int argc, char *argv[], char *envp[]) {
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_nrf52840_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_ticc2531_builder()));
 
+    // Virtual sources get a special meta-builder
+    datasource_virtual_builder::create_virtualbuilder();
+
     // Create the database logger as a global because it's a special case
     kis_database_logfile::create_kisdatabaselog();
 
@@ -907,6 +938,9 @@ int main(int argc, char *argv[], char *envp[]) {
     logtracker->register_log(shared_log_builder(new ppi_logfile_builder()));
     logtracker->register_log(shared_log_builder(new kis_database_logfile_builder()));
     logtracker->register_log(shared_log_builder(new pcapng_logfile_builder()));
+
+	// Create the scan-only handlers
+	dot11_scan_source::create_dot11_scan_source();
 
     std::shared_ptr<plugin_tracker> plugintracker;
 
@@ -946,9 +980,6 @@ int main(int argc, char *argv[], char *envp[]) {
 
     // finalize any plugins which were waiting for other code to load
     plugintracker->finalize_plugins();
-
-    // We can't call this as a deferred because we don't want to mix
-    devicetracker->load_devices();
 
     // Complain about running as root
     if (getuid() == 0) {

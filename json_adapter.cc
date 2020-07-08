@@ -169,14 +169,14 @@ void json_adapter::pack(std::ostream &stream, shared_tracker_element e,
 
     std::string indent;
     std::string ppendl;
+
+    if (e == nullptr) {
+        return;
+    }
     
     if (prettyprint) {
         indent = std::string(depth, ' ');
         ppendl = "\r\n";
-    }
-
-    if (e == NULL) {
-        return;
     }
 
     serializer_scope s(e, name_map);
@@ -198,8 +198,12 @@ void json_adapter::pack(std::ostream &stream, shared_tracker_element e,
     double d_v;
 
     // If we're serializing an alias, remap as the aliased element
-    if (e->get_type() == tracker_type::tracker_alias)
+    if (e->get_type() == tracker_type::tracker_alias) {
         e = std::static_pointer_cast<tracker_element_alias>(e)->get();
+        if (e == nullptr) {
+            return;
+        }
+    }
 
     switch (e->get_type()) {
         case tracker_type::tracker_string:
@@ -726,6 +730,23 @@ void storage_json_adapter::pack(std::ostream &stream, shared_tracker_element e,
 
     double d_v;
 
+#if 0 
+    We don't really use storagejson; but if we did, I don't think we want to serialize
+    out an alias at all
+
+    // If we're serializing an alias, remap as the aliased element
+    if (e->get_type() == tracker_type::tracker_alias) {
+        e = std::static_pointer_cast<tracker_element_alias>(e)->get();
+        if (e == nullptr)
+            return;
+    }
+#else
+    if (e->get_type() == tracker_type::tracker_alias) {
+        stream << "0";
+        return;
+    }
+#endif
+
     // Every record gets wrapped into it's own object export with metadata
     stream << "{";
 
@@ -741,10 +762,6 @@ void storage_json_adapter::pack(std::ostream &stream, shared_tracker_element e,
 
     // Actual data blob for object
     stream << "\"od\": ";
-
-    // If we're serializing an alias, remap as the aliased element
-    if (e->get_type() == tracker_type::tracker_alias)
-        e = std::static_pointer_cast<tracker_element_alias>(e)->get();
 
     switch (e->get_type()) {
         case tracker_type::tracker_string:

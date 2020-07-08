@@ -166,71 +166,72 @@ LOGTOOL_KISMETDB_KML_O = \
 	log_tools/kismetdb_to_kml.cc.o \
 	sqlite3_cpp11.cc.o jsoncpp.cc.o
 
+LOGTOOL_KISMETDB_GPX = log_tools/kismetdb_to_gpx
+LOGTOOL_KISMETDB_GPX_O = \
+	log_tools/kismetdb_to_gpx.cc.o \
+	sqlite3_cpp11.cc.o jsoncpp.cc.o
+
+LOGTOOL_KISMETDB_CLEAN = log_tools/kismetdb_clean
+LOGTOOL_KISMETDB_CLEAN_O = \
+	log_tools/kismetdb_clean.cc.o \
+	sqlite3_cpp11.cc.o 
+
+LOGTOOL_KISMETDB_PCAP = log_tools/kismetdb_to_pcap
+LOGTOOL_KISMETDB_PCAP_O = \
+	log_tools/kismetdb_to_pcap.cc.o \
+	sqlite3_cpp11.cc.o 
+
 LOGTOOL_BINS = \
 	$(LOGTOOL_KISMETDB_STRIP) \
 	$(LOGTOOL_KISMETDB_WIGLE) \
 	$(LOGTOOL_KISMETDB_JSON) \
 	$(LOGTOOL_KISMETDB_STATS) \
-	$(LOGTOOL_KISMETDB_KML)
-
-# Disabled; Kaitai generates unusable C++ code currently
-# KAITAI_PARSERS = \
-# 	kaitai_parsers/wpaeap.cc.o \
-# 	kaitai_parsers/dot11_ie.cc.o \
-# 	kaitai_parsers/dot11_action.cc.o \
-# 	kaitai_parsers/dot11_ie_7_country.cc.o \
-# 	kaitai_parsers/dot11_ie_11_qbss.cc.o \
-# 	kaitai_parsers/dot11_ie_45_ht.cc.o \
-# 	kaitai_parsers/dot11_ie_48_rsn.cc.o \
-# 	kaitai_parsers/dot11_ie_48_rsn_partial.cc.o \
-# 	kaitai_parsers/dot11_ie_52_rmm_neighbor.cc.o \
-# 	kaitai_parsers/dot11_ie_54_mobility.cc.o \
-# 	kaitai_parsers/dot11_ie_61_ht.cc.o \
-# 	kaitai_parsers/dot11_ie_133_cisco_ccx.cc.o \
-# 	kaitai_parsers/dot11_ie_191_vht_capabilities.cc.o \
-# 	kaitai_parsers/dot11_ie_192_vht_operation.cc.o \
-# 	kaitai_parsers/dot11_ie_221_vendor.cc.o \
-# 	kaitai_parsers/dot11_ie_221_ms_wps.cc.o \
-# 	kaitai_parsers/dot11_ie_221_ms_wmm.cc.o \
-# 	kaitai_parsers/dot11_ie_221_dji_droneid.cc.o \
-# 	kaitai_parsers/dot11_ie_221_wfa_wpa.cc.o
+	$(LOGTOOL_KISMETDB_KML) \
+	$(LOGTOOL_KISMETDB_GPX) \
+	$(LOGTOOL_KISMETDB_CLEAN) \
+	$(LOGTOOL_KISMETDB_PCAP)
 
 PSO	= util.cc.o macaddr.cc.o uuid.cc.o xxhash.cc.o boost_like_hash.cc.o sqlite3_cpp11.cc.o \
 	globalregistry.cc.o eventbus.cc.o \
-	pollabletracker.cc.o ringbuf2.cc.o chainbuf.cc.o filewritebuf.cc.o buffer_handler.cc.o \
+	pollabletracker.cc.o ringbuf2.cc.o ringbuf3.cc.o chainbuf.cc.o filewritebuf.cc.o buffer_handler.cc.o \
 	packet.cc.o messagebus.cc.o configfile.cc.o getopt.cc.o \
 	psutils.cc.o battery.cc.o \
-	tcpserver2.cc.o tcpclient2.cc.o serialclient2.cc.o pipeclient.cc.o socketclient.cc.o ipc_remote2.cc.o \
+	tcpserver2.cc.o tcpclient2.cc.o serialclient2.cc.o pipeclient.cc.o socketclient.cc.o \
+	ipc_remote2.cc.o udpserver.cc.o \
 	$(PROTOBUF_CPP_O_TARGET) kis_external.cc.o \
 	dlttracker.cc.o antennatracker.cc.o datasourcetracker.cc.o kis_datasource.cc.o \
 	datasource_linux_bluetooth.cc.o datasource_rtl433.cc.o datasource_rtlamr.cc.o datasource_rtladsb.cc.o \
 	datasource_ti_cc_2540.cc.o datasource_ti_cc_2531.cc.o datasource_ubertooth_one.cc.o datasource_nrf_51822.cc.o \
+<<<<<<< HEAD
 	datasource_nxp_kw41z.cc.o datasource_nrf_52840.cc.o datasource_rz_killerbee.cc.o\
+=======
+	datasource_nxp_kw41z.cc.o datasource_dot11_scan.cc.o \
+>>>>>>> upstream/master
 	kis_net_microhttpd.cc.o kis_net_microhttpd_handlers.cc.o system_monitor.cc.o base64.cc.o \
 	kis_httpd_websession.cc.o kis_httpd_registry.cc.o \
 	gpstracker.cc.o kis_gps.cc.o gpsnmea.cc.o gpsserial2.cc.o gpstcp.cc.o \
 	gpsgpsd2.cc.o gpsfake.cc.o gpsweb.cc.o \
 	packetchain.cc.o packet_filter.cc.o class_filter.cc.o \
-	trackedelement.cc.o trackedcomponent.cc.o entrytracker.cc.o \
+	trackedelement.cc.o trackedelement_workers.cc.o trackedcomponent.cc.o entrytracker.cc.o \
 	trackedlocation.cc.o devicetracker_component.cc.o \
 	devicetracker_view.cc.o devicetracker_view_workers.cc.o \
 	jsoncpp.cc.o json_adapter.cc.o \
 	plugintracker.cc.o alertracker.cc.o timetracker.cc.o channeltracker2.cc.o \
-	devicetracker.cc.o devicetracker_workers.cc.o devicetracker_httpd.cc.o \
+	devicetracker.cc.o devicetracker_httpd.cc.o \
 	kis_dlt.cc.o kis_dlt_ppi.cc.o kis_dlt_radiotap.cc.o kis_dlt_btle_ll_radio.cc.o \
 	kaitaistream.cc.o \
 	$(PARSERS) \
 	phy_80211.cc.o phy_80211_components.cc.o phy_80211_dissectors.cc.o \
 	phy_rtl433.cc.o phy_rtlamr.cc.o phy_rtladsb.cc.o phy_zwave.cc.o \
 	phy_bluetooth.cc.o phy_uav_drone.cc.o phy_nrf_mousejack.cc.o phy_btle.cc.o \
-	dot11_fingerprint.cc.o kis_dissector_ipdata.cc.o \
-	manuf.cc.o bluetooth_ids.cc.o \
+	phy_80211_ssidtracker.cc.o dot11_fingerprint.cc.o kis_dissector_ipdata.cc.o \
+	manuf.cc.o bluetooth_ids.cc.o adsb_icao.cc.o \
 	logtracker.cc.o kis_ppilogfile.cc.o kis_databaselogfile.cc.o kis_pcapnglogfile.cc.o \
 	messagebus_restclient.cc.o \
 	streamtracker.cc.o \
 	pcapng_stream_ringbuf.cc.o streambuf_stream_buffer.cc.o \
 	devicetracker_httpd_pcap.cc.o phy_80211_httpd_pcap.cc.o \
-	kis_database.cc.o storageloader.cc.o \
+	kis_database.cc.o \
 	kismet_server.cc.o 
 
 PS	= kismet
@@ -250,9 +251,14 @@ all-with-plugins:
 	@make plugins
 
 # Autogen the version file
+ifdef SOURCE_DATE_EPOCH
+	BUILD_DATE ?= $(shell date -u -d "@$(SOURCE_DATE_EPOCH)" 2>/dev/null || date -u -r "$(SOURCE_DATE_EPOCH)" 2>/dev/null || date -u)
+else
+	BUILD_DATE ?= $(shell date)
+endif
 version.c:	FORCE
 	@{ $(GIT) rev-parse --short HEAD 2>/dev/null || echo "non-git-release"; } | awk ' BEGIN {print "#include \"version.h\""} {print "const char *VERSION_GIT_COMMIT = \"" $$0"\";"} END {}' > version.c
-	@date | awk 'BEGIN {} {print "const char *VERSION_BUILD_TIME = \""$$0"\";"} END {} ' >> version.c
+	@echo "$(BUILD_DATE)" | awk 'BEGIN {} {print "const char *VERSION_BUILD_TIME = \""$$0"\";"} END {} ' >> version.c
 
 # Force remove version.c.o since it's left behind owned by root as part of suidinstall, which screws
 # up a lot of builds for people; we assume we can `rm -f` it
@@ -263,6 +269,8 @@ version.c.o : version.c version.c.d
 $(PS):	$(PROTOBUF_CPP_O_TARGET) $(PROTOBUF_CPP_H_TARGET) $(PSO) $(patsubst %c.o,%c.d,$(PSO)) version.c.o
 	@rm -f kismet
 	$(LD) $(LDFLAGS) -o $(PS) $(PSO) version.c.o $(LIBS) $(CXXLIBS) $(PCAPLIBS) $(KSLIBS) -rdynamic
+
+
 
 $(LOGTOOL_KISMETDB_STRIP):	$(LOGTOOL_KISMETDB_STRIP_O) $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_STRIP_O))
 	$(CC) $(LDFLAGS) -o $(LOGTOOL_KISMETDB_STRIP) $(LOGTOOL_KISMETDB_STRIP_O) -lsqlite3 -rdynamic
@@ -278,6 +286,17 @@ $(LOGTOOL_KISMETDB_STATS):	$(LOGTOOL_KISMETDB_STATS_O) $(patsubst %c.o,%c.d,$(LO
 
 $(LOGTOOL_KISMETDB_KML):	$(LOGTOOL_KISMETDB_KML_O) $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_KML_O))
 	$(LD) $(LDFLAGS) -o $(LOGTOOL_KISMETDB_KML) $(LOGTOOL_KISMETDB_KML_O) $(LIBS) $(CXXLIBS) -rdynamic
+
+$(LOGTOOL_KISMETDB_GPX):	$(LOGTOOL_KISMETDB_GPX_O) $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_GPX_O))
+	$(LD) $(LDFLAGS) -o $(LOGTOOL_KISMETDB_GPX) $(LOGTOOL_KISMETDB_GPX_O) $(LIBS) $(CXXLIBS) -rdynamic
+
+$(LOGTOOL_KISMETDB_CLEAN):	$(LOGTOOL_KISMETDB_CLEAN_O) $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_CLEAN_O))
+	$(LD) $(LDFLAGS) -o $(LOGTOOL_KISMETDB_CLEAN) $(LOGTOOL_KISMETDB_CLEAN_O) $(LIBS) $(CXXLIBS) -rdynamic
+
+$(LOGTOOL_KISMETDB_PCAP): 	$(LOGTOOL_KISMETDB_PCAP_O) $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_PCAP_O)) version.c.o
+	$(LD) $(LDFLAGS) -o $(LOGTOOL_KISMETDB_PCAP) $(LOGTOOL_KISMETDB_PCAP_O) version.c.o $(LIBS) $(CXXLIBS) $(PCAPLIBS) -rdynamic
+
+
 
 $(DATASOURCE_COMMON_A):	$(PROTOBUF_C_O) $(PROTOBUF_C_H) $(DATASOURCE_COMMON_C_O)
 	$(AR) rcs $(DATASOURCE_COMMON_A) $(DATASOURCE_COMMON_C_O)
@@ -405,6 +424,9 @@ commoninstall: $(INSTBINS)
 	$(INSTALL) -o $(INSTUSR) -g $(INSTGRP) -m 555 $(LOGTOOL_KISMETDB_WIGLE) $(BIN)/`basename $(LOGTOOL_KISMETDB_WIGLE)`;
 	$(INSTALL) -o $(INSTUSR) -g $(INSTGRP) -m 555 $(LOGTOOL_KISMETDB_STATS) $(BIN)/`basename $(LOGTOOL_KISMETDB_STATS)`;
 	$(INSTALL) -o $(INSTUSR) -g $(INSTGRP) -m 555 $(LOGTOOL_KISMETDB_KML) $(BIN)/`basename $(LOGTOOL_KISMETDB_KML)`;
+	$(INSTALL) -o $(INSTUSR) -g $(INSTGRP) -m 555 $(LOGTOOL_KISMETDB_GPX) $(BIN)/`basename $(LOGTOOL_KISMETDB_GPX)`;
+	$(INSTALL) -o $(INSTUSR) -g $(INSTGRP) -m 555 $(LOGTOOL_KISMETDB_CLEAN) $(BIN)/`basename $(LOGTOOL_KISMETDB_CLEAN)`;
+	$(INSTALL) -o $(INSTUSR) -g $(INSTGRP) -m 555 $(LOGTOOL_KISMETDB_PCAP) $(BIN)/`basename $(LOGTOOL_KISMETDB_PCAP)`;
 
 	mkdir -p $(BIN)
 
@@ -486,7 +508,8 @@ commoninstall: $(INSTBINS)
 	mkdir -p $(HTTPD)
 	cp -r http_data/* $(HTTPD)
 
-	cp conf/kismet_manuf.txt $(SHARE)/kismet_manuf.txt 
+	cp conf/kismet_manuf.txt.gz $(SHARE)/kismet_manuf.txt.gz
+	cp conf/kismet_adsb_icao.txt.gz $(SHARE)/kismet_adsb_icao.txt.gz
 
 
 CONFINSTTARGETS = $(addprefix install_conf_, $(CONFIGFILES))
@@ -502,9 +525,7 @@ FORCECONFINSTTARGETS = $(addprefix install_force_conf_, $(CONFIGFILES))
 ${FORCECONFINSTTARGETS}: install_force_conf_%: 
 	$(INSTALL) -o $(INSTUSR) -g $(INSTGRP) -m 644 conf/$* $(ETC)/$*;  
 
-configsinstall:
-	$(MAKE) $(CONFINSTTARGETS)
-
+configsinstall: $(CONFINSTTARGETS)
 	@echo
 	@echo
 	@echo "Existing config files have not been replaced; if the Kismet "; 
@@ -519,7 +540,7 @@ configsinstall:
 	@echo
 	@echo
 
-suidinstall: $(PS) $(DATASOURCE_BINS)
+suidinstall:
 	-groupadd -r -f $(SUIDGROUP)
 
 	@$(MAKE) -e commoninstall
@@ -549,7 +570,7 @@ suidinstall: $(PS) $(DATASOURCE_BINS)
 	@echo "or you can replace the previously installed config files entirely by running"
 	@echo "make forceconfigs"
 
-install: $(INSTBINS)
+install:
 	@$(MAKE) -e commoninstall
 
 	@$(MAKE) configsinstall
@@ -582,11 +603,15 @@ forceconfigs:
 
 uavconfig:
 	@echo "Generating kismet_uav.conf"
-	@python tools/compile_uav_conf.py conf/kismet_uav.conf.yaml > conf/kismet_uav.conf
+	@$(PYTHON) tools/compile_uav_conf.py conf/kismet_uav.conf.yaml > conf/kismet_uav.conf
 
 manuf:
-	@echo "Generating kismet_manuf.txt"
-	@python tools/create_oui_db.py > conf/kismet_manuf.txt
+	@echo "Generating kismet_manuf.txt.gz"
+	@$(PYTHON) tools/create_oui_db.py | gzip -9 > conf/kismet_manuf.txt.gz
+
+icao:
+	@echo "Generating kismet_adsb_icao.txt.gz"
+	@$(PYTHON) tools/create_icao_db.py | sort | gzip -9 > conf/kismet_adsb_icao.txt.gz
 
 extcappy:
 	@echo "Updating kismetexternal python"
@@ -599,12 +624,30 @@ rtlsdrpy:
 release-%:
 	@echo $*
 	@git checkout -B kismet-`echo $* | cut -d- -f1,2`
+	@git pull origin kismet-`echo $* | cut -d- -f1,2`
 	@git submodule update --remote docs/
 	@git commit docs -m "Doc update for $*" -m "Update docs submodule for release $*"
 	@make manuf
-	@git commit conf/kismet_manuf.txt -m "Manuf update for $*" -m "Update OUI manuf for release $*"
+	@git commit conf/kismet_manuf.txt.gz -m "Manuf update for $*" -m "Update OUI manuf for release $*"
+	@make icao
+	@git commit conf/kismet_adsb_icao.txt.gz -m "ICAO update for $*" -m "Update ADSB ICAO database for release $*"
 	@./tools/make_version_h.py $* > version.h
 	@git commit version.h -m "Version bump for $*" -m "Bump versioning for release $*"
+	@git tag kismet-$*
+	@git archive --format tar --prefix kismet-$*/ kismet-$* | xz > ../kismet-$*.tar.xz
+	@git push origin kismet-`echo $* | cut -d- -f1,2` --tags
+	@git checkout master
+
+subrelease-%:
+	echo $*
+	@git checkout -B kismet-`echo $* | cut -d- -f1,2`
+	@git pull origin kismet-`echo $* | cut -d- -f1,2`
+	@./tools/make_version_h.py $* > version.h
+	@git commit version.h -m "Version bump for $*" -m "Bump versioning for release $*"
+	@make manuf
+	@git commit conf/kismet_manuf.txt.gz -m "Manuf update for $*" -m "Update OUI manuf for release $*"
+	@make icao
+	@git commit conf/kismet_adsb_icao.txt.gz -m "ICAO update for $*" -m "Update ADSB ICAO database for release $*"
 	@git tag kismet-$*
 	@git archive --format tar --prefix kismet-$*/ kismet-$* | xz > ../kismet-$*.tar.xz
 	@git push origin kismet-`echo $* | cut -d- -f1,2` --tags
@@ -617,28 +660,28 @@ rpm:
 
 depclean:
 	@-rm -f *.d
+	@-rm -f bluetooth_parsers/*.d
+	@-rm -f dot11_parsers/*.d
 	@-rm -f log_tools/*.d
 
-clean:
+clean: all-plugins-clean depclean
+	@-rm -f version.c
 	@-rm -f *.o *.mo
-	@-rm -f *.d
 	@-rm -f dot11_parsers/*.o
-	@-rm -f dot11_parsers/*.d
 	@-rm -f bluetooth_parsers/*.o
-	@-rm -f bluetooth_parsers/*.d
 	@-rm -f log_tools/*.o
-	@-rm -f log_tools/*.d
-	@-$(MAKE) all-plugins-clean
 	@-rm -f $(PS)
-	@-rm -f $(BUILD_CAPTURE_PCAPFILE)
-	@-rm -f $(BUILD_CAPTURE_KISMETDB)
-	@-rm -f $(BUILD_CAPTURE_LINUX_WIFI)
-	@-rm -f $(BUILD_CAPTURE_LINUX_BLUETOOTH)
-	@-rm -f $(BUILD_CAPTURE_OSX_COREWLAN)
-	@-rm -f $(BUILD_CAPTURE_HACKRF_SWEEP)
+	@-rm -f $(CAPTURE_PCAPFILE)
+	@-rm -f $(CAPTURE_KISMETDB)
+	@-rm -f $(CAPTURE_LINUX_WIFI)
+	@-rm -f $(CAPTURE_LINUX_BLUETOOTH)
+	@-rm -f $(CAPTURE_OSX_COREWLAN)
+	@-rm -f $(CAPTURE_HACKRF_SWEEP)
+	@-rm -f $(LOGTOOL_BINS)
 	@(cd capture_linux_bluetooth && make clean)
 	@(cd capture_linux_wifi && make clean)
 	@(cd capture_osx_corewlan_wifi && make clean)
+	@(cd capture_freaklabs_zigbee &&  make clean)
 	@(cd capture_sdr_rtl433 && make clean)
 	@(cd capture_sdr_rtlamr && make clean)
 	@(cd capture_sdr_rtladsb && make clean)
@@ -655,9 +698,7 @@ clean:
 	@-rm -f protobuf_cpp/*.pb.*
 	@-rm -f protobuf_c/*.pb-c.*
 
-distclean:
-	@-$(MAKE) clean
-	@-$(MAKE) all-plugins-clean
+distclean: clean
 	@-rm -f *~
 	@-rm -f config.status
 	@-rm -f config.h
@@ -692,21 +733,7 @@ plugins-userinstall: Makefile
 restricted-plugins-userinstall: Makefile
 	@( export KIS_SRC_DIR=`pwd`; for x in restricted-plugin-*/; do  if [ ! -d "$$x" ]; then continue; fi; echo "PLUGIN-USERINSTALL: $$x"; ( cd "$$x"; make userinstall; ); done )
 
-all-plugins: Makefile
-	@$(MAKE) plugins
-	@$(MAKE) restricted-plugins
-
-all-plugins-install: Makefile
-	@$(MAKE) plugins-install
-	@$(MAKE) restricted-plugins-install
-
-all-plugins-userinstall: Makefile
-	@$(MAKE) plugins-userinstall
-	@$(MAKE) restricted-plugins-userinstall
-
-all-plugins-clean: Makefile
-	@$(MAKE) plugins-clean
-	@$(MAKE) restricted-plugins-clean
+all-plugins all-plugins-install all-plugins-userinstall all-plugins-clean: all-%: Makefile % restricted-%
 
 # Disabled
 # kaitai-parsers:
@@ -752,11 +779,17 @@ endif
 ifneq ($(BUILD_CAPTURE_KISMETDB)x, "x")
 	include $(wildcard $(patsubst %c.o,%c.d,$(CAPTURE_KISMETDB_O)))
 endif
+ifneq ($(BUILD_CAPTURE_HACKRF_SWEEP)x, "x")
+	include $(wildcard $(patsubst %c.o,%c.d,$(CAPTURE_HACKRF_SWEEP_O)))
+endif
 include $(wildcard $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_WIGLE_O)))
 include $(wildcard $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_STRIP_O)))
 include $(wildcard $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_JSON_O)))
 include $(wildcard $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_STATS_O)))
 include $(wildcard $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_KML_O)))
+include $(wildcard $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_GPX_O)))
+include $(wildcard $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_CLEAN_O)))
+include $(wildcard $(patsubst %c.o,%c.d,$(LOGTOOL_KISMETDB_PCAP_O)))
 
 .SUFFIXES: .c .cc .o 
 

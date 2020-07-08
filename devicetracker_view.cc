@@ -46,9 +46,9 @@ device_tracker_view::device_tracker_view(const std::string& in_id, const std::st
     auto uri = fmt::format("/devices/views/{}/devices", in_id);
     device_endp =
         std::make_shared<kis_net_httpd_simple_post_endpoint>(uri, 
-                [this](std::ostream& stream, const std::string& uri, shared_structured post_structured,
+                [this](std::ostream& stream, const std::string& uri, const Json::Value& json,
                     kis_net_httpd_connection::variable_cache_map& variable_cache) -> unsigned int {
-                    return device_endpoint_handler(stream, uri, post_structured, variable_cache);
+                    return device_endpoint_handler(stream, uri, json, variable_cache);
                 });
 
     time_endp =
@@ -85,9 +85,9 @@ device_tracker_view::device_tracker_view(const std::string& in_id, const std::st
     auto uri = fmt::format("/devices/views/{}/devices", in_id);
     device_endp =
         std::make_shared<kis_net_httpd_simple_post_endpoint>(uri, 
-                [this](std::ostream& stream, const std::string& uri, shared_structured post_structured,
+                [this](std::ostream& stream, const std::string& uri, const Json::Value& json,
                     kis_net_httpd_connection::variable_cache_map& variable_cache) -> unsigned int {
-                    return device_endpoint_handler(stream, uri, post_structured, variable_cache);
+                    return device_endpoint_handler(stream, uri, json, variable_cache);
                 });
 
     time_endp =
@@ -110,9 +110,9 @@ device_tracker_view::device_tracker_view(const std::string& in_id, const std::st
     uri = fmt::format("/devices/views/{}devices", ss.str());
     device_uri_endp =
         std::make_shared<kis_net_httpd_simple_post_endpoint>(uri, 
-                [this](std::ostream& stream, const std::string& uri, shared_structured post_structured,
+                [this](std::ostream& stream, const std::string& uri, const Json::Value& json,
                     kis_net_httpd_connection::variable_cache_map& variable_cache) -> unsigned int {
-                    return device_endpoint_handler(stream, uri, post_structured, variable_cache);
+                    return device_endpoint_handler(stream, uri, json, variable_cache);
                 });
 
     time_uri_endp =
@@ -177,6 +177,8 @@ std::shared_ptr<tracker_element_vector> device_tracker_view::do_device_work(devi
 
     worker.set_matched_devices(ret);
 
+    worker.finalize();
+
     return ret;
 }
 
@@ -184,7 +186,6 @@ std::shared_ptr<tracker_element_vector> device_tracker_view::do_readonly_device_
         std::shared_ptr<tracker_element_vector> devices) {
     auto ret = std::make_shared<tracker_element_vector>();
     ret->reserve(devices->size());
-    kis_recursive_timed_mutex ret_mutex;
 
     std::for_each(devices->begin(), devices->end(),
             [&](shared_tracker_element val) {
@@ -193,21 +194,18 @@ std::shared_ptr<tracker_element_vector> device_tracker_view::do_readonly_device_
                 return;
 
             auto dev = std::static_pointer_cast<kis_tracked_device_base>(val);
+            local_shared_locker devlocker(&dev->device_mutex);
 
-            bool m;
-            {
-                local_shared_locker devlocker(&dev->device_mutex);
-                m = worker.match_device(dev);
-            }
+            auto m = worker.match_device(dev);
 
-            if (m) {
-                local_locker retl(&ret_mutex);
+            if (m) 
                 ret->push_back(dev);
-            }
 
         });
 
     worker.set_matched_devices(ret);
+
+    worker.finalize();
 
     return ret;
 }
@@ -347,17 +345,14 @@ std::shared_ptr<tracker_element> device_tracker_view::device_time_endpoint(const
     if (path.size() < 6)
         return ret;
 
-    auto tv = string_to_n<int64_t>(path[4], 0);
+    auto tv = string_to_n_dfl<int64_t>(path[4], 0);
     time_t ts;
 
-    // Don't allow 'all' devices b/c it's really expensive
-    if (tv == 0)
-        return ret;
-
-    if (tv < 0)
-        ts = time(0) - tv;
-    else
+    if (tv < 0) {
+        ts = time(0) + tv;
+    } else {
         ts = tv;
+    }
 
     auto worker = 
         device_tracker_view_function_worker([&](std::shared_ptr<kis_tracked_device_base> dev) -> bool {
@@ -413,12 +408,8 @@ std::shared_ptr<tracker_element> device_tracker_view::device_time_uri_endpoint(c
     if (path.size() < (5 + extras_sz))
         return ret;
 
-    auto tv = string_to_n<int64_t>(path[3 + extras_sz], 0);
+    auto tv = string_to_n_dfl<int64_t>(path[3 + extras_sz], 0);
     time_t ts;
-
-    // Don't allow 'all' devices b/c it's really expensive
-    if (tv == 0)
-        return ret;
 
     if (tv < 0)
         ts = time(0) + tv;
@@ -437,7 +428,7 @@ std::shared_ptr<tracker_element> device_tracker_view::device_time_uri_endpoint(c
 }
 
 unsigned int device_tracker_view::device_endpoint_handler(std::ostream& stream, 
-        const std::string& uri, shared_structured structured,
+        const std::string& uri, const Json::Value& json,
         std::map<std::string, std::shared_ptr<std::stringstream>>& postvars) {
     // Summarization vector based on simplification part of shared data
     auto summary_vec = std::vector<SharedElementSummary>{};
@@ -458,7 +449,7 @@ unsigned int device_tracker_view::device_endpoint_handler(std::ostream& stream,
     auto order_field = std::vector<int>{};
 
     // Regular expression terms, if any
-    auto regex = shared_structured{};
+    auto regex = json["regex"];
 
     // Wrapper, if any, we insert under
     std::shared_ptr<tracker_element_string_map> wrapper_elem;
@@ -481,44 +472,29 @@ unsigned int device_tracker_view::device_endpoint_handler(std::ostream& stream,
     auto dt_draw_elem = std::make_shared<tracker_element_uint64>();
 
     try {
-        // If the structured component has a 'fields' record, derive the fields
-        // simplification
-        if (structured->has_key("fields")) {
-            auto fields = structured->get_structured_by_key("fields");
-            auto fvec = fields->as_vector();
+        // If the json has a 'fields' record, derive the fields simplification
+        auto fields = json.get("fields", Json::Value(Json::arrayValue));
 
-            for (const auto& i : fvec) {
-                if (i->is_string()) {
-                    auto s = std::make_shared<tracker_element_summary>(i->as_string());
-                    summary_vec.push_back(s);
-                } else if (i->is_array()) {
-                    auto mapvec = i->as_string_vector();
+        for (const auto& i : fields) {
+            if (i.isString()) {
+                summary_vec.push_back(std::make_shared<tracker_element_summary>(i.asString()));
+            } else if (i.isArray()) {
+                if (i.size() != 2) 
+                    throw std::runtime_error("Invalid field map, expected [field, rename]");
 
-                    if (mapvec.size() != 2)
-                        throw structured_data_exception("Invalid field mapping, expected "
-                                "[field, rename]");
-
-                    auto s = std::make_shared<tracker_element_summary>(mapvec[0], mapvec[1]);
-                    summary_vec.push_back(s);
-                } else {
-                    throw structured_data_exception("Invalid field mapping, expected "
-                            "field or [field,rename]");
-                }
+                summary_vec.push_back(std::make_shared<tracker_element_summary>(i[0].asString(), i[1].asString()));
+            } else {
+                throw std::runtime_error("Invalid field map, exected field or [field, rename]");
             }
         }
 
         // Capture timestamp and negative-offset timestamp
-        int64_t raw_ts = structured->key_as_number("last_time", 0);
+        auto raw_ts = json.get("last_time", 0).asInt64();
         if (raw_ts < 0)
             timestamp_min = time(0) + raw_ts;
         else
             timestamp_min = raw_ts;
-
-        // Regex
-        if (structured->has_key("regex"))
-            regex = structured->get_structured_by_key("regex");
-
-    } catch (const structured_data_exception& e) {
+    } catch (const std::runtime_error& e) {
         stream << "Invalid request: " << e.what() << "\n";
         return 400;
     }
@@ -527,19 +503,15 @@ unsigned int device_tracker_view::device_endpoint_handler(std::ostream& stream,
     unsigned int in_window_start = 0;
     unsigned int in_window_len = 0;
     unsigned int in_dt_draw = 0;
-    int in_order_column_num = 0;
+    std::string in_order_column_num;
     unsigned int in_order_direction = 0;
-
-    // Column number->path field mapping
-    auto column_number_map = structured_data::structured_num_map{};
 
     // Parse datatables sub-data for windowing, etc
     try {
         // Extract the column number -> column fieldpath data
-        if (structured->has_key("colmap")) 
-            column_number_map = structured->get_structured_by_key("colmap")->as_number_map();
+        auto column_number_map = json["colmap"];
 
-        if (structured->key_as_bool("datatable", false)) {
+        if (json.get("datatable", false).asBool()) {
             // Extract from the raw postvars 
             if (postvars.find("start") != postvars.end())
                 *(postvars["start"]) >> in_window_start;
@@ -564,13 +536,8 @@ unsigned int device_tracker_view::device_endpoint_handler(std::ostream& stream,
                 *(postvars["order[0][column]"]) >> in_order_column_num;
 
             // We can only sort by a column that makes sense
-            auto column_index = column_number_map.find(in_order_column_num);
-            if (column_index == column_number_map.end())
-                in_order_column_num = -1;
-
-            // What direction do we sort in
-            if (in_order_column_num >= 0 &&
-                    postvars.find("order[0][dir]") != postvars.end()) {
+            auto column_index = column_number_map[in_order_column_num];
+            if (!column_index.isNull() && postvars.find("order[0][dir]") != postvars.end()) {
                 auto order = postvars.find("order[0][dir]")->second->str();
 
                 if (order == "asc")
@@ -579,24 +546,20 @@ unsigned int device_tracker_view::device_endpoint_handler(std::ostream& stream,
                     in_order_direction = 0;
 
                 // Resolve the path, we only allow the first one
-                auto index_array = column_index->second->as_vector();
-                if (index_array.size() > 0) {
-                    if (index_array[0]->is_array()) {
+                if (column_index.isArray() && column_index.size() > 0) {
+                    if (column_index[0].isArray()) {
                         // We only allow the first field, but make sure we're not a nested array
-                        auto index_sub_array = index_array[0]->as_string_vector();
-                        if (index_sub_array.size() > 0) {
-                            auto summary = tracker_element_summary{index_sub_array[0]};
-                            order_field = summary.resolved_path;
+                        if (column_index[0].size() > 0) {
+                            order_field = tracker_element_summary(column_index[0][0].asString()).resolved_path;
                         }
                     } else {
                         // Otherwise get the first array
-                        auto column_index_vec = column_index->second->as_string_vector();
-                        if (column_index_vec.size() >= 1) {
-                            auto summary = tracker_element_summary{column_index_vec[0]};
-                            order_field = summary.resolved_path;
+                        if (column_index.size() >= 1) {
+                            order_field = tracker_element_summary(column_index[0].asString()).resolved_path;
                         }
                     }
                 }
+
             }
 
             if (in_window_len > 500) 
@@ -660,7 +623,7 @@ unsigned int device_tracker_view::device_endpoint_handler(std::ostream& stream,
     }
 
     // Apply a regex filter
-    if (regex != nullptr) {
+    if (!regex.isNull()) {
         try {
             auto worker = 
                 device_tracker_view_regex_worker(regex);
@@ -695,7 +658,7 @@ unsigned int device_tracker_view::device_endpoint_handler(std::ostream& stream,
     length_elem->set(ei - si);
 
     // Unfortunately we need to do a stable sort to get a consistent display
-    if (in_order_column_num >= 0 && order_field.size() > 0) {
+    if (in_order_column_num.length() && order_field.size() > 0) {
         std::stable_sort(next_work_vec->begin(), next_work_vec->end(),
                 [&](shared_tracker_element a, shared_tracker_element b) -> bool {
                 shared_tracker_element fa;

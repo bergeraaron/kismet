@@ -281,11 +281,11 @@ AC_C_BIGENDIAN
 
 # Enable thread debugging
 AC_ARG_ENABLE([mutex-name-debug],
-    AS_HELP_STRING([--enable-mutex-name-debug], [Enable naming of mutexes to help in debugging, this will use more RAM]),
+    AS_HELP_STRING([--disable-mutex-name-debug], [Disable naming of mutexes to help in debugging, debugging will use slightly more RAM]),
     [case "${enableval}" in
-     yes) AC_DEFINE(DEBUG_MUTEX_NAME, 1, Named mutex debugging) ;;
-       *) ;;
-    esac], [])
+      no) want_mutex_debugging=no ;;
+       *) AC_DEFINE(DEBUG_MUTEX_NAME, 1, Named mutex debugging) ;;
+    esac], [AC_DEFINE(DEBUG_MUTEX_NAME, 1, Named mutex debugging)])
 
 # Configure for a remote-capture-only build
 caponly=0
@@ -1076,32 +1076,34 @@ AC_SUBST(pcap)
 
 PKG_PROG_PKG_CONFIG
 
-# We always need proto-c because it's required to compile the python protobuf instances
-PKG_CHECK_MODULES([protobuf], [${PROTOBUF}], have_protobuf_pkg=yes)
-if test x"$have_protobuf_pkg" != "xyes"; then
-    AC_MSG_ERROR([missing google libprotobuf])
-fi
-
-AC_ARG_WITH(protoc,
-	[  --with-protoc[=PATH]     Custom location of the protoc protobuf compiler],
-    [ ])
-
-if test x"$with_protoc" == "x"; then
-    PROTOCBIN=protoc
-    AC_CHECK_PROG(protoc, [protoc], yes)
-    if test x"$protoc" != x"yes"; then
-        AC_MSG_ERROR([missing google libprotobuf protoc compiler])
+if test "$caponly" = 0 || test "$want_python" = "yes"; then
+    # We only *require* protobuf for C++ and python
+    PKG_CHECK_MODULES([protobuf], [${PROTOBUF}], have_protobuf_pkg=yes)
+    if test x"$have_protobuf_pkg" != "xyes"; then
+        AC_MSG_ERROR([missing google libprotobuf])
     fi
-else
-    PROTOCBIN=$with_protoc
-fi
+    
+    AC_ARG_WITH(protoc,
+    	[  --with-protoc[=PATH]     Custom location of the protoc protobuf compiler],
+        [ ])
+    
+    if test x"$with_protoc" == "x"; then
+        PROTOCBIN=protoc
+        AC_CHECK_PROG(protoc, [protoc], yes)
+        if test x"$protoc" != x"yes"; then
+            AC_MSG_ERROR([missing google libprotobuf protoc compiler])
+        fi
+    else
+        PROTOCBIN=$with_protoc
+    fi
+    
+    PROTOLIBS=`pkg-config --libs ${PROTOBUF}`
+    PROTOCFLAGS=`pkg-config --cflags ${PROTOBUF}`
 
-PROTOLIBS=`pkg-config --libs ${PROTOBUF}`
-PROTOCFLAGS=`pkg-config --cflags ${PROTOBUF}`
-
-# Enable the C++ targets
-PROTOBUF_CPP_O_TARGET='$(PROTOBUF_CPP_O)'
-PROTOBUF_CPP_H_TARGET='$(PROTOBUF_CPP_H)'
+    # Enable the C++ targets
+    PROTOBUF_CPP_O_TARGET='$(PROTOBUF_CPP_O)'
+    PROTOBUF_CPP_H_TARGET='$(PROTOBUF_CPP_H)'
+fi  # caponly
 
 # We need protobuf-c all the time
 PKG_CHECK_MODULES([libprotobufc], [libprotobuf-c], have_protobufc_pkg=yes, have_protobufc_pkg=no)
@@ -1160,7 +1162,7 @@ if test "$bsd" = yes; then
 	]])],radiotap=yes bsdradiotap=yes, bsdradiotap=no radiotap=no)
 	AC_MSG_RESULT($bsdradiotap)
 else
-	AC_MSG_WARN(Using local radiotap headers)
+	AC_MSG_RESULT(Using local radiotap headers)
 fi
 
 if test "$radiotap" != "yes"; then

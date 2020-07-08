@@ -58,6 +58,8 @@
 
 #include "multi_constexpr.h"
 
+#include "fmt.h"
+
 // Munge a string to characters safe for calling in a shell
 std::string munge_to_printable(const char *in_data, unsigned int max, int nullterm);
 std::string munge_to_printable(const std::string& in_str);
@@ -143,7 +145,7 @@ T string_to_n(const std::string& s, std::ios_base&(*base)(std::ios_base &) = nul
 }
 
 template<typename T>
-T string_to_n(const std::string& s, T dvalue) {
+T string_to_n_dfl(const std::string& s, T dvalue) {
     try {
         return string_to_n<T>(s);
     } catch (const std::exception& e) {
@@ -204,7 +206,7 @@ int fetch_sys_loadavg(uint8_t *in_avgmaj, uint8_t *in_avgmin);
 #endif
 
 // Adler-32 checksum, derived from rsync, adler-32
-uint32_t adler32_checksum(const char *buf1, size_t len);
+uint32_t adler32_checksum(const void *buf1, size_t len);
 
 // C++ shortcut
 uint32_t adler32_checksum(const std::string& buf1);
@@ -213,7 +215,7 @@ uint32_t adler32_checksum(const std::string& buf1);
 // multiple records.
 // Caller must set s1 and s2 to 0 for the initial call and provide them for
 // subsequent calls.
-uint32_t adler32_incremental_checksum(const char *buf1, size_t len, 
+uint32_t adler32_incremental_checksum(const void *buf1, size_t len, 
         uint32_t *s1, uint32_t *s2);
 
 // 802.11 checksum functions, derived from the BBN USRP 802.11 code

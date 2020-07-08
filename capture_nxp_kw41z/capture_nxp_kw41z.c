@@ -257,14 +257,18 @@ int nxp_write_cmd_retry(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_
     int ret = 0;
     int retries = 3;
     int reset = 0;
+
     while (retries > 0) {
         ret = nxp_write_cmd(caph,tx_buf,tx_len,resp,resp_len,rx_buf,rx_max);
+
         if (ret >= 0) {
             usleep(50);
             break;
         }
+
         usleep(100);
         retries--;
+
         if (retries == 0 && reset == 0) {
             retries = 3;
             reset = 1;
@@ -272,6 +276,7 @@ int nxp_write_cmd_retry(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_
             usleep(200);
         }
     }
+
     return ret;
 }
 
@@ -416,6 +421,8 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     // try to pull the phy
     if ((placeholder_len = cf_find_flag(&placeholder, "phy", definition)) > 0) {
         phy = strndup(placeholder, placeholder_len);
+    } else {
+        phy = strdup("any");
     }
 
     // try pulling the channel
@@ -537,12 +544,16 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     /* nxp_reset(caph); */
 
     res = nxp_exit_promisc_mode(caph);
-    if (res < 0) 
+    if (res < 0) {
+        snprintf(msg, STATUS_MAX, "%s failed to send NXP exit_promisc command (%d)\n", localnxp->name, res);
         return -1;
+    }
 
     res = nxp_enter_promisc_mode(caph, *localchan);
-    if (res < 0) 
+    if (res < 0) {
+        snprintf(msg, STATUS_MAX, "%s failed to send NXP enter_promisc command (%d)\n", localnxp->name, res);
         return -1;
+    }
 
     localnxp->channel = *localchan;
 

@@ -56,6 +56,71 @@ packet_chain::packet_chain() {
     packet_queue_drop =
         Globalreg::globalreg->kismet_config->fetch_opt_uint("packet_backlog_limit", 8192);
 
+    auto entrytracker = 
+        Globalreg::fetch_mandatory_global_as<entry_tracker>();
+
+    packet_rate_rrd_id = 
+        entrytracker->register_field("kismet.packetchain.packets_rrd",
+                tracker_element_factory<kis_tracked_rrd<>>(),
+                "total packet rate rrd");
+    packet_rate_rrd = 
+        std::make_shared<kis_tracked_rrd<>>(packet_rate_rrd_id);
+
+    packet_error_rrd_id = 
+        entrytracker->register_field("kismet.packetchain.error_packets_rrd",
+                tracker_element_factory<kis_tracked_rrd<>>(),
+                "error packet rate rrd");
+    packet_error_rrd =
+        std::make_shared<kis_tracked_rrd<>>(packet_error_rrd_id);
+
+    packet_dupe_rrd_id =
+        entrytracker->register_field("kismet.packetchain.dupe_packets_rrd",
+                tracker_element_factory<kis_tracked_rrd<>>(),
+                "duplicate packet rate rrd");
+    packet_dupe_rrd =
+        std::make_shared<kis_tracked_rrd<>>(packet_dupe_rrd_id);
+
+    packet_queue_rrd_id =
+        entrytracker->register_field("kismet.packetchain.queued_packets_rrd",
+                tracker_element_factory<kis_tracked_rrd<kis_tracked_rrd_extreme_aggregator>>(),
+                "packet backlog queue rrd");
+    packet_queue_rrd =
+        std::make_shared<kis_tracked_rrd<kis_tracked_rrd_extreme_aggregator>>(packet_queue_rrd_id);
+
+    packet_drop_rrd_id =
+        entrytracker->register_field("kismet.packetchain.dropped_packets_rrd",
+                tracker_element_factory<kis_tracked_rrd<>>(),
+                "lost packet / queue overfull rrd");
+    packet_drop_rrd =
+        std::make_shared<kis_tracked_rrd<>>(packet_drop_rrd_id);
+
+    packet_stats_map = 
+        std::make_shared<tracker_element_map>();
+    packet_stats_map->insert(packet_rate_rrd);
+    packet_stats_map->insert(packet_error_rrd);
+    packet_stats_map->insert(packet_dupe_rrd);
+    packet_stats_map->insert(packet_queue_rrd);
+    packet_stats_map->insert(packet_drop_rrd);
+
+    // We now protect RRDs from complex ops w/ internal mutexes, so we can just share these out directly without
+    // protecting them behind our own mutex; required, because we're mixing RRDs from different data sources,
+    // like chain-level packet processing and worker mutex locked buffer queuing.
+    packet_stat_endpoint =
+        std::make_shared<kis_net_httpd_simple_tracked_endpoint>("/packetchain/packet_stats", 
+                packet_stats_map, nullptr);
+    packet_rate_endpoint =
+        std::make_shared<kis_net_httpd_simple_tracked_endpoint>("/packetchain/packet_rate", 
+                packet_rate_rrd, nullptr);
+    packet_error_endpoint =
+        std::make_shared<kis_net_httpd_simple_tracked_endpoint>("/packetchain/packet_error", 
+                packet_error_rrd, nullptr);
+    packet_dupe_endpoint =
+        std::make_shared<kis_net_httpd_simple_tracked_endpoint>("/packetchain/packet_dupe", 
+                packet_dupe_rrd, nullptr);
+    packet_drop_endpoint =
+        std::make_shared<kis_net_httpd_simple_tracked_endpoint>("/packetchain/packet_drop", 
+                packet_drop_rrd, nullptr);
+
     packetchain_shutdown = false;
 
     packet_thread = std::thread([this]() {
@@ -252,6 +317,14 @@ void packet_chain::packet_queue_processor() {
                     pcl->l_callback(packet);
             }
 
+            packet_rate_rrd->add_sample(1, time(0));
+
+            if (packet->error)
+                packet_error_rrd->add_sample(1, time(0));
+
+            if (packet->duplicate)
+                packet_dupe_rrd->add_sample(1, time(0));
+
             destroy_packet(packet);
 
             lock.lock();
@@ -298,16 +371,22 @@ int packet_chain::process_packet(kis_packet *in_pack) {
                     "You change this behavior in 'kismet_memory.conf'.", -1);
         }
 
-        // Don't queue packets
+        // Don't queue packets when we're over-full
         lock.unlock();
+
+        packet_drop_rrd->add_sample(1, time(0));
+
         return 1;
     }
 
     // Queue the packet
     packet_queue.push(in_pack);
 
+    packet_queue_rrd->add_sample(packet_queue.size(), time(0));
+
     // Unlock and notify all workers
     lock.unlock();
+
     packetqueue_cv.notify_all();
 
     return 1;
