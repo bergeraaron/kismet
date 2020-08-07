@@ -81,6 +81,7 @@
 #include "datasource_ti_cc_2531.h"
 #include "datasource_virtual.h"
 #include "datasource_dot11_scan.h"
+#include "datasource_bluetooth_scan.h"
 
 #include "logtracker.h"
 #include "kis_ppilogfile.h"
@@ -236,12 +237,12 @@ global_registry *globalregistry = NULL;
 
 void SpindownKismet(std::shared_ptr<pollable_tracker> pollabletracker) {
     // Shut down the webserver first
-    auto httpd = Globalreg::FetchGlobalAs<kis_net_httpd>("HTTPD_SERVER");
+    auto httpd = Globalreg::fetch_global_as<kis_net_httpd>("HTTPD_SERVER");
     if (httpd != NULL)
         httpd->stop_httpd();
 
     auto devicetracker =
-        Globalreg::FetchGlobalAs<device_tracker>("DEVICETRACKER");
+        Globalreg::fetch_global_as<device_tracker>("DEVICETRACKER");
     if (devicetracker != NULL) {
 #if 0
         devicetracker->store_all_devices();
@@ -250,7 +251,7 @@ void SpindownKismet(std::shared_ptr<pollable_tracker> pollabletracker) {
     }
 
     // shutdown everything
-    globalregistry->Shutdown_Deferred();
+    globalregistry->shutdown_deferred();
     globalregistry->spindown = 1;
 
     // Start a short shutdown cycle for 2 seconds
@@ -268,7 +269,7 @@ void SpindownKismet(std::shared_ptr<pollable_tracker> pollabletracker) {
 
     fprintf(stderr, "Shutting down plugins...\n");
     std::shared_ptr<plugin_tracker> plugintracker =
-        Globalreg::FetchGlobalAs<plugin_tracker>(globalregistry, "PLUGINTRACKER");
+        Globalreg::fetch_global_as<plugin_tracker>(globalregistry, "PLUGINTRACKER");
     if (plugintracker != NULL)
         plugintracker->shutdown_plugins();
 
@@ -290,7 +291,7 @@ void SpindownKismet(std::shared_ptr<pollable_tracker> pollabletracker) {
         fprintf(stderr, "Kismet exiting.\n");
     }
 
-    globalregistry->Deletelifetime_globals();
+    globalregistry->delete_lifetime_globals();
 
     globalregistry->complete = true;
 
@@ -649,6 +650,14 @@ int main(int argc, char *argv[], char *envp[]) {
         }
     }
 
+    // Entrytracker needs to be allocated before almost everything else, anything which
+    // handles serializable data needs it
+    std::shared_ptr<entry_tracker> entrytracker =
+        entry_tracker::create_entrytracker();
+
+	// Create the event bus used by inter-code comms
+	event_bus::create_eventbus();
+
     // First order - create our message bus and our client for outputting
     message_bus::create_messagebus(globalregistry);
 
@@ -662,9 +671,6 @@ int main(int argc, char *argv[], char *envp[]) {
     globalregistry->messagebus->register_client(fqmescli, MSGFLAG_FATAL | MSGFLAG_ERROR);
     // Register the smart msg printer for everything
     globalregistry->messagebus->register_client(smartmsgcli, MSGFLAG_ALL);
-
-	// Create the event bus
-	event_bus::create_eventbus();
 
     // We need to create the pollable system near the top of execution as well
     auto pollabletracker(pollable_tracker::create_pollabletracker());
@@ -776,11 +782,6 @@ int main(int argc, char *argv[], char *envp[]) {
 
     if (globalregistry->fatal_condition) 
         SpindownKismet(pollabletracker);
-
-    // Allocate some other critical stuff like the entry tracker and the
-    // serializers
-    std::shared_ptr<entry_tracker> entrytracker =
-        entry_tracker::create_entrytracker(Globalreg::globalreg);
 
     // Create the manuf db
     globalregistry->manufdb = new kis_manuf();
@@ -898,7 +899,7 @@ int main(int argc, char *argv[], char *envp[]) {
     devicetracker->register_phy_handler(new kis_80211_phy(globalregistry));
     devicetracker->register_phy_handler(new Kis_RTL433_Phy(globalregistry));
     devicetracker->register_phy_handler(new Kis_Zwave_Phy(globalregistry));
-    devicetracker->register_phy_handler(new Kis_Bluetooth_Phy(globalregistry));
+    devicetracker->register_phy_handler(new kis_bluetooth_phy(globalregistry));
     devicetracker->register_phy_handler(new Kis_UAV_Phy(globalregistry));
     devicetracker->register_phy_handler(new Kis_Mousejack_Phy(globalregistry));
     devicetracker->register_phy_handler(new kis_btle_phy(globalregistry));
@@ -943,6 +944,7 @@ int main(int argc, char *argv[], char *envp[]) {
 
 	// Create the scan-only handlers
 	dot11_scan_source::create_dot11_scan_source();
+    bluetooth_scan_source::create_bluetooth_scan_source();
 
     std::shared_ptr<plugin_tracker> plugintracker;
 
@@ -975,7 +977,7 @@ int main(int argc, char *argv[], char *envp[]) {
     Systemmonitor::create_systemmonitor();
 
     // Start up any code that needs everything to be loaded
-    globalregistry->Start_Deferred();
+    globalregistry->start_deferred();
 
     // Set the global silence now that we're set up
     glob_silent = local_silent;
@@ -1003,7 +1005,7 @@ int main(int argc, char *argv[], char *envp[]) {
     Globalreg::fetch_mandatory_global_as<kis_net_httpd>()->start_httpd();
 
     // Independent time and select threads, which has had problems with timing conflicts
-    timetracker->SpawnTimetrackerThread();
+    timetracker->spawn_timetracker_thread();
     pollabletracker->select_loop(false);
 
     SpindownKismet(pollabletracker);

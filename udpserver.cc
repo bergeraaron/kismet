@@ -19,25 +19,25 @@
 #include "config.h"
 #include "ringbuf3.h"
 #include "udpserver.h"
+#include "timetracker.h"
 
-udp_dgram_server::udp_dgram_server() :
+udp_dgram_server::udp_dgram_server(dgram_cb datagramcb, cancel_cb cancelcb) :
     packet {nullptr},
-    server_fd {-1} {
+    server_fd {-1},
+    datagramcb {datagramcb},
+    cancelcb {cancelcb},
+    timeout_id {-1} {
+
+    timetracker =
+        Globalreg::fetch_mandatory_global_as<time_tracker>();
+
     udp_mutex.set_name("udp_dgram_server");
-    }
+}
 
 udp_dgram_server::~udp_dgram_server() {
+    timetracker->remove_timer(timeout_id);
+
     shutdown();
-}
-
-void udp_dgram_server::set_new_connection_cb(std::function<std::shared_ptr<buffer_pair> (const struct sockaddr_storage *, size_t)> in_cb) {
-    local_locker l(&udp_mutex, "udp_dgram_server::set_new_connection_cb");
-    connection_cb = in_cb;
-}
-
-void udp_dgram_server::set_timeout_connection_cb(std::function<void (std::shared_ptr<buffer_pair>)> in_cb) {
-    local_locker l(&udp_mutex, "udp_dgram_server::set_timeout_connection_cb");
-    timeout_cb = in_cb;
 }
 
 int udp_dgram_server::configure_server(short int in_port, const std::string& in_bindaddress,
@@ -54,6 +54,8 @@ int udp_dgram_server::configure_server(short int in_port, const std::string& in_
 
     port = in_port;
     timeout = in_timeout;
+
+    timetracker->remove_timer(timeout_id);
 
     for (auto i : in_filtervec) {
         auto fv = str_tokenize(i, "/");
@@ -112,6 +114,32 @@ int udp_dgram_server::configure_server(short int in_port, const std::string& in_
 
     fcntl(server_fd, F_SETFL, fcntl(server_fd, F_GETFL, 0) | O_NONBLOCK);
 
+    timeout_id = 
+        timetracker->register_timer(std::chrono::seconds(in_timeout),
+                true,
+                [this, in_timeout](int) -> int {
+                    local_locker l(&udp_mutex, "udp_dgram_server::timeout timer");
+
+                    auto now = time(0);
+                    auto purgelist = std::list<uint32_t>();
+
+                    for (auto c : client_map) {
+                        if (c.second->last_time < (now - in_timeout.count())) 
+                            purgelist.push_back(c.first);
+                    }
+
+                    for (auto p : purgelist) {
+                        auto c = client_map.find(p);
+
+                        if (cancelcb)
+                            cancelcb(c->first, true, "connection idle");
+
+                        client_map.erase(c);
+                    }
+
+                    return 1;
+                });
+
     return 1;
 }
 
@@ -151,9 +179,14 @@ int udp_dgram_server::pollable_poll(fd_set& in_rset, fd_set& in_wset) {
 
             if (r_len < 0) {
                 if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                    for (auto c : client_map)
-                        c.second->bufferpair->error("UDP server socket error {} (errno {})",
+                    for (auto c : client_map) {
+                        auto err = fmt::format("UDP server socket error {} (errno {})",
                                 kis_strerror_r(errno), errno);
+
+                        if (cancelcb)
+                            cancelcb(c.first, false, err);
+                    }
+
                     shutdown();
                     return -1;
                 }
@@ -186,17 +219,11 @@ int udp_dgram_server::pollable_poll(fd_set& in_rset, fd_set& in_wset) {
                     // Typically we silently drop packets which don't pass the IP filter
                     // or we'd get absolutely flooded with bogus messages
 
-                    if (pass && connection_cb != nullptr) {
-                        auto cli_bufferpair = 
-                            connection_cb((const struct sockaddr_storage *) &cliaddr, addr_len);
+                    if (pass) {
+                        client_rec = std::make_shared<client>();
+                        client_rec->addr.sin_addr.s_addr = cliaddr.sin_addr.s_addr;
 
-                        if (cli_bufferpair != nullptr) {
-                            client_rec = std::make_shared<client>();
-                            client_rec->bufferpair = cli_bufferpair;
-                            client_rec->addr.sin_addr.s_addr = cliaddr.sin_addr.s_addr;
-
-                            client_map[cli_csum] = client_rec;
-                        }
+                        client_map[cli_csum] = client_rec;
                     }
                 } else {
                     client_rec = client_key->second;
@@ -205,26 +232,8 @@ int udp_dgram_server::pollable_poll(fd_set& in_rset, fd_set& in_wset) {
                 if (client_rec != nullptr) {
                     client_rec->last_time = time(0);
 
-                    try {
-                        // Write the dgram length as a raw ssize_t, then the datagram itself.
-                        auto r = client_rec->bufferpair->write_rbuf(&r_len, sizeof(ssize_t));
-                        if (r != sizeof(ssize_t))
-                            throw std::runtime_error(fmt::format("UDP server unable to write packet "
-                                        "length header to UDP source buffer {}", 
-                                        inet_ntoa(client_rec->addr.sin_addr)));
-
-                        r = client_rec->bufferpair->write_rbuf(packet, r_len);
-                        if (r != r_len)
-                            throw std::runtime_error(fmt::format("UDP server unable to write packet "
-                                        "data to UDP source buffer {}",
-                                        inet_ntoa(client_rec->addr.sin_addr)));
-                    } catch (const std::exception& e) {
-                        // Any error constitutes a removal of that record, it will be recreated
-                        // next packet but the buffer needs to be purged since it's now in an
-                        // unknown state.
-                        client_map.erase(client_map.find(cli_csum));
-                        client_rec->bufferpair->throw_error(std::current_exception());
-                    }
+                    if (datagramcb != nullptr) 
+                        datagramcb((const struct sockaddr_storage *) &cliaddr, addr_len, cli_csum, packet, r_len);
                 }
             }
         }
@@ -236,10 +245,13 @@ int udp_dgram_server::pollable_poll(fd_set& in_rset, fd_set& in_wset) {
 void udp_dgram_server::shutdown() {
     local_locker l(&udp_mutex, "udp_dgram_server::shutdown");
 
+    datagramcb = nullptr;
+
     if (server_fd >= 0)
         close(server_fd);
 
-    for (auto c : client_map)
-        c.second->bufferpair->close("UDP server shutting down");
+    if (cancelcb)
+        for (auto c : client_map)
+            cancelcb(c.first, false, "UDP server shutting down");
 }
 

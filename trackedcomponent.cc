@@ -36,29 +36,38 @@ int tracker_component::register_field(const std::string& in_name,
         Globalreg::globalreg->entrytracker->register_field(in_name, std::move(in_builder), in_desc);
 
     if (in_dest != NULL) {
+        if (registered_fields == nullptr)
+            registered_fields = new std::vector<std::unique_ptr<registered_field>>();
+
         auto rf = std::unique_ptr<registered_field>(new registered_field(id, in_dest));
-        registered_fields.push_back(std::move(rf));
+        registered_fields->push_back(std::move(rf));
     }
 
     return id;
 }
 
 void tracker_component::reserve_fields(std::shared_ptr<tracker_element_map> e) {
-    for (unsigned int i = 0; i < registered_fields.size(); i++) {
-        auto& rf = registered_fields[i];
+    if (registered_fields == nullptr)
+        return;
 
+    for (auto& rf : *registered_fields) {
         if (rf->assign != nullptr) {
-            if (rf->dynamic) {
+            // We use negative IDs to indicate dynamic to eke out 4 more bytes
+            if (rf->id < 0) {
                 // If the variable is dynamic set the assignment container to null so that
                 // proxydynamictrackable can fill it in;
                 *(rf->assign) = nullptr;
-                insert(rf->id, std::shared_ptr<tracker_element>());
+                insert(abs(rf->id), std::shared_ptr<tracker_element>());
             } else {
                 // otherwise generate a variable for the destination
                 *(rf->assign) = import_or_new(e, rf->id);
             }
         }
     }
+
+    // Remove all the registration records we've allocated
+    delete registered_fields;
+    registered_fields = nullptr;
 }
 
 shared_tracker_element tracker_component::import_or_new(std::shared_ptr<tracker_element_map> e, int i) {

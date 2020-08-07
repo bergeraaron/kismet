@@ -92,15 +92,15 @@ channel_tracker_v2::channel_tracker_v2(global_registry *in_globalreg) :
 channel_tracker_v2::~channel_tracker_v2() {
     local_locker locker(&lock);
 
-    auto timetracker = Globalreg::FetchGlobalAs<time_tracker>("TIMETRACKER");
+    auto timetracker = Globalreg::fetch_global_as<time_tracker>("TIMETRACKER");
     if (timetracker != nullptr)
         timetracker->remove_timer(timer_id);
 
-    auto packetchain = Globalreg::FetchGlobalAs<packet_chain>("PACKETCHAIN");
+    auto packetchain = Globalreg::fetch_global_as<packet_chain>("PACKETCHAIN");
     if (packetchain != nullptr)
         packetchain->remove_handler(&packet_chain_handler, CHAINPOS_LOGGING);
 
-    Globalreg::globalreg->RemoveGlobal("CHANNEL_TRACKER");
+    Globalreg::globalreg->remove_global("CHANNEL_TRACKER");
 }
 
 std::shared_ptr<tracker_element_map> channel_tracker_v2::channels_endp_handler() {

@@ -114,7 +114,7 @@ bool device_tracker::httpd_verify_path(const char *path, const char *method) {
 
                 mac_addr mac = mac_addr(tokenurl[3]);
 
-                if (mac.error) {
+                if (mac.state.error) {
                     return false;
                 }
 
@@ -202,7 +202,7 @@ bool device_tracker::httpd_verify_path(const char *path, const char *method) {
 
                 mac_addr mac = mac_addr(tokenurl[3]);
 
-                if (mac.error) {
+                if (mac.state.error) {
                     return false;
                 }
 
@@ -220,7 +220,7 @@ bool device_tracker::httpd_verify_path(const char *path, const char *method) {
     return false;
 }
 
-int device_tracker::httpd_create_stream_response(
+KIS_MHD_RETURN device_tracker::httpd_create_stream_response(
         kis_net_httpd *httpd __attribute__((unused)),
         kis_net_httpd_connection *connection,
         const char *path, const char *method, const char *upload_data,
@@ -359,7 +359,7 @@ int device_tracker::httpd_create_stream_response(
 
             mac_addr mac = mac_addr(tokenurl[3]);
 
-            if (mac.error) {
+            if (mac.state.error) {
                 return MHD_YES;
             }
 
@@ -412,7 +412,7 @@ int device_tracker::httpd_create_stream_response(
     return MHD_YES;
 }
 
-int device_tracker::httpd_post_complete(kis_net_httpd_connection *concls) {
+KIS_MHD_RETURN device_tracker::httpd_post_complete(kis_net_httpd_connection *concls) {
     // Split URL and process
     std::vector<std::string> tokenurl = str_tokenize(concls->url, "/");
 
@@ -507,7 +507,7 @@ int device_tracker::httpd_post_complete(kis_net_httpd_connection *concls) {
                 mac_addr mac = mac_addr(tokenurl[3]);
 
                 
-                if (mac.error) {
+                if (mac.state.error) {
                     stream << "Invalid request: Invalid MAC address\n";
                     concls->httpcode = 400;
                     return MHD_YES;
@@ -688,7 +688,7 @@ unsigned int device_tracker::multimac_endp_handler(std::ostream& stream, const s
         for (auto m : json["devices"]) {
             mac_addr ma{m.asString()};
 
-            if (ma.error) 
+            if (ma.state.error) 
                 throw std::runtime_error(fmt::format("Invalid MAC address '{}' in 'devices' list",
                             kishttpd::escape_html(m.asString())));
 

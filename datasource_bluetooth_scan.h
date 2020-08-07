@@ -16,40 +16,37 @@
     Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
-#ifndef __DOT11_SCAN_SOURCE__
-#define __DOT11_SCAN_SOURCE__ 
+#ifndef __BLUETOOTH_SCAN_SOURCE_H__
+#define __BLUETOOTH_SCAN_SOURCE_H__ 
 
 #include "config.h"
 
 #include "datasource_scan.h"
 #include "globalregistry.h"
 #include "kis_datasource.h"
-#include "kis_net_microhttpd.h"
 #include "kis_net_microhttpd_handlers.h"
 
-// Virtual dot11 datasource which supports scanning results from other systems; scans are turned
-// into dot11 networks with as much info as is available
-
-class dot11_scan_source : public datasource_scan_source, public lifetime_global {
+class bluetooth_scan_source : public datasource_scan_source, public lifetime_global {
 public:
-    static std::string global_name() { return "dot11_scan_source"; }
+    static std::string global_name() { return "bluetooth_scan_source"; }
 
-    static std::shared_ptr<dot11_scan_source> create_dot11_scan_source() {
-        std::shared_ptr<dot11_scan_source> ssrc(new dot11_scan_source());
-        Globalreg::globalreg->register_lifetime_global(ssrc);
-        Globalreg::globalreg->insert_global(global_name(), ssrc);
-        return ssrc;
+    static std::shared_ptr<bluetooth_scan_source> create_bluetooth_scan_source() {
+        std::shared_ptr<bluetooth_scan_source> bsrc(new bluetooth_scan_source());
+        Globalreg::globalreg->register_lifetime_global(bsrc);
+        Globalreg::globalreg->insert_global(global_name(), bsrc);
+        return bsrc;
     }
 
 private:
-    dot11_scan_source() : 
-        datasource_scan_source("/phy/phy80211/scan/scan_report",
-                "IEEE80211 scan",
-                "DOT11SCAN"),
+    bluetooth_scan_source() :
+        datasource_scan_source("/phy/phybluetooth/scan/scan_report",
+                "Bluetooth/BTLE Scan",
+                "BLUETOOTHSCAN"),
         lifetime_global() { }
 
 public:
-    virtual ~dot11_scan_source() { };
+    virtual ~bluetooth_scan_source() { };
+
 };
 
-#endif /* ifndef DOT11_SCAN_SOURCE */
+#endif /* ifndef BLUETOOTH_SCAN_SOURCE_H */

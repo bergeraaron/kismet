@@ -128,7 +128,7 @@ int global_registry::insert_global(int in_ref, std::shared_ptr<void> in_data) {
 	return 1;
 }
 
-void global_registry::RemoveGlobal(int in_ref) {
+void global_registry::remove_global(int in_ref) {
     local_locker lock(&ext_mutex);
 
     if (ext_data_map.find(in_ref) != ext_data_map.end()) {
@@ -142,9 +142,9 @@ int global_registry::insert_global(std::string in_name, std::shared_ptr<void> in
 	return insert_global(ref, in_data);
 }
 
-void global_registry::RemoveGlobal(std::string in_name) {
+void global_registry::remove_global(std::string in_name) {
     int ref = FetchGlobalRef(in_name);
-    RemoveGlobal(ref);
+    remove_global(ref);
 }
 
 void global_registry::RegisterUsageFunc(usage_func in_cli) {
@@ -178,7 +178,7 @@ void global_registry::Removelifetime_global(std::shared_ptr<lifetime_global> in_
     }
 }
 
-void global_registry::Deletelifetime_globals() {
+void global_registry::delete_lifetime_globals() {
     local_locker lock(&lifetime_mutex);
 
     lifetime_vec.clear();
@@ -193,7 +193,7 @@ void global_registry::register_deferred_global(std::shared_ptr<deferred_startup>
         in_d->trigger_deferred_startup();
 }
 
-void global_registry::RemoveDeferredGlobal(std::shared_ptr<deferred_startup> in_d) {
+void global_registry::remove_deferred_global(std::shared_ptr<deferred_startup> in_d) {
     local_locker lock(&deferred_mutex);
 
     for (auto i = deferred_vec.begin(); i != deferred_vec.end(); ++i) {
@@ -204,7 +204,7 @@ void global_registry::RemoveDeferredGlobal(std::shared_ptr<deferred_startup> in_
     }
 }
 
-void global_registry::Start_Deferred() {
+void global_registry::start_deferred() {
     local_locker lock(&deferred_mutex);
 
     deferred_started = true;
@@ -214,7 +214,7 @@ void global_registry::Start_Deferred() {
     }
 }
 
-void global_registry::Shutdown_Deferred() {
+void global_registry::shutdown_deferred() {
     local_locker lock(&deferred_mutex);
 
     for (auto i : deferred_vec)
@@ -222,4 +222,7 @@ void global_registry::Shutdown_Deferred() {
 
     deferred_vec.clear();
 }
+
+std::atomic<unsigned long> Globalreg::n_tracked_fields = 0;
+std::atomic<unsigned long> Globalreg::n_tracked_components = 0;
 

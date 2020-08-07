@@ -426,7 +426,10 @@ kismet_ui.AddDeviceDetail("base", "Device Info", -1000, {
                 title: "Notes",
                 help: "Abritrary notes",
                 draw: function(opts) {
-                    var notes = opts['data']['kismet.device.base.tags']['notes'];
+                    var notes = "";
+
+                    if ('kismet.device.base.tags' in opts['data'])
+                        notes = opts['data']['kismet.device.base.tags']['notes'];
 
                     if (notes == null)
                         notes = "";
@@ -516,7 +519,11 @@ kismet_ui.AddDeviceDetail("base", "Device Info", -1000, {
                     span: true,
                     liveupdate: true,
                     filter: function(opts) {
-                        return (Object.keys(opts['data']['kismet.device.base.freq_khz_map']).length >= 1);
+                        try {
+                            return (Object.keys(opts['data']['kismet.device.base.freq_khz_map']).length >= 1);
+                        } catch (error) {
+                            return 0;
+                        }
                     },
                     render: function(opts) {
                         var d = 
@@ -2470,7 +2477,7 @@ exports.FetchServerName = function(cb) {
         })
         .fail(function () {
             servername_tid = setTimeout(function () {
-                exports.Servername(cb);
+                exports.FetchServerName(cb);
             }, 1000);
         });
 }

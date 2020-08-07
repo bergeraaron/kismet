@@ -232,6 +232,14 @@ int plugin_tracker::ScanDirectory(DIR *in_dir, std::string in_path) {
             }
 
             preg->set_plugin_http_external(s);
+        } else if ((s = cf.fetch_opt("kisexternal")) != "") {
+            if (s.find("/") != std::string::npos) {
+                _MSG_ERROR("Found path in 'kisexternal=' in plugin manifest '{}', "
+                        "httpexternal= should define the binary name only.", manifest);
+                continue;
+            }
+
+            preg->set_plugin_http_external(s);
         }
 
         if ((s = cf.fetch_opt("js")) != "") {
@@ -295,7 +303,7 @@ int plugin_tracker::activate_plugins() {
     local_locker lock(&plugin_lock);
 
     std::shared_ptr<kis_httpd_registry> httpdregistry =
-        Globalreg::FetchGlobalAs<kis_httpd_registry>(globalreg, "WEBREGISTRY");
+        Globalreg::fetch_global_as<kis_httpd_registry>(globalreg, "WEBREGISTRY");
 
     // Set the new signal handler, remember the old one; if something goes
     // wrong loading the plugins we need to catch it and return a special

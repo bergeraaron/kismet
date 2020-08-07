@@ -542,7 +542,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
         for (auto m : str_tokenize(fetch_opt("validmacs", &optvec), ",", true)) {
             mac_addr ma(m);
 
-            if (ma.error) {
+            if (ma.state.error) {
                 macvec.clear();
                 break;
             }
@@ -628,6 +628,16 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
         Globalreg::globalreg->kismet_config->fetch_opt_bool("dot11_keep_ietags", false);
     if (keep_ie_tags_per_bssid)
         _MSG_INFO("Keeping a copy of advertised IE tags for each SSID; this can use more CPU and RAM.");
+
+
+    keep_eapol_packets =
+        Globalreg::globalreg->kismet_config->fetch_opt_bool("dot11_keep_eapol", true);
+    if (keep_eapol_packets)
+        _MSG_INFO("Keeping EAPOL packets in memory for easy download and WIDS functionality; this can use "
+                "more RAM.");
+    else
+        _MSG_INFO("Not keeping EAPOL packets in memory, EAP replay WIDS and handshake downloads will not "
+                "be available.");
 
     // access-point view
     if (Globalreg::globalreg->kismet_config->fetch_opt_bool("dot11_view_accesspoints", true)) {
@@ -878,7 +888,7 @@ int kis_80211_phy::load_wepkeys() {
 
         mac_addr bssid_mac = wepline.substr(0, rwsplit).c_str();
 
-        if (bssid_mac.error == 1) {
+        if (bssid_mac.state.error == 1) {
             _MSG("Malformed 'wepkey' option in the config file", MSGFLAG_FATAL);
             Globalreg::globalreg->fatal_condition = 1;
 			return -1;
@@ -1164,11 +1174,11 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
             // Detect if we're an adhoc bssid
             if (dot11info->ibss) {
                 bssid_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
-                bssid_dev->set_type_string("Wi-Fi Ad-Hoc");
+                bssid_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi Ad-Hoc"));
                 bssid_dot11->bitset_type_set(DOT11_DEVICE_TYPE_ADHOC);
             } else {
                 bssid_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_AP);
-                bssid_dev->set_type_string("Wi-Fi AP");
+                bssid_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi AP"));
             }
 
             // Do some maintenance on the bssid device if we're a beacon or other ssid-carrying
@@ -1225,13 +1235,15 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
             // If it's sending ibss-flagged packets it's got to be adoc
             if (dot11info->ibss) {
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
-                source_dev->set_type_string("Wi-Fi Ad-Hoc");
+                source_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi Ad-Hoc"));
                 source_dot11->bitset_type_set(DOT11_DEVICE_TYPE_ADHOC);
             } else {
                 // If it's the source of a mgmt packet, it's got to be a wifi device of 
                 // some sort and not just bridged
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_CLIENT);
-                source_dev->set_type_string_ifnot("Wi-Fi Client", KIS_DEVICE_BASICTYPE_CLIENT);
+                source_dev->set_type_string_ifnot([d11phy]() { 
+                        return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Client"); 
+                        }, KIS_DEVICE_BASICTYPE_CLIENT);
             }
 
             if (dot11info->subtype == packet_sub_probe_req ||
@@ -1264,7 +1276,9 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
             // If it's receiving a management packet, it must be a wifi device
             dest_dev->bitclear_basic_type_set(KIS_DEVICE_BASICTYPE_WIRED);
             dest_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_CLIENT);
-            dest_dev->set_type_string_ifnot("Wi-Fi Client", KIS_DEVICE_BASICTYPE_AP);
+            dest_dev->set_type_string_ifnot([d11phy]() {
+                    return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Client");
+                    }, KIS_DEVICE_BASICTYPE_AP);
 
             if (dot11info->channel != "0" && dot11info->channel != "") {
                 dest_dev->set_channel(dot11info->channel);
@@ -1447,11 +1461,11 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
             if (dot11info->distrib == distrib_adhoc) {
                 // Otherwise, we're some sort of adhoc device
                 bssid_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
-                bssid_dev->set_type_string("Wi-Fi Ad-Hoc");
+                bssid_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi Ad-Hoc"));
             } else {
                 // If we're the bssid, sending an ess data frame, we must be an access point
                 bssid_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_AP);
-                bssid_dev->set_type_string("Wi-Fi AP");
+                bssid_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi AP"));
 
                 // Throw alert if device changes between bss and adhoc
                 if (bssid_dev->bitcheck_basic_type_set(DOT11_DEVICE_TYPE_ADHOC) &&
@@ -1522,27 +1536,32 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                     dot11info->subtype == packet_sub_data_qos_null) {
                 // Only wireless devices can send null function data
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_CLIENT);
-                source_dev->set_type_string_ifnot("Wi-Fi Client", KIS_DEVICE_BASICTYPE_AP);
+                source_dev->set_type_string_ifnot([d11phy]() {
+                        return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Client");
+                        }, KIS_DEVICE_BASICTYPE_AP);
             } else if (dot11info->distrib == distrib_inter) {
                 // If it's from the ess, we're some sort of wired device; set the type
                 // accordingly
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
 
-                source_dev->set_type_string_ifonly("Wi-Fi WDS",
-                        KIS_DEVICE_BASICTYPE_PEER | KIS_DEVICE_BASICTYPE_DEVICE);
+                source_dev->set_type_string_ifonly([d11phy]() {
+                        return d11phy->devicetracker->get_cached_devicetype("Wi-Fi WDS");
+                        }, KIS_DEVICE_BASICTYPE_PEER | KIS_DEVICE_BASICTYPE_DEVICE);
             } else if (dot11info->distrib == distrib_adhoc && dot11info->ibss) {
                 // We're some sort of adhoc device
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
-                source_dev->set_type_string("Wi-Fi Ad-Hoc");
+                source_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi Ad-Hoc"));
             } else if (dot11info->distrib == distrib_from) {
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_WIRED);
-                source_dev->set_type_string_ifnot("Wi-Fi Bridged",
-                        KIS_DEVICE_BASICTYPE_CLIENT | KIS_DEVICE_BASICTYPE_AP);
+                source_dev->set_type_string_ifnot([d11phy]() {
+                        return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Bridged");
+                        }, KIS_DEVICE_BASICTYPE_CLIENT | KIS_DEVICE_BASICTYPE_AP);
             } else {
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_CLIENT);
 
-                source_dev->set_type_string_ifnot("Wi-Fi Client",
-                        KIS_DEVICE_BASICTYPE_AP);
+                source_dev->set_type_string_ifnot([d11phy]() {
+                        return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Client");
+                        }, KIS_DEVICE_BASICTYPE_AP);
             }
 
             source_dot11->inc_datasize(dot11info->datasize);
@@ -1620,16 +1639,19 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
             if (dot11info->distrib == distrib_inter) {
                 dest_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
 
-                dest_dev->set_type_string_ifonly("Wi-Fi WDS",
-                        KIS_DEVICE_BASICTYPE_PEER | KIS_DEVICE_BASICTYPE_DEVICE);
+                dest_dev->set_type_string_ifonly([d11phy]() {
+                        return d11phy->devicetracker->get_cached_devicetype("Wi-Fi WDS");
+                        }, KIS_DEVICE_BASICTYPE_PEER | KIS_DEVICE_BASICTYPE_DEVICE);
             } else if (dot11info->distrib == distrib_adhoc) {
                 // Otherwise, we're some sort of adhoc device
                 dest_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
-                dest_dev->set_type_string("Wi-Fi Ad-Hoc");
+                dest_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi Ad-Hoc"));
             } else {
                 // We can't define the type with only a destination device; we can't
                 // call it wired or wireless until it talks itself
-                dest_dev->set_type_string_ifonly("Wi-Fi Device", KIS_DEVICE_BASICTYPE_DEVICE);
+                dest_dev->set_type_string_ifonly([d11phy]() {
+                        return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Device");
+                        }, KIS_DEVICE_BASICTYPE_DEVICE);
             }
 
             dest_dot11->inc_datasize(dot11info->datasize);
@@ -1674,7 +1696,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
             }
 
             other_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_AP | KIS_DEVICE_BASICTYPE_PEER);
-            other_dev->set_type_string("Wi-Fi WDS AP");
+            other_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi WDS AP"));
 
             other_dot11->inc_datasize(dot11info->datasize);
 
@@ -1773,7 +1795,7 @@ int kis_80211_phy::packet_dot11_scan_json_classifier(CHAINCALL_PARMS) {
         }
 
         auto bssid_mac = mac_addr(bssid_j.asString());
-        if (bssid_mac.error) {
+        if (bssid_mac.state.error) {
             _MSG_ERROR("Phy80211/Wi-Fi scan report with invalid BSSID, dropping.");
             in_pack->error = true;
             return 0;
@@ -1850,11 +1872,11 @@ int kis_80211_phy::packet_dot11_scan_json_classifier(CHAINCALL_PARMS) {
 
             if (capabilities.find("IBSS") != std::string::npos) {
                 bssid_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
-                bssid_dev->set_type_string("Wi-Fi Ad-Hoc");
+                bssid_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi Ad-Hoc"));
                 bssid_dot11->bitset_type_set(DOT11_DEVICE_TYPE_ADHOC);
             } else {
                 bssid_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_AP);
-                bssid_dev->set_type_string("Wi-Fi AP");
+                bssid_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi AP"));
             }
 
             if (capabilities.find("WPS") != std::string::npos) {
@@ -2307,14 +2329,15 @@ void kis_80211_phy::handle_ssid(std::shared_ptr<kis_tracked_device_base> basedev
 
     ssid->set_ietag_checksum(dot11info->ietag_csum);
 
-    auto taglist = PacketDot11IElist(in_pack, dot11info);
-    ssid->get_ie_tag_list()->clear();
-    for (auto ti : taglist) 
-        ssid->get_ie_tag_list()->push_back(std::get<0>(ti));
+    if (keep_ie_tags_per_bssid) {
+        auto taglist = PacketDot11IElist(in_pack, dot11info);
+        ssid->get_ie_tag_list()->clear();
+        for (auto ti : taglist) 
+            ssid->get_ie_tag_list()->push_back(std::get<0>(ti));
 
-    // If we snapshot the ie tags, do so
-    if (keep_ie_tags_per_bssid)
+        // If we snapshot the ie tags, do so
         ssid->set_ietag_content_from_packet(dot11info->ie_tags);
+    }
 
     // Alias the last ssid snapshot
     auto lbr = dot11dev->get_last_beaconed_ssid_record();
@@ -2519,7 +2542,7 @@ void kis_80211_phy::handle_ssid(std::shared_ptr<kis_tracked_device_base> basedev
         }
     }
 
-    // Only process dot11 from beacons
+    // Only process dot11d from beacons
     if (dot11info->subtype == packet_sub_beacon) {
         bool dot11dmismatch = false;
 
@@ -2528,19 +2551,25 @@ void kis_80211_phy::handle_ssid(std::shared_ptr<kis_tracked_device_base> basedev
             dot11dmismatch = true;
         }
 
-        auto dot11dvec(ssid->get_dot11d_vec());
-        for (unsigned int vc = 0; 
-                vc < dot11dvec->size() && vc < dot11info->dot11d_vec.size(); vc++) {
-            std::shared_ptr<dot11_11d_tracked_range_info> ri =
-                std::static_pointer_cast<dot11_11d_tracked_range_info>(*(dot11dvec->begin() + vc));
+        if (ssid->has_dot11d_vec()) {
+            auto dot11dvec(ssid->get_dot11d_vec());
 
-            if (ri->get_startchan() != dot11info->dot11d_vec[vc].startchan ||
-                    ri->get_numchan() != dot11info->dot11d_vec[vc].numchan ||
-                    ri->get_txpower() != dot11info->dot11d_vec[vc].txpower) {
-                dot11dmismatch = true;
-                break;
+            if (dot11dvec->size() != dot11info->dot11d_vec.size()) {
+                dot11dmismatch = true; 
+            } else {
+                for (unsigned int vc = 0; 
+                        vc < dot11dvec->size() && vc < dot11info->dot11d_vec.size(); vc++) {
+                    std::shared_ptr<dot11_11d_tracked_range_info> ri =
+                        std::static_pointer_cast<dot11_11d_tracked_range_info>(*(dot11dvec->begin() + vc));
+
+                    if (ri->get_startchan() != dot11info->dot11d_vec[vc].startchan ||
+                            ri->get_numchan() != dot11info->dot11d_vec[vc].numchan ||
+                            ri->get_txpower() != dot11info->dot11d_vec[vc].txpower) {
+                        dot11dmismatch = true;
+                        break;
+                    }
+                }
             }
-
         }
 
         if (dot11dmismatch) {
@@ -2560,8 +2589,11 @@ void kis_80211_phy::handle_ssid(std::shared_ptr<kis_tracked_device_base> basedev
         }
 
         ssid->set_dot11d_country(dot11info->dot11d_country);
-        ssid->set_dot11d_vec(dot11info->dot11d_vec);
 
+        if (dot11info->dot11d_vec.size() > 0 && ssid->has_dot11d_vec())
+            ssid->set_dot11d_vec(dot11info->dot11d_vec);
+        else if (dot11info->dot11d_vec.size() == 0 && ssid->has_dot11d_vec())
+            ssid->clear_dot11d_vec();
     }
 
     ssid->set_wps_state(dot11info->wps);
@@ -2706,12 +2738,14 @@ void kis_80211_phy::handle_probed_ssid(std::shared_ptr<kis_tracked_device_base> 
                                 return false;
                             }
 
-                            for (auto pi : *bssid_dot11->probed_ssid_map) {
-                                auto ps =
-                                    std::static_pointer_cast<dot11_probed_ssid>(pi.second);
+                            if (bssid_dot11->has_probed_ssid_map()) {
+                                for (auto pi : *bssid_dot11->probed_ssid_map) {
+                                    auto ps =
+                                        std::static_pointer_cast<dot11_probed_ssid>(pi.second);
 
-                                if (ps->get_wps_uuid_e() == dot11info->wps_uuid_e)
-                                    return true;
+                                    if (ps->get_wps_uuid_e() == dot11info->wps_uuid_e)
+                                        return true;
+                                }
                             }
 
                         return false;
@@ -2731,10 +2765,12 @@ void kis_80211_phy::handle_probed_ssid(std::shared_ptr<kis_tracked_device_base> 
         }
 
         // Update the IE listing at the device level
-        auto taglist = PacketDot11IElist(in_pack, dot11info);
-        probessid->get_ie_tag_list()->clear();
-        for (auto ti : taglist) 
-            probessid->get_ie_tag_list()->push_back(std::get<0>(ti));
+        if (keep_ie_tags_per_bssid) {
+            auto taglist = PacketDot11IElist(in_pack, dot11info);
+            probessid->get_ie_tag_list()->clear();
+            for (auto ti : taglist) 
+                probessid->get_ie_tag_list()->push_back(std::get<0>(ti));
+        }
 
         auto tag_hash = xx_hash_cpp{};
 
@@ -2848,8 +2884,8 @@ void kis_80211_phy::process_client(std::shared_ptr<kis_tracked_device_base> bssi
                 client_record->inc_datasize_retry(dot11info->datasize);
             }
 
-            if (pack_datainfo != NULL && pack_datainfo->proto == proto_eap) {
-                if (pack_datainfo->auxstring != "") {
+            if (pack_datainfo != NULL) {
+                if (pack_datainfo->proto == proto_eap && pack_datainfo->auxstring != "") {
                     client_record->set_eap_identity(pack_datainfo->auxstring);
                 }
 
@@ -2904,6 +2940,33 @@ void kis_80211_phy::process_client(std::shared_ptr<kis_tracked_device_base> bssi
                 if (pack_datainfo->cdp_port_id != "") {
                     client_record->set_cdp_port(pack_datainfo->cdp_port_id);
                 }
+
+                switch(pack_datainfo->proto) {
+                    case proto_arp:
+                        if (dot11info->source_mac == clientdev->get_macaddr()) {
+	                    client_record->get_ipdata()->set_ip_addr(pack_datainfo->ip_source_addr.s_addr);
+	                    client_record->get_ipdata()->set_ip_type(ipdata_arp);
+                        }
+                        break;
+                    case proto_dhcp_offer:
+                        if (dot11info->dest_mac == clientdev->get_macaddr()) {
+                            client_record->get_ipdata()->set_ip_addr(pack_datainfo->ip_dest_addr.s_addr);
+                            client_record->get_ipdata()->set_ip_netmask(pack_datainfo->ip_netmask_addr.s_addr);
+                            client_record->get_ipdata()->set_ip_gateway(pack_datainfo->ip_gateway_addr.s_addr);
+                            client_record->get_ipdata()->set_ip_type(ipdata_dhcp);
+                        }
+                        break;
+                    case proto_tcp:
+                    case proto_udp:
+                        if (dot11info->source_mac == clientdev->get_macaddr())
+                            client_record->get_ipdata()->set_ip_addr(pack_datainfo->ip_source_addr.s_addr);
+                        if (dot11info->dest_mac == clientdev->get_macaddr())
+                            client_record->get_ipdata()->set_ip_addr(pack_datainfo->ip_dest_addr.s_addr);
+                        client_record->get_ipdata()->set_ip_type(ipdata_udptcp);
+                        break;
+                    default:
+                        break;
+                }
             }
 
         }
@@ -2940,6 +3003,9 @@ void kis_80211_phy::process_wpa_handshake(std::shared_ptr<kis_tracked_device_bas
     std::shared_ptr<dot11_tracked_eapol> eapol = packet_dot11_eapol_handshake(in_pack, bssid_dot11);
 
     if (eapol == NULL)
+        return;
+
+    if (!keep_eapol_packets)
         return;
 
     if (bssid_dev == nullptr || dest_dev == nullptr)
@@ -2994,8 +3060,10 @@ void kis_80211_phy::process_wpa_handshake(std::shared_ptr<kis_tracked_device_bas
 
         bssid_dot11->set_wpa_present_handshake(keymask);
 
-        eventbus->publish(std::make_shared<event_dot11_wpa_handshake>(bssid_dev, bssid_dot11));
-
+        auto evt = eventbus->get_eventbus_event(dot11_wpa_handshake_event);
+        evt->get_event_content()->insert(dot11_wpa_handshake_event_base, bssid_dev);
+        evt->get_event_content()->insert(dot11_wpa_handshake_event_dot11, bssid_dot11);
+        eventbus->publish(evt);
     }
 
     {
@@ -3393,21 +3461,23 @@ void kis_80211_phy::generate_handshake_pcap(std::shared_ptr<kis_tracked_device_b
 
             if (tokenurl[6] == tokenurl[4] + "-handshake.pcap") {
                 // Write all the handshakes
-                for (auto i : *(dot11dev->get_wpa_key_vec())) {
-                    auto eapol =
-                        std::static_pointer_cast<dot11_tracked_eapol>(i);
+                if (dot11dev->has_wpa_key_vec()) {
+                    for (auto i : *(dot11dev->get_wpa_key_vec())) {
+                        auto eapol =
+                            std::static_pointer_cast<dot11_tracked_eapol>(i);
 
-                    auto packet = eapol->get_eapol_packet();
+                        auto packet = eapol->get_eapol_packet();
 
-                    // Make a pcap header
-                    pkt_hdr.timeval_s = packet->get_ts_sec();
-                    pkt_hdr.timeval_us = packet->get_ts_usec();
+                        // Make a pcap header
+                        pkt_hdr.timeval_s = packet->get_ts_sec();
+                        pkt_hdr.timeval_us = packet->get_ts_usec();
 
-                    pkt_hdr.len = packet->get_data()->length();
-                    pkt_hdr.caplen = pkt_hdr.len;
+                        pkt_hdr.len = packet->get_data()->length();
+                        pkt_hdr.caplen = pkt_hdr.len;
 
-                    stream.write((const char *) &pkt_hdr, sizeof(pkt_hdr));
-                    stream.write((const char *) packet->get_data()->get().data(), pkt_hdr.len);
+                        stream.write((const char *) &pkt_hdr, sizeof(pkt_hdr));
+                        stream.write((const char *) packet->get_data()->get().data(), pkt_hdr.len);
+                    }
                 }
             } else if (tokenurl[6] == tokenurl[4] + "-pmkid.pcap") {
                 // Write just the pmkid
@@ -3468,7 +3538,7 @@ void kis_80211_phy::httpd_create_stream_response(kis_net_httpd *httpd,
     return;
 }
 
-int kis_80211_phy::httpd_post_complete(kis_net_httpd_connection *concls) {
+KIS_MHD_RETURN kis_80211_phy::httpd_post_complete(kis_net_httpd_connection *concls) {
     bool handled = false;
 
     std::string stripped = httpd_strip_suffix(concls->url);
@@ -3483,7 +3553,7 @@ int kis_80211_phy::httpd_post_complete(kis_net_httpd_connection *concls) {
         concls->response_stream << "OK";
     }
 
-    return 1;
+    return MHD_YES;
 }
 
 class phy80211_devicetracker_expire_worker : public device_tracker_view_worker {

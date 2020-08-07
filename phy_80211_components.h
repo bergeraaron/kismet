@@ -419,7 +419,7 @@ public:
     __Proxy(wpa_mfp_required, uint8_t, bool, bool, wpa_mfp_required);
     __Proxy(wpa_mfp_supported, uint8_t, bool, bool, wpa_mfp_supported);
 
-    __ProxyTrackable(ie_tag_list, tracker_element_vector_double, ie_tag_list);
+    __ProxyDynamicTrackable(ie_tag_list, tracker_element_vector_double, ie_tag_list, ie_tag_list_id);
 
     __ProxyDynamic(wps_state, uint32_t, uint32_t, uint32_t, wps_state, wps_state_id);
     __ProxyDynamic(wps_manuf, std::string, std::string, std::string, wps_manuf, wps_manuf_id);
@@ -449,6 +449,7 @@ protected:
     std::shared_ptr<tracker_element_uint8> wpa_mfp_supported;
 
     std::shared_ptr<tracker_element_vector_double> ie_tag_list;
+    int ie_tag_list_id;
 
     // WPS components
     std::shared_ptr<tracker_element_uint32> wps_state;
@@ -554,8 +555,7 @@ public:
     __ProxyDynamic(dot11d_country, std::string, std::string, std::string, dot11d_country, 
             dot11d_country_id);
 
-    __ProxyTrackable(dot11d_vec, tracker_element_vector, dot11d_vec);
-
+    __ProxyDynamicTrackable(dot11d_vec, tracker_element_vector, dot11d_vec, dot11d_vec_id);
     void set_dot11d_vec(std::vector<dot11_packinfo_dot11d_entry> vec);
 
     __ProxyDynamic(wps_state, uint32_t, uint32_t, uint32_t, wps_state, wps_state_id);
@@ -584,7 +584,7 @@ public:
     __Proxy(ccx_txpower, uint8_t, unsigned int, unsigned int, ccx_txpower);
     __Proxy(cisco_client_mfp, uint8_t, bool, bool, cisco_client_mfp);
 
-    __ProxyTrackable(ie_tag_list, tracker_element_vector_double, ie_tag_list);
+    __ProxyDynamicTrackable(ie_tag_list, tracker_element_vector_double, ie_tag_list, ie_tag_list_id);
 
     __ProxyDynamicTrackable(ie_tag_content, tracker_element_int_map, ie_tag_content, ie_tag_content_id);
 
@@ -599,13 +599,15 @@ protected:
         if (e != NULL) {
             // If we're inheriting, it's our responsibility to kick submaps and vectors with
             // complex types as well; since they're not themselves complex objects
-            for (auto d = dot11d_vec->begin(); d != dot11d_vec->end(); ++d) {
-                auto din =
-                    std::make_shared<dot11_11d_tracked_range_info>(dot11d_country_entry_id,
-                            std::static_pointer_cast<tracker_element_map>(*d));
+            if (dot11d_vec != nullptr) {
+                for (auto d = dot11d_vec->begin(); d != dot11d_vec->end(); ++d) {
+                    auto din =
+                        std::make_shared<dot11_11d_tracked_range_info>(dot11d_country_entry_id,
+                                std::static_pointer_cast<tracker_element_map>(*d));
 
-                // And assign it over the same key
-                *d = std::static_pointer_cast<tracker_element>(din);
+                    // And assign it over the same key
+                    *d = std::static_pointer_cast<tracker_element>(din);
+                }
             }
         }
     }
@@ -652,6 +654,7 @@ protected:
     int dot11d_country_id;
 
     std::shared_ptr<tracker_element_vector> dot11d_vec;
+    int dot11d_vec_id;
     int dot11d_country_entry_id;
 
     // WPS components
@@ -695,6 +698,7 @@ protected:
 
     // IE tags present, and order
     std::shared_ptr<tracker_element_vector_double> ie_tag_list;
+    int ie_tag_list_id;
 
     // IE tag contents
     std::shared_ptr<tracker_element_int_map> ie_tag_content;
@@ -792,7 +796,7 @@ protected:
         dhcp_vendor_id =
             register_dynamic_field("dot11.client.dhcp_vendor", "dhcp vendor", &dhcp_vendor);
         register_field("dot11.client.tx_cryptset", "bitset of transmitted encryption", &tx_cryptset);
-        register_field("dot11.client.rx_cryptset", "bitset of received enryption", &rx_cryptset);
+        register_field("dot11.client.rx_cryptset", "bitset of received encryption", &rx_cryptset);
         eap_identity_id = 
             register_dynamic_field("dot11.client.eap_identity", "EAP identity", &eap_identity);
         cdp_device_id = 
@@ -942,7 +946,7 @@ public:
     __Proxy(type_set, uint64_t, uint64_t, uint64_t, type_set);
     __ProxyBitset(type_set, uint64_t, type_set);
 
-    __ProxyTrackable(client_map, tracker_element_mac_map, client_map);
+    __ProxyDynamicTrackable(client_map, tracker_element_mac_map, client_map, client_map_id);
 
     std::shared_ptr<dot11_client> new_client() {
         return std::make_shared<dot11_client>(client_map_entry_id);
@@ -950,19 +954,24 @@ public:
     __Proxy(num_client_aps, uint64_t, uint64_t, uint64_t, num_client_aps);
 
 
-    __ProxyTrackable(advertised_ssid_map, tracker_element_int_map, advertised_ssid_map);
+    __ProxyDynamicTrackableFunc(advertised_ssid_map, tracker_element_int_map, advertised_ssid_map, 
+            advertised_ssid_map_id, {advertised_ssid_map->set_as_vector(true);});
+
     std::shared_ptr<dot11_advertised_ssid> new_advertised_ssid() {
         return std::make_shared<dot11_advertised_ssid>(advertised_ssid_map_entry_id);
     }
     __Proxy(num_advertised_ssids, uint64_t, uint64_t, uint64_t, num_advertised_ssids);
 
-    __ProxyTrackable(probed_ssid_map, tracker_element_int_map, probed_ssid_map);
+    __ProxyDynamicTrackableFunc(probed_ssid_map, tracker_element_int_map, probed_ssid_map, 
+            probed_ssid_map_id, {probed_ssid_map->set_as_vector(true);});
     std::shared_ptr<dot11_probed_ssid> new_probed_ssid() {
         return std::make_shared<dot11_probed_ssid>(probed_ssid_map_entry_id);
     }
     __Proxy(num_probed_ssids, uint64_t, uint64_t, uint64_t, num_probed_ssids);
 
-    __ProxyTrackable(associated_client_map, tracker_element_mac_map, associated_client_map);
+    __ProxyDynamicTrackable(associated_client_map, tracker_element_mac_map, 
+            associated_client_map, associated_client_map_id);
+
     __Proxy(num_associated_clients, uint64_t, uint64_t, uint64_t, num_associated_clients);
 
     __Proxy(client_disconnects, uint64_t, uint64_t, uint64_t, client_disconnects);
@@ -997,7 +1006,7 @@ public:
 
     __Proxy(wps_m3_last, uint64_t, uint64_t, uint64_t, wps_m3_last);
 
-    __ProxyTrackable(wpa_key_vec, tracker_element_vector, wpa_key_vec);
+    __ProxyDynamicTrackable(wpa_key_vec, tracker_element_vector, wpa_key_vec, wpa_key_vec_id);
     std::shared_ptr<dot11_tracked_eapol> create_eapol_packet() {
         return std::make_shared<dot11_tracked_eapol>(wpa_key_entry_id);
     }
@@ -1007,8 +1016,8 @@ public:
 
     __Proxy(wpa_present_handshake, uint8_t, uint8_t, uint8_t, wpa_present_handshake);
 
-    __ProxyTrackable(wpa_nonce_vec, tracker_element_vector, wpa_nonce_vec);
-    __ProxyTrackable(wpa_anonce_vec, tracker_element_vector, wpa_anonce_vec);
+    __ProxyDynamicTrackable(wpa_nonce_vec, tracker_element_vector, wpa_nonce_vec, wpa_nonce_vec_id);
+    __ProxyDynamicTrackable(wpa_anonce_vec, tracker_element_vector, wpa_anonce_vec, wpa_anonce_vec_id);
     std::shared_ptr<dot11_tracked_nonce> create_tracked_nonce() {
         return std::make_shared<dot11_tracked_nonce>(wpa_nonce_entry_id);
     }
@@ -1023,19 +1032,36 @@ public:
     }
 
     virtual void pre_serialize() override {
-        set_num_client_aps(client_map->size());
-        set_num_advertised_ssids(advertised_ssid_map->size());
-        set_num_probed_ssids(probed_ssid_map->size());
-        set_num_associated_clients(associated_client_map->size());
+        if (client_map != nullptr)
+            set_num_client_aps(client_map->size());
+        else
+            set_num_client_aps(0);
+
+        if (advertised_ssid_map != nullptr)
+            set_num_advertised_ssids(advertised_ssid_map->size());
+        else
+            set_num_advertised_ssids(0);
+
+        if (probed_ssid_map != nullptr)
+            set_num_probed_ssids(probed_ssid_map->size());
+        else
+            set_num_probed_ssids(0);
+
+        if (associated_client_map != nullptr)
+            set_num_associated_clients(associated_client_map->size());
+        else
+            set_num_associated_clients(0);
     }
 
     __Proxy(min_tx_power, uint8_t, unsigned int, unsigned int, min_tx_power);
     __Proxy(max_tx_power, uint8_t, unsigned int, unsigned int, max_tx_power);
-    __ProxyTrackable(supported_channels, tracker_element_vector_double, supported_channels);
+    __ProxyDynamicTrackable(supported_channels, tracker_element_vector_double, 
+            supported_channels, supported_channels_id);
 
     __Proxy(link_measurement_capable, uint8_t, bool, bool, link_measurement_capable);
     __Proxy(neighbor_report_capable, uint8_t, bool, bool, neighbor_report_capable);
-    __ProxyTrackable(extended_capabilities_list, tracker_element_vector_string, extended_capabilities_list);
+    __ProxyDynamicTrackable(extended_capabilities_list, tracker_element_vector_string, 
+            extended_capabilities_list, extended_capabilities_list_id);
 
     __Proxy(beacon_fingerprint, uint32_t, uint32_t, uint32_t, beacon_fingerprint);
     __Proxy(probe_fingerprint, uint32_t, uint32_t, uint32_t, probe_fingerprint);
@@ -1058,7 +1084,9 @@ protected:
 
     virtual void register_fields() override {
         register_field("dot11.device.typeset", "bitset of device type", &type_set);
-        register_field("dot11.device.client_map", "client behavior", &client_map);
+
+        client_map_id =
+            register_dynamic_field("dot11.device.client_map", "client behavior", &client_map);
 
         client_map_entry_id =
             register_field("dot11.device.client",
@@ -1068,7 +1096,8 @@ protected:
         register_field("dot11.device.num_client_aps", "number of APs connected to", &num_client_aps);
 
         // Advertised SSIDs keyed by ssid checksum
-        register_field("dot11.device.advertised_ssid_map", "advertised SSIDs", &advertised_ssid_map);
+        advertised_ssid_map_id = 
+            register_dynamic_field("dot11.device.advertised_ssid_map", "advertised SSIDs", &advertised_ssid_map);
 
         advertised_ssid_map_entry_id =
             register_field("dot11.device.advertised_ssid",
@@ -1079,7 +1108,8 @@ protected:
                 "number of advertised SSIDs", &num_advertised_ssids);
 
         // Probed SSIDs keyed by int checksum
-        register_field("dot11.device.probed_ssid_map", "probed SSIDs", &probed_ssid_map);
+        probed_ssid_map_id =
+            register_dynamic_field("dot11.device.probed_ssid_map", "probed SSIDs", &probed_ssid_map);
 
         probed_ssid_map_entry_id =
             register_field("dot11.device.probed_ssid",
@@ -1088,8 +1118,8 @@ protected:
 
         register_field("dot11.device.num_probed_ssids", "number of probed SSIDs", &num_probed_ssids);
 
-        register_field("dot11.device.associated_client_map",
-                "associated clients", &associated_client_map);
+        associated_client_map_id =
+            register_dynamic_field("dot11.device.associated_client_map", "associated clients", &associated_client_map);
 
         // Key of associated device, indexed by mac address
         associated_client_map_entry_id =
@@ -1125,16 +1155,19 @@ protected:
         register_field("dot11.device.wps_m3_count", "WPS M3 message count", &wps_m3_count);
         register_field("dot11.device.wps_m3_last", "WPS M3 last message", &wps_m3_last);
 
-        register_field("dot11.device.wpa_handshake_list", "WPA handshakes", &wpa_key_vec);
+        wpa_key_vec_id = 
+            register_dynamic_field("dot11.device.wpa_handshake_list", "WPA handshakes", &wpa_key_vec);
 
         wpa_key_entry_id =
             register_field("dot11.eapol.key",
                     tracker_element_factory<dot11_tracked_eapol>(),
                     "WPA handshake key");
 
-        register_field("dot11.device.wpa_nonce_list", "Previous WPA Nonces", &wpa_nonce_vec);
+        wpa_nonce_vec_id =
+            register_dynamic_field("dot11.device.wpa_nonce_list", "Previous WPA Nonces", &wpa_nonce_vec);
 
-        register_field("dot11.device.wpa_anonce_list", "Previous WPA ANonces", &wpa_anonce_vec);
+        wpa_anonce_vec_id =
+            register_dynamic_field("dot11.device.wpa_anonce_list", "Previous WPA ANonces", &wpa_anonce_vec);
 
         register_field("dot11.device.wpa_present_handshake", 
                 "handshake sequences seen (bitmask)", &wpa_present_handshake);
@@ -1155,14 +1188,17 @@ protected:
         register_field("dot11.device.min_tx_power", "Minimum advertised TX power", &min_tx_power);
         register_field("dot11.device.max_tx_power", "Maximum advertised TX power", &max_tx_power);
 
-        register_field("dot11.device.supported_channels", "Advertised supported channels", 
+        supported_channels_id =
+            register_dynamic_field("dot11.device.supported_channels", "Advertised supported channels", 
                 &supported_channels);
 
         register_field("dot11.device.link_measurement_capable", 
                 "Advertised link measurement client capability", &link_measurement_capable);
         register_field("dot11.device.neighbor_report_capable",
                 "Advertised neighbor report capability", &neighbor_report_capable);
-        register_field("dot11.device.extended_capabilities", 
+        
+        extended_capabilities_list_id =
+            register_dynamic_field("dot11.device.extended_capabilities", 
                 "Advertised extended capabilities list", &extended_capabilities_list);
 
         register_field("dot11.device.beacon_fingerprint", "Beacon fingerprint", &beacon_fingerprint);
@@ -1191,47 +1227,54 @@ protected:
                 as.second = assid;
             }
 
-            for (auto ps : *probed_ssid_map) {
-                auto pssid =
-                    std::make_shared<dot11_probed_ssid>(probed_ssid_map_entry_id, 
-                            std::static_pointer_cast<tracker_element_map>(ps.second));
-                ps.second = pssid;
+            if (probed_ssid_map != nullptr) {
+                for (auto ps : *probed_ssid_map) {
+                    auto pssid =
+                        std::make_shared<dot11_probed_ssid>(probed_ssid_map_entry_id, 
+                                std::static_pointer_cast<tracker_element_map>(ps.second));
+                    ps.second = pssid;
+                }
             }
 
-            for (auto ci : *client_map) {
-                auto cli =
-                    std::make_shared<dot11_client>(client_map_entry_id, 
-                            std::static_pointer_cast<tracker_element_map>(ci.second));
-                ci.second = cli;
+            if (client_map != nullptr) {
+                for (auto ci : *client_map) {
+                    auto cli =
+                        std::make_shared<dot11_client>(client_map_entry_id, 
+                                std::static_pointer_cast<tracker_element_map>(ci.second));
+                    ci.second = cli;
+                }
             }
 
             // We don't have to deal with the client map because it's a map of
             // simplistic types
 
-            for (auto k = wpa_key_vec->begin(); k != wpa_key_vec->end(); ++k) {
-                auto eap =
-                    std::make_shared<dot11_tracked_eapol>(wpa_key_entry_id, 
-                            std::static_pointer_cast<tracker_element_map>(*k));
-                *k = eap;
+            if (wpa_key_vec != nullptr) {
+                for (auto k = wpa_key_vec->begin(); k != wpa_key_vec->end(); ++k) {
+                    auto eap =
+                        std::make_shared<dot11_tracked_eapol>(wpa_key_entry_id, 
+                                std::static_pointer_cast<tracker_element_map>(*k));
+                    *k = eap;
+                }
             }
 
-            for (auto k = wpa_nonce_vec->begin(); k != wpa_nonce_vec->end(); ++k) {
-                auto nonce =
-                    std::make_shared<dot11_tracked_nonce>(wpa_nonce_entry_id, 
-                            std::static_pointer_cast<tracker_element_map>(*k));
-                *k = nonce;
+            if (wpa_nonce_vec != nullptr) {
+                for (auto k = wpa_nonce_vec->begin(); k != wpa_nonce_vec->end(); ++k) {
+                    auto nonce =
+                        std::make_shared<dot11_tracked_nonce>(wpa_nonce_entry_id, 
+                                std::static_pointer_cast<tracker_element_map>(*k));
+                    *k = nonce;
+                }
             }
 
-            for (auto k = wpa_anonce_vec->begin(); k != wpa_anonce_vec->end(); ++k) {
-                auto anonce =
-                    std::make_shared<dot11_tracked_nonce>(wpa_nonce_entry_id, 
-                            std::static_pointer_cast<tracker_element_map>(*k));
-                *k = anonce;
+            if (wpa_anonce_vec != nullptr) {
+                for (auto k = wpa_anonce_vec->begin(); k != wpa_anonce_vec->end(); ++k) {
+                    auto anonce =
+                        std::make_shared<dot11_tracked_nonce>(wpa_nonce_entry_id, 
+                                std::static_pointer_cast<tracker_element_map>(*k));
+                    *k = anonce;
+                }
             }
         }
-
-        advertised_ssid_map->set_as_vector(true);
-        probed_ssid_map->set_as_vector(true);
     }
 
     // Do we need to snap the next beacon because we're trying to add a beacon
@@ -1241,18 +1284,22 @@ protected:
     std::shared_ptr<tracker_element_uint64> type_set;
 
     std::shared_ptr<tracker_element_mac_map> client_map;
+    int client_map_id;
     int client_map_entry_id;
     std::shared_ptr<tracker_element_uint64> num_client_aps;
 
     std::shared_ptr<tracker_element_int_map> advertised_ssid_map;
+    int advertised_ssid_map_id;
     int advertised_ssid_map_entry_id;
     std::shared_ptr<tracker_element_uint64> num_advertised_ssids;
 
     std::shared_ptr<tracker_element_int_map> probed_ssid_map;
+    int probed_ssid_map_id;
     int probed_ssid_map_entry_id;
     std::shared_ptr<tracker_element_uint64> num_probed_ssids;
 
     std::shared_ptr<tracker_element_mac_map> associated_client_map;
+    int associated_client_map_id;
     int associated_client_map_entry_id;
     std::shared_ptr<tracker_element_uint64> num_associated_clients;
     std::shared_ptr<tracker_element_uint64> client_disconnects;
@@ -1276,9 +1323,15 @@ protected:
     std::shared_ptr<tracker_element_uint64> wps_m3_last;
 
     std::shared_ptr<tracker_element_vector> wpa_key_vec;
+    int wpa_key_vec_id;
     int wpa_key_entry_id;
+
     std::shared_ptr<tracker_element_vector> wpa_nonce_vec;
+    int wpa_nonce_vec_id;
+
     std::shared_ptr<tracker_element_vector> wpa_anonce_vec;
+    int wpa_anonce_vec_id;
+
     std::shared_ptr<tracker_element_uint8> wpa_present_handshake;
     int wpa_nonce_entry_id;
 
@@ -1297,11 +1350,13 @@ protected:
     std::shared_ptr<tracker_element_uint8> max_tx_power;
 
     std::shared_ptr<tracker_element_vector_double> supported_channels;
+    int supported_channels_id;
 
     std::shared_ptr<tracker_element_uint8> link_measurement_capable;
     std::shared_ptr<tracker_element_uint8> neighbor_report_capable;
 
     std::shared_ptr<tracker_element_vector_string> extended_capabilities_list;
+    int extended_capabilities_list_id;
 
     std::shared_ptr<tracker_element_uint32> beacon_fingerprint;
     std::shared_ptr<tracker_element_uint32> probe_fingerprint;

@@ -39,6 +39,9 @@
 #include "json/json.h"
 #include "trackedelement.h"
 
+#include <microhttpd.h>
+#include "microhttpd_shim.h"
+
 class kis_net_httpd;
 class kis_net_httpd_session;
 class kis_net_httpd_connection;
@@ -215,12 +218,12 @@ public:
     // HTTP handlers
     virtual bool httpd_verify_path(const char *path, const char *method) override;
 
-    virtual int httpd_create_stream_response(kis_net_httpd *httpd,
+    virtual KIS_MHD_RETURN httpd_create_stream_response(kis_net_httpd *httpd,
             kis_net_httpd_connection *connection,
             const char *url, const char *method, const char *upload_data,
             size_t *upload_data_size) override;
 
-    virtual int httpd_post_complete(kis_net_httpd_connection *concls) override;
+    virtual KIS_MHD_RETURN httpd_post_complete(kis_net_httpd_connection *concls) override;
 
 protected:
     std::string uri;
@@ -247,12 +250,12 @@ public:
     // HTTP handlers
     virtual bool httpd_verify_path(const char *path, const char *method) override;
 
-    virtual int httpd_create_stream_response(kis_net_httpd *httpd,
+    virtual KIS_MHD_RETURN httpd_create_stream_response(kis_net_httpd *httpd,
             kis_net_httpd_connection *connection,
             const char *url, const char *method, const char *upload_data,
             size_t *upload_data_size) override;
 
-    virtual int httpd_post_complete(kis_net_httpd_connection *concls) override;
+    virtual KIS_MHD_RETURN httpd_post_complete(kis_net_httpd_connection *concls) override;
 
 protected:
     std::string uri;
@@ -276,15 +279,42 @@ public:
     // HTTP handlers
     virtual bool httpd_verify_path(const char *path, const char *method) override;
 
-    virtual int httpd_create_stream_response(kis_net_httpd *httpd,
+    virtual KIS_MHD_RETURN httpd_create_stream_response(kis_net_httpd *httpd,
             kis_net_httpd_connection *connection,
             const char *url, const char *method, const char *upload_data,
             size_t *upload_data_size) override;
 
-    virtual int httpd_post_complete(kis_net_httpd_connection *concls) override;
+    virtual KIS_MHD_RETURN httpd_post_complete(kis_net_httpd_connection *concls) override;
 
 protected:
     path_func path;
+    gen_func generator;
+    kis_recursive_timed_mutex *mutex;
+};
+
+// Do a simple dump of a tracked object into an endpoint
+class kis_net_httpd_simple_stream_endpoint : public kis_net_httpd_chain_stream_handler {
+public:
+    using gen_func = std::function<int (std::ostream& stream)>;
+
+    kis_net_httpd_simple_stream_endpoint(const std::string& in_uri, gen_func in_func);
+    kis_net_httpd_simple_stream_endpoint(const std::string& in_uri, gen_func in_func,
+            kis_recursive_timed_mutex *in_mutex);
+
+    virtual ~kis_net_httpd_simple_stream_endpoint() { }
+
+    // HTTP handlers
+    virtual bool httpd_verify_path(const char *path, const char *method) override;
+
+    virtual KIS_MHD_RETURN httpd_create_stream_response(kis_net_httpd *httpd,
+            kis_net_httpd_connection *connection,
+            const char *url, const char *method, const char *upload_data,
+            size_t *upload_data_size) override;
+
+    virtual KIS_MHD_RETURN httpd_post_complete(kis_net_httpd_connection *concls) override;
+
+protected:
+    std::string uri;
     gen_func generator;
     kis_recursive_timed_mutex *mutex;
 };
@@ -307,12 +337,12 @@ public:
     // HTTP handlers
     virtual bool httpd_verify_path(const char *path, const char *method) override;
 
-    virtual int httpd_create_stream_response(kis_net_httpd *httpd,
+    virtual KIS_MHD_RETURN httpd_create_stream_response(kis_net_httpd *httpd,
             kis_net_httpd_connection *connection,
             const char *url, const char *method, const char *upload_data,
             size_t *upload_data_size) override;
 
-    virtual int httpd_post_complete(kis_net_httpd_connection *concls) override;
+    virtual KIS_MHD_RETURN httpd_post_complete(kis_net_httpd_connection *concls) override;
 
 protected:
     std::string uri;
@@ -339,12 +369,12 @@ public:
     // HTTP handlers
     virtual bool httpd_verify_path(const char *path, const char *method) override;
 
-    virtual int httpd_create_stream_response(kis_net_httpd *httpd,
+    virtual KIS_MHD_RETURN httpd_create_stream_response(kis_net_httpd *httpd,
             kis_net_httpd_connection *connection,
             const char *url, const char *method, const char *upload_data,
             size_t *upload_data_size) override;
 
-    virtual int httpd_post_complete(kis_net_httpd_connection *concls) override;
+    virtual KIS_MHD_RETURN httpd_post_complete(kis_net_httpd_connection *concls) override;
 
 protected:
     path_func path;
@@ -372,12 +402,12 @@ public:
     // HTTP handlers
     virtual bool httpd_verify_path(const char *path, const char *method) override;
 
-    virtual int httpd_create_stream_response(kis_net_httpd *httpd,
+    virtual KIS_MHD_RETURN httpd_create_stream_response(kis_net_httpd *httpd,
             kis_net_httpd_connection *connection,
             const char *url, const char *method, const char *upload_data,
             size_t *upload_data_size) override;
 
-    virtual int httpd_post_complete(kis_net_httpd_connection *concls) override;
+    virtual KIS_MHD_RETURN httpd_post_complete(kis_net_httpd_connection *concls) override;
 
 protected:
     path_func path;
@@ -458,12 +488,11 @@ public:
             struct MHD_Response *response);
 
     // Queue a http response
-    static int send_http_response(kis_net_httpd *httpd,
-            kis_net_httpd_connection *connection);
+    static KIS_MHD_RETURN send_http_response(kis_net_httpd *httpd, kis_net_httpd_connection *connection);
 
     // Send a standard HTTP response appending the session and standard 
     // headers
-    static int send_standard_http_response(kis_net_httpd *httpd,
+    static KIS_MHD_RETURN send_standard_http_response(kis_net_httpd *httpd,
             kis_net_httpd_connection *connection, const char *url);
 
     // Catch MHD panics and try to close more elegantly
@@ -520,7 +549,7 @@ protected:
     kis_recursive_timed_mutex session_mutex;
 
     // Handle the requests and dispatch to controllers
-    static int http_request_handler(void *cls, struct MHD_Connection *connection,
+    static KIS_MHD_RETURN http_request_handler(void *cls, struct MHD_Connection *connection,
             const char *url, const char *method, const char *version,
             const char *upload_data, size_t *upload_data_size, void **ptr);
 
@@ -530,7 +559,7 @@ protected:
     static int handle_static_file(void *cls, kis_net_httpd_connection *connection,
             const char *url, const char *method);
 
-    static int http_post_handler(void *coninfo_cls, enum MHD_ValueKind kind, 
+    static KIS_MHD_RETURN http_post_handler(void *coninfo_cls, enum MHD_ValueKind kind, 
             const char *key, const char *filename, const char *content_type,
             const char *transfer_encoding, const char *data, 
             uint64_t off, size_t size);

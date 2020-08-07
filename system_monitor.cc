@@ -140,7 +140,7 @@ Systemmonitor::Systemmonitor() :
         kismetdb_log_timer =
             timetracker->register_timer(SERVER_TIMESLICES_SEC * snap_time_s, nullptr, 1, 
                     [this](int) -> int {
-                        auto kismetdb = Globalreg::FetchGlobalAs<kis_database_logfile>();
+                        auto kismetdb = Globalreg::fetch_global_as<kis_database_logfile>();
 
                         if (kismetdb == nullptr)
                             return 1;
@@ -165,9 +165,9 @@ Systemmonitor::Systemmonitor() :
 
     // Always drop a SYSTEM snapshot as soon as the log opens
     logopen_evt_id = 
-        eventbus->register_listener(kis_database_logfile::event_dblog_opened::Event(),
+        eventbus->register_listener(kis_database_logfile::event_log_open(),
             [this](std::shared_ptr<eventbus_event> evt) {
-                auto kismetdb = Globalreg::FetchGlobalAs<kis_database_logfile>();
+                auto kismetdb = Globalreg::fetch_global_as<kis_database_logfile>();
 
                 if (kismetdb == nullptr)
                     return;
@@ -190,9 +190,9 @@ Systemmonitor::Systemmonitor() :
 Systemmonitor::~Systemmonitor() {
     local_locker lock(&monitor_mutex);
 
-    Globalreg::globalreg->RemoveGlobal("SYSTEMMONITOR");
+    Globalreg::globalreg->remove_global("SYSTEMMONITOR");
 
-    auto timetracker = Globalreg::FetchGlobalAs<time_tracker>("TIMETRACKER");
+    auto timetracker = Globalreg::fetch_global_as<time_tracker>("TIMETRACKER");
     if (timetracker != nullptr) {
         timetracker->remove_timer(timer_id);
         timetracker->remove_timer(kismetdb_log_timer);
@@ -227,6 +227,9 @@ void tracked_system_status::register_fields() {
 
     register_field("kismet.system.sensors.fan", "fan sensors", &sensors_fans);
     register_field("kismet.system.sensors.temp", "temperature sensors", &sensors_temp);
+
+    register_field("kismet.system.num_fields", "number of allocated tracked element fields", &num_fields);
+    register_field("kismet.system.num_components", "number of allocated tracked element components", &num_components);
 }
 
 int Systemmonitor::timetracker_event(int eventid) {
@@ -380,5 +383,8 @@ void tracked_system_status::pre_serialize() {
 
     set_timestamp_sec(now.tv_sec);
     set_timestamp_usec(now.tv_usec);
-}
+
+    set_num_fields(Globalreg::n_tracked_fields);
+    set_num_components(Globalreg::n_tracked_components);
+} 
 

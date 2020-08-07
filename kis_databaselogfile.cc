@@ -82,7 +82,7 @@ kis_database_logfile::kis_database_logfile():
 }
 
 kis_database_logfile::~kis_database_logfile() {
-    auto messagebus = Globalreg::FetchGlobalAs<message_bus>();
+    auto messagebus = Globalreg::fetch_global_as<message_bus>();
     if (messagebus != nullptr)
         messagebus->remove_client(this);
 
@@ -300,7 +300,7 @@ bool kis_database_logfile::open_log(std::string in_path) {
         }
 
         mac_addr m(filter_toks[1]);
-        if (m.error) {
+        if (m.state.error) {
             _MSG_ERROR("Skipping invalid kis_log_device_filter option '{}', expected phyname,mac,filtertype "
                     "but got error parsing '{}' as a MAC address.", dfi, filter_toks[1]);
             continue;
@@ -344,7 +344,7 @@ bool kis_database_logfile::open_log(std::string in_path) {
         }
 
         mac_addr m(filter_toks[2]);
-        if (m.error) {
+        if (m.state.error) {
             _MSG_ERROR("Skipping invalid kis_log_packet_filter option '{}', expected phyname,filterblock,mac,filtertype "
                     "but got error parsing '{}' as a MAC address.", dfi, filter_toks[2]);
             continue;
@@ -396,7 +396,8 @@ bool kis_database_logfile::open_log(std::string in_path) {
 
     // Post that we've got the logfile ready
     auto eventbus = Globalreg::fetch_mandatory_global_as<event_bus>();
-    eventbus->publish(std::make_shared<event_dblog_opened>());
+    auto evt = eventbus->get_eventbus_event(event_log_open());
+    eventbus->publish(evt);
 
     return true;
 }
@@ -410,7 +411,7 @@ void kis_database_logfile::close_log() {
 
     // Kill the timers
     auto timetracker = 
-        Globalreg::FetchGlobalAs<time_tracker>();
+        Globalreg::fetch_global_as<time_tracker>();
     if (timetracker != NULL) {
         timetracker->remove_timer(transaction_timer);
         timetracker->remove_timer(packet_timeout_timer);
@@ -428,7 +429,7 @@ void kis_database_logfile::close_log() {
     db_enabled = false;
 
     auto packetchain =
-        Globalreg::FetchGlobalAs<packet_chain>();
+        Globalreg::fetch_global_as<packet_chain>();
     if (packetchain != NULL) 
         packetchain->remove_handler(&kis_database_logfile::packet_handler, CHAINPOS_LOGGING);
 
@@ -1371,7 +1372,7 @@ bool kis_database_logfile::httpd_verify_path(const char *path, const char *metho
     return false;
 }
 
-int kis_database_logfile::httpd_create_stream_response(kis_net_httpd *httpd,
+KIS_MHD_RETURN kis_database_logfile::httpd_create_stream_response(kis_net_httpd *httpd,
             kis_net_httpd_connection *connection,
             const char *url, const char *method, const char *upload_data,
             size_t *upload_data_size) {
@@ -1531,7 +1532,7 @@ int kis_database_logfile::httpd_create_stream_response(kis_net_httpd *httpd,
     return MHD_YES;
 }
 
-int kis_database_logfile::httpd_post_complete(kis_net_httpd_connection *concls) {
+KIS_MHD_RETURN kis_database_logfile::httpd_post_complete(kis_net_httpd_connection *concls) {
     std::string stripped = httpd_strip_suffix(concls->url);
     std::string suffix = httpd_get_suffix(concls->url);
 

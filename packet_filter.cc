@@ -114,17 +114,17 @@ bool packet_filter::filterstring_to_bool(const std::string& str) {
 packet_filter_mac_addr::packet_filter_mac_addr(const std::string& in_id, const std::string& in_description) :
     packet_filter(in_id, in_description, "mac_addr") {
 
-    register_fields();
-    reserve_fields(nullptr);
+        register_fields();
+        reserve_fields(nullptr);
 
-    devicetracker = Globalreg::fetch_mandatory_global_as<device_tracker>();
+        devicetracker = Globalreg::fetch_mandatory_global_as<device_tracker>();
 
-	eventbus = Globalreg::fetch_mandatory_global_as<event_bus>();
-	eb_id = 
-		eventbus->register_listener("NEW_PHY",
-				[this](std::shared_ptr<eventbus_event> evt) {
-					update_phy_map(evt);
-				});
+        eventbus = Globalreg::fetch_mandatory_global_as<event_bus>();
+        eb_id = 
+            eventbus->register_listener(device_tracker::event_new_phy(),
+                    [this](std::shared_ptr<eventbus_event> evt) {
+                    update_phy_map(evt);
+                    });
 
     // Set and clear endpoints
     macaddr_edit_endp =
@@ -221,27 +221,34 @@ packet_filter_mac_addr::~packet_filter_mac_addr() {
 }
 
 void packet_filter_mac_addr::update_phy_map(std::shared_ptr<eventbus_event> evt) {
-	local_locker l(&mutex);
+    local_locker l(&mutex);
 
-	if (unknown_phy_mac_filter_map.size() == 0)
-		return;
+    if (unknown_phy_mac_filter_map.size() == 0)
+        return;
 
-	// Turn the generic event into the device event
-	auto phy_evt = 
-		std::static_pointer_cast<device_tracker::event_new_phy>(evt);
+    const auto phyname_k = 
+        evt->get_event_content()->find(device_tracker::event_new_phy());
 
-	// Do we have any pending filters that match this key?
-	auto unknown_key = unknown_phy_mac_filter_map.find(phy_evt->phy->fetch_phy_name());
+    if (phyname_k == evt->get_event_content()->end())
+        return;
 
-	if (unknown_key == unknown_phy_mac_filter_map.end())
-		return;
+    auto phy = devicetracker->fetch_phy_handler_by_name(get_tracker_value<std::string>(phyname_k->second));
+
+    if (phy == nullptr)
+        return;
+
+    // Do we have any pending filters that match this key?
+    auto unknown_key = unknown_phy_mac_filter_map.find(phy->fetch_phy_name());
+
+    if (unknown_key == unknown_phy_mac_filter_map.end())
+        return;
 
     // The tracked version already exists because that's always created, even
     // if we can't activate the filter b/c the phy is unknown
 
     // Copy the filter-engine code over to the new one
-	phy_mac_filter_map[phy_evt->phy->fetch_phy_id()] = unknown_key->second;
-	unknown_phy_mac_filter_map.erase(unknown_key);
+    phy_mac_filter_map[phy->fetch_phy_id()] = unknown_key->second;
+    unknown_phy_mac_filter_map.erase(unknown_key);
 }
 
 void packet_filter_mac_addr::set_filter(mac_addr in_mac, const std::string& in_phy, const std::string& in_block, bool value) {
@@ -453,7 +460,7 @@ unsigned int packet_filter_mac_addr::edit_endp_handler(std::ostream& stream,
             mac_addr m(i);
             bool v = filter[i].asBool();
 
-            if (m.error) 
+            if (m.state.error) 
                 throw std::runtime_error(fmt::format("Invalid MAC address: '{}'",
                             kishttpd::escape_html(i)));
 
@@ -495,7 +502,7 @@ unsigned int packet_filter_mac_addr::remove_endp_handler(std::ostream& stream,
         for (auto i : filter) {
             mac_addr m{i.asString()};
 
-            if (m.error) 
+            if (m.state.error) 
                 throw std::runtime_error(fmt::format("Invalid MAC address: '{}'",
                             kishttpd::escape_html(i.asString())));
 

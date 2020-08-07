@@ -123,8 +123,8 @@ class deferred_startup {
 public:
     virtual ~deferred_startup() { }
 
-    virtual void trigger_deferred_startup() = 0;
-    virtual void trigger_deferred_shutdown() = 0;
+    virtual void trigger_deferred_startup() { };
+    virtual void trigger_deferred_shutdown() { };
 };
 
 // Global registry of references to tracker objects and preferences.  This 
@@ -223,8 +223,8 @@ public:
 
     int insert_global(int in_ref, std::shared_ptr<void> in_data);
 	int insert_global(std::string in_name, std::shared_ptr<void> in_data);
-    void RemoveGlobal(int in_ref);
-    void RemoveGlobal(std::string in_name);
+    void remove_global(int in_ref);
+    void remove_global(std::string in_name);
 
     // Add a CLI extension
     typedef void (*usage_func)(const char *);
@@ -238,12 +238,12 @@ public:
 
     void register_lifetime_global(std::shared_ptr<lifetime_global> in_g);
     void Removelifetime_global(std::shared_ptr<lifetime_global> in_g);
-    void Deletelifetime_globals();
+    void delete_lifetime_globals();
 
     void register_deferred_global(std::shared_ptr<deferred_startup> in_d);
-    void RemoveDeferredGlobal(std::shared_ptr<deferred_startup> in_d);
-    void Start_Deferred();
-    void Shutdown_Deferred();
+    void remove_deferred_global(std::shared_ptr<deferred_startup> in_d);
+    void start_deferred();
+    void shutdown_deferred();
 
 protected:
     kis_recursive_timed_mutex ext_mutex;
@@ -262,31 +262,34 @@ protected:
 };
 
 namespace Globalreg {
+    extern std::atomic<unsigned long> n_tracked_fields;
+    extern std::atomic<unsigned long> n_tracked_components;
+
     extern global_registry *globalreg;
 
     template<typename T> 
-    std::shared_ptr<T> FetchGlobalAs(global_registry *in_globalreg, int in_ref) {
+    std::shared_ptr<T> fetch_global_as(global_registry *in_globalreg, int in_ref) {
         return std::static_pointer_cast<T>(in_globalreg->FetchGlobal(in_ref));
     }
 
     template<typename T> 
-    std::shared_ptr<T> FetchGlobalAs(int in_ref) {
-        return FetchGlobalAs<T>(Globalreg::globalreg, in_ref);
+    std::shared_ptr<T> fetch_global_as(int in_ref) {
+        return fetch_global_as<T>(Globalreg::globalreg, in_ref);
     }
 
     template<typename T> 
-    std::shared_ptr<T> FetchGlobalAs(global_registry *in_globalreg, const std::string& in_name) {
+    std::shared_ptr<T> fetch_global_as(global_registry *in_globalreg, const std::string& in_name) {
         return std::static_pointer_cast<T>(in_globalreg->FetchGlobal(in_name));
     }
 
     template<typename T> 
-    std::shared_ptr<T> FetchGlobalAs(const std::string& in_name) {
-        return FetchGlobalAs<T>(globalreg, in_name);
+    std::shared_ptr<T> fetch_global_as(const std::string& in_name) {
+        return fetch_global_as<T>(globalreg, in_name);
     }
 
     template<typename T>
-    std::shared_ptr<T> FetchGlobalAs() {
-        return FetchGlobalAs<T>(globalreg, T::global_name());
+    std::shared_ptr<T> fetch_global_as() {
+        return fetch_global_as<T>(globalreg, T::global_name());
     }
 
     template<typename T> 

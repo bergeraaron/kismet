@@ -364,13 +364,13 @@ device_tracker::device_tracker(global_registry *in_globalreg) :
     database_upgrade_db();
 
     new_datasource_evt_id = 
-        eventbus->register_listener(datasource_tracker::event_new_datasource::event(),
+        eventbus->register_listener(datasource_tracker::event_new_datasource(),
                 [this](std::shared_ptr<eventbus_event> evt) {
                     handle_new_datasource_event(evt);
                 });
 
     new_device_evt_id = 
-        eventbus->register_listener(event_new_device::event(),
+        eventbus->register_listener(device_tracker::event_new_device(),
                 [this](std::shared_ptr<eventbus_event> evt) {
                     handle_new_device_event(evt);
                 });
@@ -405,7 +405,7 @@ device_tracker::device_tracker(global_registry *in_globalreg) :
     for (auto m : found_vec) {
         auto mac = mac_addr(m);
 
-        if (mac.error) {
+        if (mac.state.error) {
             _MSG_ERROR("Invalid 'devicefound=' option, expected MAC address "
                     "or MAC address mask");
             continue;
@@ -419,7 +419,7 @@ device_tracker::device_tracker(global_registry *in_globalreg) :
     for (auto m : lost_vec) {
         auto mac = mac_addr(m);
 
-        if (mac.error) {
+        if (mac.state.error) {
             _MSG_ERROR("Invalid 'devicelost=' option, expected MAC address "
                     "or MAC address mask.");
             continue;
@@ -451,7 +451,7 @@ device_tracker::~device_tracker() {
     }
 
     globalreg->devicetracker = NULL;
-    globalreg->RemoveGlobal("DEVICETRACKER");
+    globalreg->remove_global("DEVICETRACKER");
 
     std::shared_ptr<packet_chain> packetchain =
         Globalreg::fetch_mandatory_global_as<packet_chain>(globalreg, "PACKETCHAIN");
@@ -462,7 +462,7 @@ device_tracker::~device_tracker() {
     }
 
     std::shared_ptr<time_tracker> timetracker = 
-        Globalreg::FetchGlobalAs<time_tracker>(globalreg, "TIMETRACKER");
+        Globalreg::fetch_global_as<time_tracker>(globalreg, "TIMETRACKER");
     if (timetracker != NULL) {
         timetracker->remove_timer(device_idle_timer);
         timetracker->remove_timer(max_devices_timer);
@@ -519,10 +519,10 @@ kis_phy_handler *device_tracker::fetch_phy_handler(int in_phy) {
 	return i->second;
 }
 
-kis_phy_handler *device_tracker::fetch_phy_handler_by_name(std::string in_name) {
-    for (auto i = phy_handler_map.begin(); i != phy_handler_map.end(); ++i) {
-        if (i->second->fetch_phy_name() == in_name) {
-            return i->second;
+kis_phy_handler *device_tracker::fetch_phy_handler_by_name(const std::string& in_name) {
+    for (auto i : phy_handler_map) {
+        if (i.second->fetch_phy_name() == in_name) {
+            return i.second;
         }
     }
     return NULL;
@@ -586,7 +586,10 @@ int device_tracker::register_phy_handler(kis_phy_handler *in_weak_handler) {
         }
     }
 
-	eventbus->publish(std::make_shared<event_new_phy>(strongphy));
+    auto evt = eventbus->get_eventbus_event(event_new_phy());
+    evt->get_event_content()->insert(event_new_phy(), 
+            std::make_shared<tracker_element_string>(strongphy->fetch_phy_name()));
+    eventbus->publish(evt);
 
 	_MSG("Registered PHY handler '" + strongphy->fetch_phy_name() + "' as ID " +
 		 int_to_string(num), MSGFLAG_INFO);
@@ -718,14 +721,14 @@ std::shared_ptr<kis_tracked_device_base>
 
         device->device_mutex.set_name(fmt::format("kis_tracked_device({})", key));
         device->set_macaddr(in_mac);
-        device->set_phyname(in_phy->fetch_phy_name());
+        device->set_tracker_phyname(get_cached_phyname(in_phy->fetch_phy_name()));
 		device->set_phyid(in_phy->fetch_phy_id());
 
         device->set_server_uuid(globalreg->server_uuid);
 
         device->set_first_time(in_pack->ts.tv_sec);
 
-        device->set_type_string(in_basic_type);
+        device->set_tracker_type_string(get_cached_devicetype(in_basic_type));
 
         if (globalreg->manufdb != NULL) {
             device->set_manuf(globalreg->manufdb->lookup_oui(in_mac));
@@ -928,9 +931,13 @@ std::shared_ptr<kis_tracked_device_base>
         // end of the packet processing stage of the chain
         if (in_pack == nullptr) {
             new_view_device(device);
-            eventbus->publish(std::make_shared<event_new_device>(device));
+            auto evt = eventbus->get_eventbus_event(event_new_device());
+            evt->get_event_content()->insert(event_new_phy(), device);
+            eventbus->publish(evt);
         } else {
-            in_pack->process_complete_events.push_back(std::make_shared<event_new_device>(device));
+            auto evt = eventbus->get_eventbus_event(event_new_device());
+            evt->get_event_content()->insert(event_new_phy(), device);
+            in_pack->process_complete_events.push_back(evt);
         }
     }
 
@@ -1260,7 +1267,7 @@ std::shared_ptr<device_tracker_view> device_tracker::get_phy_view(int in_phyid) 
 }
 
 void device_tracker::databaselog_write_devices() {
-    auto dbf = Globalreg::FetchGlobalAs<kis_database_logfile>();
+    auto dbf = Globalreg::fetch_global_as<kis_database_logfile>();
     
     if (dbf == nullptr)
         return;
@@ -1507,11 +1514,16 @@ void device_tracker::set_device_tag(std::shared_ptr<kis_tracked_device_base> in_
 }
 
 void device_tracker::handle_new_datasource_event(std::shared_ptr<eventbus_event> evt) {
-    auto ds_evt = std::static_pointer_cast<datasource_tracker::event_new_datasource>(evt);
+    auto ds_k = evt->get_event_content()->find(datasource_tracker::event_new_datasource());
+
+    if (ds_k == evt->get_event_content()->end())
+        return;
+
+    auto datasource = std::static_pointer_cast<kis_datasource>(ds_k->second);
 
     if (map_seenby_views) {
-        auto source_uuid = ds_evt->datasource->get_source_uuid();
-        auto source_key = ds_evt->datasource->get_source_key();
+        auto source_uuid =datasource->get_source_uuid();
+        auto source_key = datasource->get_source_key();
 
         auto k = seenby_view_map.find(source_uuid);
 
@@ -1533,7 +1545,39 @@ void device_tracker::handle_new_datasource_event(std::shared_ptr<eventbus_event>
 }
 
 void device_tracker::handle_new_device_event(std::shared_ptr<eventbus_event> evt) {
-    auto dev_evt = std::static_pointer_cast<event_new_device>(evt);
-    new_view_device(dev_evt->device);
+    auto device_k = evt->get_event_content()->find(device_tracker::event_new_device());
+
+    if (device_k == evt->get_event_content()->end())
+        return;
+
+    new_view_device(std::static_pointer_cast<kis_tracked_device_base>(device_k->second));
+}
+
+std::shared_ptr<tracker_element_string> device_tracker::get_cached_devicetype(const std::string& type) {
+    local_locker l(&device_type_cache_mutex, "device_tracker::get_cached_devicetype");
+
+    auto k = device_type_cache.find(type);
+
+    if (k == device_type_cache.end()) {
+        auto r = std::make_shared<tracker_element_string>(type);
+        device_type_cache[type] = r;
+        return r;
+    }
+
+    return k->second;
+}
+
+std::shared_ptr<tracker_element_string> device_tracker::get_cached_phyname(const std::string& phyname) {
+    local_locker l(&device_phy_name_cache_mutex, "device_tracker::get_cached_phyname");
+
+    auto k = device_phy_name_cache.find(phyname);
+
+    if (k == device_phy_name_cache.end()) {
+        auto r = std::make_shared<tracker_element_string>(phyname);
+        device_phy_name_cache[phyname] = r;
+        return r;
+    }
+
+    return k->second;
 }
 

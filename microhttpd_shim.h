@@ -7,7 +7,7 @@
     (at your option) any later version.
 
     Kismet is distributed in the hope that it will be useful,
-      but WITHOUT ANY WARRANTY; without even the implied warranty of
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
@@ -16,21 +16,18 @@
     Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
-#include "macaddr.h"
+#ifndef __MICROHTTPD_SHIM_H__
+#define __MICROHTTPD_SHIM_H__ 
 
-std::ostream& operator<<(std::ostream& os, const mac_addr& m) {
-    os << m.mac_to_string();
-    return os;
-}
+// Microhttpd changed their basic API in a breaking way; this patches around it.
 
-std::istream& operator>>(std::istream& is, mac_addr& m) {
-    std::string sline;
-    std::getline(is, sline);
-    m.string2long(sline.c_str());
+#include <microhttpd.h>
 
-    if (m.state.error)
-        is.setstate(std::ios::failbit);
+#if MHD_VERSION >= 0x00097002
+#define KIS_MHD_RETURN enum MHD_Result
+#else
+#define KIS_MHD_RETURN int
+#endif
 
-    return is;
-}
 
+#endif /* ifndef MICROHTTPD_SHIM_H */

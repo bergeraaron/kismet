@@ -53,25 +53,28 @@ PROTOBUF_CPP_O = \
 	protobuf_cpp/kismet.pb.cc.o \
 	protobuf_cpp/http.pb.cc.o \
 	protobuf_cpp/datasource.pb.cc.o \
-	protobuf_cpp/linuxbluetooth.pb.cc.o 
+	protobuf_cpp/linuxbluetooth.pb.cc.o \
+	protobuf_cpp/eventbus.pb.cc.o 
 
 PROTOBUF_CPP_H_TARGET = @PROTOBUF_CPP_H_TARGET@
 PROTOBUF_CPP_H = \
 	protobuf_cpp/kismet.pb.h \
 	protobuf_cpp/http.pb.h \
 	protobuf_cpp/datasource.pb.h \
-	protobuf_cpp/linuxbluetooth.pb.h 
+	protobuf_cpp/linuxbluetooth.pb.h \
+	protobuf_cpp/eventbus.pb.h 
 
 PROTOBUF_C_O = \
 	protobuf_c/kismet.pb-c.c.o \
 	protobuf_c/datasource.pb-c.c.o \
-	protobuf_c/linuxbluetooth.pb-c.c.o 
+	protobuf_c/linuxbluetooth.pb-c.c.o \
+	protobuf_c/eventbus.pb-c.c.o
 
 PROTOBUF_C_H = \
 	protobuf_c/kismet.pb-c.h \
 	protobuf_c/datasource.pb-c.h \
-	protobuf_c/linuxbluetooth.pb-c.h
-
+	protobuf_c/linuxbluetooth.pb-c.h \
+	protobuf_c/eventbus.pb-c.h
 
 # Common pure-c code for capturesource binaries
 DATASOURCE_COMMON_C_O = \
@@ -203,7 +206,7 @@ PSO	= util.cc.o macaddr.cc.o uuid.cc.o xxhash.cc.o boost_like_hash.cc.o sqlite3_
 	datasource_linux_bluetooth.cc.o datasource_rtl433.cc.o datasource_rtlamr.cc.o datasource_rtladsb.cc.o \
 	datasource_ti_cc_2540.cc.o datasource_ti_cc_2531.cc.o datasource_ubertooth_one.cc.o datasource_nrf_51822.cc.o \
 	datasource_nxp_kw41z.cc.o datasource_nrf_52840.cc.o datasource_rz_killerbee.cc.o\
-	datasource_dot11_scan.cc.o \
+	datasource_scan.cc.o \
 	kis_net_microhttpd.cc.o kis_net_microhttpd_handlers.cc.o system_monitor.cc.o base64.cc.o \
 	kis_httpd_websession.cc.o kis_httpd_registry.cc.o \
 	gpstracker.cc.o kis_gps.cc.o gpsnmea.cc.o gpsserial2.cc.o gpstcp.cc.o \
