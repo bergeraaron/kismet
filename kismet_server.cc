@@ -112,6 +112,7 @@
 #include "phy_uav_drone.h"
 #include "phy_nrf_mousejack.h"
 #include "phy_btle.h"
+#include "phy_zigbee.h"
 
 #include "ipc_remote2.h"
 #include "manuf.h"
@@ -903,6 +904,7 @@ int main(int argc, char *argv[], char *envp[]) {
     devicetracker->register_phy_handler(new kis_btle_phy(globalregistry));
     devicetracker->register_phy_handler(new kis_rtlamr_phy(globalregistry));
     devicetracker->register_phy_handler(new kis_rtladsb_phy(globalregistry));
+    devicetracker->register_phy_handler(new kis_zigbee_phy(globalregistry));
 
     if (globalregistry->fatal_condition) 
         SpindownKismet(pollabletracker);
