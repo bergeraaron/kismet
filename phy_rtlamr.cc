@@ -21,7 +21,6 @@
 
 #include "phy_rtlamr.h"
 #include "devicetracker.h"
-#include "kismet_json.h"
 #include "endian_magic.h"
 #include "macaddr.h"
 #include "kis_httpd_registry.h"
@@ -85,7 +84,7 @@ mac_addr kis_rtlamr_phy::json_to_mac(Json::Value json) {
         *deviceid = json["meterid"].asUInt();
     } catch (const std::exception& e) {
         mac_addr m;
-        m.error = true;
+        m.state.error = true;
         return m;
     }
 
@@ -120,7 +119,7 @@ bool kis_rtlamr_phy::json_to_rtl(Json::Value json, kis_packet *packet) {
     // synth a mac out of of the type and id
     mac_addr rtlmac = json_to_mac(json);
 
-    if (rtlmac.error) {
+    if (rtlmac.state.error) {
         return false;
     }
 
@@ -156,7 +155,7 @@ bool kis_rtlamr_phy::json_to_rtl(Json::Value json, kis_packet *packet) {
 
         basedev->set_manuf(rtl_manuf);
 
-        basedev->set_type_string("Meter");
+        basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Meter"));
         basedev->set_devicename(fmt::format("{}", id_j.asUInt()));
 
         basedev->insert(meterdev);
@@ -170,22 +169,22 @@ bool kis_rtlamr_phy::json_to_rtl(Json::Value json, kis_packet *packet) {
             case 7:
             case 8:
                 meterdev->set_meter_type("Electric");
-                basedev->set_type_string("Electric Meter");
+                basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Electric Meter"));
                 break;
             case 2:
             case 9:
             case 12:
                 meterdev->set_meter_type("Gas");
-                basedev->set_type_string("Gas Meter");
+                basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Gas Meter"));
                 break;
             case 11:
             case 13:
                 meterdev->set_meter_type("Water");
-                basedev->set_type_string("Water Meter");
+                basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Water Meter"));
                 break;
             default:
                 meterdev->set_meter_type("Unknown");
-                basedev->set_type_string("Meter");
+                basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Meter"));
                 break;
         }
 

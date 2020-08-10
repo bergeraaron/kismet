@@ -346,6 +346,9 @@ struct kis_capture_handler {
 
     /* Fixed GPS name */
     char *gps_name;
+
+    /* Are we in remote/verbose mode */
+    int verbose;
 };
 
 
@@ -416,6 +419,16 @@ int cf_parse_interface(char **ret_interface, char *definition);
  *  1+  Length of flag value in definition
  */
 int cf_find_flag(char **ret_value, const char *flag, char *definition);
+
+/* Count how many flags of the same name are in a source definition
+ *
+ * Returns:
+ * -1   Error
+ *  0   Flag not found
+ *  1+  Number of instances of flag found in definition
+ */
+int cf_count_flag(const char *flag, char *definition);
+ 
 
 /* Parse a comma separated list of strings, such as channels, into an array of char*.
  *
@@ -829,6 +842,9 @@ int cf_send_newsource(kis_capture_handler_t *caph, const char *uuid);
  * 1.23e5KHz
  */
 double cf_parse_frequency(const char *freq);
+
+/* Set verbosity */
+void cf_set_verbose(kis_capture_handler_t *caph, int verbosity);
 
 /* Simple redefinition of message flags */
 #define MSGFLAG_DEBUG   KISMET_EXTERNAL__MSGBUS_MESSAGE__MESSAGE_TYPE__DEBUG

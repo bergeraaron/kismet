@@ -55,23 +55,19 @@ class_filter::class_filter(const std::string& in_id, const std::string& in_descr
         std::make_shared<kis_net_httpd_simple_post_endpoint>(
                 posturl, 
                 [this](std::ostream& stream, const std::string& uri,
-                    shared_structured post_structured, 
+                    const Json::Value& json,
                     kis_net_httpd_connection::variable_cache_map& variable_cache) {
                     local_locker lock(&mutex);
-                    return default_set_endp_handler(stream, post_structured);
+                    return default_set_endp_handler(stream, json);
                 });
     
 }
 
-int class_filter::default_set_endp_handler(std::ostream& stream, shared_structured structured) {
+int class_filter::default_set_endp_handler(std::ostream& stream, const Json::Value& json) {
     try {
-        if (structured->has_key("default")) {
-            set_filter_default(filterstring_to_bool(structured->key_as_string("default")));
-            stream << "Default filter: " << get_filter_default() << "\n";
-            return 200;
-        } else {
-            throw std::runtime_error(std::string("Missing 'default' key in command dictionary."));
-        }
+        set_filter_default(filterstring_to_bool(json["default"].asString()));
+        stream << "Default filter: " << get_filter_default() << "\n";
+        return 200;
     } catch (const std::exception& e) {
         stream << "Invalid request: " << e.what() << "\n";
         return 500;
@@ -118,17 +114,17 @@ bool class_filter::filterstring_to_bool(const std::string& str) {
 class_filter_mac_addr::class_filter_mac_addr(const std::string& in_id, const std::string& in_description) :
     class_filter(in_id, in_description, "mac_addr") {
 
-    register_fields();
-    reserve_fields(nullptr);
+        register_fields();
+        reserve_fields(nullptr);
 
-	devicetracker = Globalreg::fetch_mandatory_global_as<device_tracker>();
+        devicetracker = Globalreg::fetch_mandatory_global_as<device_tracker>();
 
-	eventbus = Globalreg::fetch_mandatory_global_as<event_bus>();
-	eb_id = 
-		eventbus->register_listener("NEW_PHY",
-				[this](std::shared_ptr<eventbus_event> evt) {
-					update_phy_map(evt);
-				});
+        eventbus = Globalreg::fetch_mandatory_global_as<event_bus>();
+        eb_id = 
+            eventbus->register_listener(device_tracker::event_new_phy(),
+                    [this](std::shared_ptr<eventbus_event> evt) {
+                    update_phy_map(evt);
+                    });
 
     // Set and clear endpoints
     macaddr_edit_endp =
@@ -153,9 +149,9 @@ class_filter_mac_addr::class_filter_mac_addr(const std::string& in_id, const std
                     return false;
                 },
                 [this](std::ostream& stream, const std::vector<std::string>& path, 
-                        const std::string& uri, shared_structured post_structured, 
+                        const std::string& uri, const Json::Value& json, 
                         kis_net_httpd_connection::variable_cache_map& variable_cache) -> unsigned int {
-                    return edit_endp_handler(stream, path, post_structured);
+                    return edit_endp_handler(stream, path, json);
                 }, &mutex);
 
     macaddr_remove_endp =
@@ -180,9 +176,9 @@ class_filter_mac_addr::class_filter_mac_addr(const std::string& in_id, const std
                     return false;
                 },
                 [this](std::ostream& stream, const std::vector<std::string>& path,
-                        const std::string& uri, shared_structured post_structured,
+                        const std::string& uri, const Json::Value& json,
                         kis_net_httpd_connection::variable_cache_map& variable_cache) -> unsigned int {
-                    return remove_endp_handler(stream, path, post_structured);
+                    return remove_endp_handler(stream, path, json);
                 }, &mutex);
 }
 
@@ -192,134 +188,134 @@ class_filter_mac_addr::~class_filter_mac_addr() {
 }
 
 void class_filter_mac_addr::set_filter(mac_addr in_mac, const std::string& in_phy, bool value) {
-	local_locker l(&mutex);
+    local_locker l(&mutex);
 
-	// Build the tracked version of the record, building any containers we need along the way, this
-	// always gets built even for unknown phys
-	auto tracked_phy_key = filter_phy_block->find(in_phy);
-	std::shared_ptr<tracker_element_mac_map> tracked_mac_map;
+    // Build the tracked version of the record, building any containers we need along the way, this
+    // always gets built even for unknown phys
+    auto tracked_phy_key = filter_phy_block->find(in_phy);
+    std::shared_ptr<tracker_element_mac_map> tracked_mac_map;
 
-	if (tracked_phy_key == filter_phy_block->end()) {
-		tracked_mac_map = std::make_shared<tracker_element_mac_map>(filter_sub_mac_id);
-		filter_phy_block->insert(in_phy, tracked_mac_map);
-	} else {
-		tracked_mac_map = tracker_element::safe_cast_as<tracker_element_mac_map>(tracked_phy_key->second);
-	}
+    if (tracked_phy_key == filter_phy_block->end()) {
+        tracked_mac_map = std::make_shared<tracker_element_mac_map>(filter_sub_mac_id);
+        filter_phy_block->insert(in_phy, tracked_mac_map);
+    } else {
+        tracked_mac_map = tracker_element::safe_cast_as<tracker_element_mac_map>(tracked_phy_key->second);
+    }
 
-	auto tracked_mac_key = tracked_mac_map->find(in_mac);
-	if (tracked_mac_key == tracked_mac_map->end()) {
-		auto tracked_value = std::make_shared<tracker_element_uint8>(filter_sub_value_id);
-		tracked_value->set(value);
-		tracked_mac_map->insert(in_mac, tracked_value);
-	} else {
-		auto bool_value = tracker_element::safe_cast_as<tracker_element_uint8>(tracked_mac_key->second);
-		bool_value->set(value);
-	}
+    auto tracked_mac_key = tracked_mac_map->find(in_mac);
+    if (tracked_mac_key == tracked_mac_map->end()) {
+        auto tracked_value = std::make_shared<tracker_element_uint8>(filter_sub_value_id);
+        tracked_value->set(value);
+        tracked_mac_map->insert(in_mac, tracked_value);
+    } else {
+        auto bool_value = tracker_element::safe_cast_as<tracker_element_uint8>(tracked_mac_key->second);
+        bool_value->set(value);
+    }
 
-	// Try to build the id-based lookup table
-	auto phy = devicetracker->fetch_phy_handler_by_name(in_phy);
+    // Try to build the id-based lookup table
+    auto phy = devicetracker->fetch_phy_handler_by_name(in_phy);
 
-	// Cache unknown for future lookups
-	if (phy == nullptr) {
-		unknown_phy_mac_filter_map[in_phy][in_mac] = value;
-		return;
-	}
+    // Cache unknown for future lookups
+    if (phy == nullptr) {
+        unknown_phy_mac_filter_map[in_phy][in_mac] = value;
+        return;
+    }
 
-	// Set known phy types
-	phy_mac_filter_map[phy->fetch_phy_id()][in_mac] = value;
+    // Set known phy types
+    phy_mac_filter_map[phy->fetch_phy_id()][in_mac] = value;
 }
 
 void class_filter_mac_addr::remove_filter(mac_addr in_mac, const std::string& in_phy) {
-	local_locker l(&mutex);
+    local_locker l(&mutex);
 
-	// Remove it from the tracked version we display
-	auto tracked_phy_key = filter_phy_block->find(in_phy);
-	if (tracked_phy_key != filter_phy_block->end()) {
-		auto tracked_mac_map = tracker_element::safe_cast_as<tracker_element_mac_map>(tracked_phy_key->second);
-		auto tracked_mac_key = tracked_mac_map->find(in_mac);
+    // Remove it from the tracked version we display
+    auto tracked_phy_key = filter_phy_block->find(in_phy);
+    if (tracked_phy_key != filter_phy_block->end()) {
+        auto tracked_mac_map = tracker_element::safe_cast_as<tracker_element_mac_map>(tracked_phy_key->second);
+        auto tracked_mac_key = tracked_mac_map->find(in_mac);
 
-		if (tracked_mac_key != tracked_mac_map->end())
-			tracked_mac_map->erase(tracked_mac_key);
-	}
+        if (tracked_mac_key != tracked_mac_map->end())
+            tracked_mac_map->erase(tracked_mac_key);
+    }
 
-	// Remove it from the known and unknown internal tables
-	auto phy = devicetracker->fetch_phy_handler_by_name(in_phy);
+    // Remove it from the known and unknown internal tables
+    auto phy = devicetracker->fetch_phy_handler_by_name(in_phy);
 
-	if (phy == nullptr) {
-		auto unknown_phy = unknown_phy_mac_filter_map.find(in_phy);
+    if (phy == nullptr) {
+        auto unknown_phy = unknown_phy_mac_filter_map.find(in_phy);
 
-		if (unknown_phy == unknown_phy_mac_filter_map.end())
-			return;
+        if (unknown_phy == unknown_phy_mac_filter_map.end())
+            return;
 
-		auto unknown_match = unknown_phy->second.find(in_mac);
+        auto unknown_match = unknown_phy->second.find(in_mac);
 
-		if (unknown_match != unknown_phy->second.end())
-			unknown_phy->second.erase(unknown_match);
+        if (unknown_match != unknown_phy->second.end())
+            unknown_phy->second.erase(unknown_match);
 
-		return;
-	}
+        return;
+    }
 
-	auto known_phy = phy_mac_filter_map.find(phy->fetch_phy_id());
+    auto known_phy = phy_mac_filter_map.find(phy->fetch_phy_id());
 
-	if (known_phy == phy_mac_filter_map.end())
-		return;
+    if (known_phy == phy_mac_filter_map.end())
+        return;
 
-	auto known_match = known_phy->second.find(in_mac);
+    auto known_match = known_phy->second.find(in_mac);
 
-	if (known_match != known_phy->second.end())
-		known_phy->second.erase(known_match);
-
+    if (known_match != known_phy->second.end())
+        known_phy->second.erase(known_match);
 }
 
 void class_filter_mac_addr::update_phy_map(std::shared_ptr<eventbus_event> evt) {
-	local_locker l(&mutex);
+    local_locker l(&mutex);
 
-	if (unknown_phy_mac_filter_map.size() == 0)
-		return;
+    if (unknown_phy_mac_filter_map.size() == 0)
+        return;
 
-	// Turn the generic event into the device event
-	auto phy_evt = 
-		std::static_pointer_cast<device_tracker::event_new_phy>(evt);
+    const auto phyname_k = 
+        evt->get_event_content()->find(devicetracker->event_new_phy());
 
-	// Do we have any pending filters that match this key?
-	auto unknown_key = unknown_phy_mac_filter_map.find(phy_evt->phy->fetch_phy_name());
+    if (phyname_k == evt->get_event_content()->end())
+        return;
 
-	if (unknown_key == unknown_phy_mac_filter_map.end())
-		return;
+    auto phy = devicetracker->fetch_phy_handler_by_name(get_tracker_value<std::string>(phyname_k->second));
 
-	// Copy the map over to the known key
-	phy_mac_filter_map[phy_evt->phy->fetch_phy_id()] = unknown_key->second;
+    if (phy == nullptr)
+        return;
 
-	// Purge the unknown record
-	unknown_phy_mac_filter_map.erase(unknown_key);
+    // Do we have any pending filters that match this key?
+    auto unknown_key = unknown_phy_mac_filter_map.find(phy->fetch_phy_name());
+
+    if (unknown_key == unknown_phy_mac_filter_map.end())
+        return;
+
+    // Copy the map over to the known key
+    phy_mac_filter_map[phy->fetch_phy_id()] = unknown_key->second;
+
+    // Purge the unknown record
+    unknown_phy_mac_filter_map.erase(unknown_key);
 }
 
 unsigned int class_filter_mac_addr::edit_endp_handler(std::ostream& stream, 
-        const std::vector<std::string>& path, shared_structured structured) {
+        const std::vector<std::string>& path, const Json::Value& json) {
     try {
-        if (!structured->has_key("filter")) {
-            stream << "Missing 'filter' object in request\n";
+        auto filter = json["filter"];
+
+        if (!filter.isObject()) {
+            stream << "Expected 'filter' as a dictionary\n";
             return 500;
         }
 
-        auto filter = structured->get_structured_by_key("filter");
+        for (const auto& i : filter.getMemberNames()) {
+            mac_addr m(i);
+            bool v = filter[i].asBool();
 
-        if (!filter->is_dictionary()) {
-            stream << "Expected dictionary 'filter' object\n";
-            return 500;
-        }
-
-
-        for (auto i : filter->as_string_map()) {
-            mac_addr m{i.first};
-            bool v = i.second->as_bool();
-
-            if (m.error) 
+            if (m.state.error) 
                 throw std::runtime_error(fmt::format("Invalid MAC address: '{}'",
-                            kishttpd::escape_html(i.first)));
+                            kishttpd::escape_html(i)));
 
-			// /filters/class/[id]/[phyname]/cmd
-			set_filter(m, path[3], v);
+            // /filters/class/[id]/[phyname]/cmd
+            set_filter(m, path[3], v);
         }
 
         stream << "Set filter\n";
@@ -335,29 +331,24 @@ unsigned int class_filter_mac_addr::edit_endp_handler(std::ostream& stream,
 }
 
 unsigned int class_filter_mac_addr::remove_endp_handler(std::ostream& stream, 
-        const std::vector<std::string>& path, shared_structured structured) {
+        const std::vector<std::string>& path, const Json::Value& json) {
     try {
-        if (!structured->has_key("filter")) {
-            stream << "Missing 'filter' object in request\n";
+        auto filter = json["filter"];
+
+        if (!filter.isArray()) {
+            stream << "Expected 'filter' as an array\n";
             return 500;
         }
 
-        auto filter = structured->get_structured_by_key("filter");
+        for (const auto& i : filter) {
+            mac_addr m(i.asString());
 
-        if (!filter->is_array()) {
-            stream << "Expected dictionary 'filter' object\n";
-            return 500;
-        }
-
-        for (auto i : filter->as_string_vector()) {
-            mac_addr m{i};
-
-            if (m.error) 
+            if (m.state.error) 
                 throw std::runtime_error(fmt::format("Invalid MAC address: '{}'",
-                            kishttpd::escape_html(i)));
+                            kishttpd::escape_html(i.asString())));
 
-			// /filters/class/[id]/[phyname]/cmd
-			remove_filter(m, path[3]);
+            // /filters/class/[id]/[phyname]/cmd
+            remove_filter(m, path[3]);
         }
 
         stream << "Removed filter\n";
@@ -373,19 +364,19 @@ unsigned int class_filter_mac_addr::remove_endp_handler(std::ostream& stream,
 }
 
 bool class_filter_mac_addr::filter(mac_addr mac, unsigned int phy) {
-	local_locker l(&mutex);
+    local_locker l(&mutex);
 
-	auto pi = phy_mac_filter_map.find(phy);
+    auto pi = phy_mac_filter_map.find(phy);
 
-	if (pi == phy_mac_filter_map.end())
-		return get_filter_default();
+    if (pi == phy_mac_filter_map.end())
+        return get_filter_default();
 
-	auto si = pi->second.find(mac);
+    auto si = pi->second.find(mac);
 
-	if (si == pi->second.end())
-		return get_filter_default();
+    if (si == pi->second.end())
+        return get_filter_default();
 
-	return si->second;
+    return si->second;
 }
 
 std::shared_ptr<tracker_element_map> class_filter_mac_addr::self_endp_handler() {

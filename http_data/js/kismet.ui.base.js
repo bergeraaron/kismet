@@ -238,6 +238,9 @@ kismet_ui.AddDeviceColumn('column_time', {
     renderfunc: function(d, t, r, m) {
         return exports.renderLastTime(d, t, r, m);
     },
+    searchable: true,
+    visible: false,
+    orderable: true,
 });
 
 kismet_ui.AddDeviceColumn('column_first_time', {
@@ -423,7 +426,10 @@ kismet_ui.AddDeviceDetail("base", "Device Info", -1000, {
                 title: "Notes",
                 help: "Abritrary notes",
                 draw: function(opts) {
-                    var notes = opts['data']['kismet.device.base.tags']['notes'];
+                    var notes = "";
+
+                    if ('kismet.device.base.tags' in opts['data'])
+                        notes = opts['data']['kismet.device.base.tags']['notes'];
 
                     if (notes == null)
                         notes = "";
@@ -513,7 +519,11 @@ kismet_ui.AddDeviceDetail("base", "Device Info", -1000, {
                     span: true,
                     liveupdate: true,
                     filter: function(opts) {
-                        return (Object.keys(opts['data']['kismet.device.base.freq_khz_map']).length >= 1);
+                        try {
+                            return (Object.keys(opts['data']['kismet.device.base.freq_khz_map']).length >= 1);
+                        } catch (error) {
+                            return 0;
+                        }
                     },
                     render: function(opts) {
                         var d = 
@@ -1612,7 +1622,7 @@ kismet_ui_tabpane.AddTab({
         div.messagebus();
     },
     priority: -1001,
-});
+}, 'south');
 
 kismet_ui_tabpane.AddTab({
     id: 'channels',
@@ -1622,7 +1632,37 @@ kismet_ui_tabpane.AddTab({
         div.channels();
     },
     priority: -1000,
-});
+}, 'south');
+
+kismet_ui_tabpane.AddTab({
+    id: 'devices',
+    tabTitle: 'Devices',
+    expandable: false,
+    createCallback: function(div) {
+        div.append(
+            $('<div>', {
+                class: 'resize_wrapper',
+            })
+            .append(
+                $('<table>', {
+                    id: 'devices',
+                    class: 'stripe hover nowrap',
+                    'cell-spacing': 0,
+                    width: '100%',
+                })
+            )
+        ).append(
+            $('<div>', {
+                id: 'devices_status',
+                style: 'padding-bottom: 10px;',
+            })
+        );
+
+        kismet_ui.CreateDeviceTable($('#devices', div));
+    },
+    priority: -1000000,
+}, 'center');
+
 
 exports.DeviceSignalDetails = function(key) {
     var w = $(window).width() * 0.75;
@@ -2437,7 +2477,7 @@ exports.FetchServerName = function(cb) {
         })
         .fail(function () {
             servername_tid = setTimeout(function () {
-                exports.Servername(cb);
+                exports.FetchServerName(cb);
             }, 1000);
         });
 }

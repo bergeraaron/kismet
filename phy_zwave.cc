@@ -21,7 +21,6 @@
 
 #include "phy_zwave.h"
 #include "devicetracker.h"
-#include "kismet_json.h"
 #include "endian_magic.h"
 #include "macaddr.h"
 #include "manuf.h"
@@ -135,9 +134,9 @@ bool Kis_Zwave_Phy::json_to_record(Json::Value json) {
     mac_addr smac = id_to_mac(homeid, devid);
     mac_addr dmac = id_to_mac(homeid, dest_devid);
 
-    if (smac.error)
+    if (smac.state.error)
         return false;
-    if (dmac.error)
+    if (dmac.state.error)
         return false;
 
     kis_packet *pack = new kis_packet(Globalreg::globalreg);
@@ -164,13 +163,12 @@ bool Kis_Zwave_Phy::json_to_record(Json::Value json) {
     std::shared_ptr<kis_tracked_device_base> basedev =
         devicetracker->update_common_device(common, common->source, this, pack,
                 (UCD_UPDATE_FREQUENCIES | UCD_UPDATE_PACKETS | UCD_UPDATE_LOCATION |
-                 UCD_UPDATE_SEENBY), "Z-Wave");
+                 UCD_UPDATE_SEENBY), "Z-Wave Node");
 
     // Get rid of our pseudopacket
     delete(pack);
 
     basedev->set_manuf(zwave_manuf);
-    basedev->set_type_string("Z-Wave Node");
 
     std::string devname;
     std::stringstream devstr;
@@ -222,17 +220,11 @@ void Kis_Zwave_Phy::httpd_create_stream_response(kis_net_httpd *httpd,
     return;
 }
 
-int Kis_Zwave_Phy::httpd_post_complete(kis_net_httpd_connection *concls) {
-
-    // Anything involving POST here requires a login
-    if (!httpd->has_valid_session(concls, true)) {
-        return 1;
-    }
-
+KIS_MHD_RETURN Kis_Zwave_Phy::httpd_post_complete(kis_net_httpd_connection *concls) {
     bool handled = false;
 
     if (concls->url != "/phy/phyZwave/post_zwave_json.cmd")
-        return 1;
+        return MHD_YES;
    
     if (concls->variable_cache.find("obj") != concls->variable_cache.end()) {
         Json::Value json;
@@ -244,7 +236,7 @@ int Kis_Zwave_Phy::httpd_post_complete(kis_net_httpd_connection *concls) {
             concls->response_stream << "Invalid request: could not parse JSON: " <<
                 e.what();
             concls->httpcode = 400;
-            return 1;
+            return MHD_YES;
         }
 
         // If we can't make sense of it, blow up
@@ -268,7 +260,7 @@ int Kis_Zwave_Phy::httpd_post_complete(kis_net_httpd_connection *concls) {
         concls->response_stream << "OK";
     }
 
-    return 1;
+    return MHD_YES;
 }
 
 

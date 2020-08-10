@@ -27,14 +27,12 @@
 #include "endian_magic.h"
 #include "getopt.h"
 #include "globalregistry.h"
-#include "kismet_json.h"
 #include "kis_databaselogfile.h"
 #include "kis_httpd_registry.h"
 #include "messagebus.h"
 #include "pcapng_stream_ringbuf.h"
 #include "socketclient.h"
 #include "streamtracker.h"
-#include "structured.h"
 #include "timetracker.h"
 
 datasource_tracker_source_probe::datasource_tracker_source_probe(std::string in_definition, 
@@ -363,7 +361,7 @@ datasource_tracker::datasource_tracker() :
 }
 
 datasource_tracker::~datasource_tracker() {
-    Globalreg::globalreg->RemoveGlobal("DATASOURCETRACKER");
+    Globalreg::globalreg->remove_global("DATASOURCETRACKER");
 
     if (remote_tcp_server != nullptr) {
         auto pollabletracker = 
@@ -392,7 +390,7 @@ void datasource_tracker::databaselog_write_datasources() {
         return;
 
     std::shared_ptr<kis_database_logfile> dbf =
-        Globalreg::FetchGlobalAs<kis_database_logfile>("DATABASELOG");
+        Globalreg::fetch_global_as<kis_database_logfile>("DATABASELOG");
     
     if (dbf == NULL)
         return;
@@ -966,7 +964,10 @@ void datasource_tracker::merge_source(shared_datasource in_source) {
     } else {
         in_source->set_source_number(++next_source_num);
         uuid_source_num_map[u] = in_source->get_source_number();
-        eventbus->publish(std::make_shared<event_new_datasource>(in_source));
+
+        auto evt = eventbus->get_eventbus_event(event_new_datasource());
+        evt->get_event_content()->insert(event_new_datasource(), in_source);
+        eventbus->publish(evt);
     }
 
     // Figure out channel hopping
@@ -974,7 +975,7 @@ void datasource_tracker::merge_source(shared_datasource in_source) {
 
     if (database_log_enabled) {
         std::shared_ptr<kis_database_logfile> dbf =
-            Globalreg::FetchGlobalAs<kis_database_logfile>("DATABASELOG");
+            Globalreg::fetch_global_as<kis_database_logfile>("DATABASELOG");
 
         if (dbf != NULL) {
             dbf->log_datasource(in_source);
@@ -1495,6 +1496,7 @@ void datasource_tracker::httpd_create_stream_response(kis_net_httpd *httpd,
                             "interface request.", MSGFLAG_INFO);
                     ds->disable_source();
                     stream << "Closing source " << ds->get_source_uuid().uuid_to_string();
+
                     return;
                 } else {
                     stream << "Source already closed, disabling source " <<
@@ -1510,6 +1512,7 @@ void datasource_tracker::httpd_create_stream_response(kis_net_httpd *httpd,
                             "interface request.", MSGFLAG_INFO);
                     ds->open_interface(ds->get_source_definition(), 0, NULL);
                     stream << "Re-opening source";
+
                     return;
                 } else {
                     stream << "Source already open";
@@ -1524,6 +1527,7 @@ void datasource_tracker::httpd_create_stream_response(kis_net_httpd *httpd,
                             "interface request.", MSGFLAG_INFO);
                     ds->set_source_paused(true);
                     stream << "Pausing source";
+
                     return;
                 } else {
                     stream << "Source already paused";
@@ -1538,6 +1542,11 @@ void datasource_tracker::httpd_create_stream_response(kis_net_httpd *httpd,
                             "interface request.", MSGFLAG_INFO);
                     ds->set_source_paused(false);
                     stream << "Resuming source";
+
+                    auto evt = eventbus->get_eventbus_event(event_datasource_resumed());
+                    evt->get_event_content()->insert(event_datasource_resumed(), ds);
+                    eventbus->publish(evt);
+
                     return;
                 } else {
                     stream << "Source already running";
@@ -1552,7 +1561,7 @@ void datasource_tracker::httpd_create_stream_response(kis_net_httpd *httpd,
 
 }
 
-int datasource_tracker::httpd_post_complete(kis_net_httpd_connection *concls) {
+KIS_MHD_RETURN datasource_tracker::httpd_post_complete(kis_net_httpd_connection *concls) {
     if (!httpd_can_serialize(concls->url)) {
         concls->response_stream << "Invalid request, cannot serialize URL";
         concls->httpcode = 400;
@@ -1566,14 +1575,10 @@ int datasource_tracker::httpd_post_complete(kis_net_httpd_connection *concls) {
 
     std::string stripped = httpd_strip_suffix(concls->url);
 
-    shared_structured structdata;
+    Json::Value json;
 
     try {
-        if (concls->variable_cache.find("json") != concls->variable_cache.end()) {
-            structdata.reset(new structured_json(concls->variable_cache["json"]->str()));
-        } else {
-            throw std::runtime_error("unable to find POST data");
-        }
+        json = concls->variable_cache_as<Json::Value>("json");
 
         if (stripped == "/datasource/add_source") {
             // Locker for waiting for the open callback
@@ -1582,16 +1587,14 @@ int datasource_tracker::httpd_post_complete(kis_net_httpd_connection *concls) {
             shared_datasource r;
             std::string error_reason;
 
-            if (!structdata->has_key("definition")) {
-                throw std::runtime_error("POST data missing source definition");
-            }
+            auto definition = json["definition"].asString();
 
             cl->lock();
 
             bool cmd_complete_success = false;
 
             // Initiate the open
-            open_datasource(structdata->key_as_string("definition"),
+            open_datasource(definition,
                     [&error_reason, cl, &cmd_complete_success](bool success, std::string reason, 
                         shared_datasource ds) {
 
@@ -1658,16 +1661,12 @@ int datasource_tracker::httpd_post_complete(kis_net_httpd_connection *concls) {
             }
 
             if (httpd_strip_suffix(tokenurl[4]) == "set_channel") {
-                if (structdata->has_key("channel")) {
+                if (!json["channel"].isNull()) {
                     std::shared_ptr<conditional_locker<std::string> > cl(new conditional_locker<std::string>());
-                    std::string ch = structdata->key_as_string("channel", "");
 
-                    if (ch.length() == 0) {
-                        throw std::runtime_error("Invalid channel, could not parse as string");
-                    }
+                    auto ch = json["channel"].asString();
 
-                    _MSG_INFO("Setting data source '{}' channel '{}'",
-                            ds->get_source_name(), ch);
+                    _MSG_INFO("Setting data source '{}' channel '{}'", ds->get_source_name(), ch);
 
                     bool cmd_complete_success = false;
 
@@ -1677,9 +1676,7 @@ int datasource_tracker::httpd_post_complete(kis_net_httpd_connection *concls) {
                     ds->set_channel(ch, 0, 
                             [cl, &cmd_complete_success](unsigned int, bool success, 
                                 std::string reason) {
-
                                 cmd_complete_success = success;
-
                                 cl->unlock(reason);
                             });
 
@@ -1697,21 +1694,17 @@ int datasource_tracker::httpd_post_complete(kis_net_httpd_connection *concls) {
                     return MHD_YES;
 
                 } else {
-                    // We need at least a channels or a rate to kick into
-                    // hopping mode
-                    if (!structdata->has_key("channels") &&
-                            !structdata->has_key("rate")) {
+                    // We need at least a channels or a rate to kick into hopping mode
+                    if (json["channels"].isNull() && json["rate"].isNull())
                         throw std::runtime_error("invalid hop command, expected channel, channels, or rate");
-                    }
 
                     // Get the channels as a vector, default to the source 
                     // default if the CGI doesn't define them
-                    shared_structured chstruct;
                     std::vector<std::string> converted_channels;
 
-                    if (structdata->has_key("channels")) {
-                        chstruct = structdata->get_structured_by_key("channels");
-                        converted_channels = chstruct->as_string_vector();
+                    if (!json["channels"].isNull()) {
+                        for (auto ch : json["channels"])
+                            converted_channels.push_back(ch.asString());
                     } else {
                         for (auto c : *(ds->get_source_hop_vec()))
                             converted_channels.push_back(get_tracker_value<std::string>(c));
@@ -1721,15 +1714,10 @@ int datasource_tracker::httpd_post_complete(kis_net_httpd_connection *concls) {
 
                     // Get the hop rate and the shuffle; default to the source
                     // state if we don't have them provided
-                    double rate = 
-                        structdata->key_as_number("rate", ds->get_source_hop_rate());
+                    auto rate = json.get("rate", ds->get_source_hop_rate()).asDouble();
+                    auto shuffle = json.get("shuffle", ds->get_source_hop_shuffle()).asUInt();
 
-                    unsigned int shuffle = 
-                        structdata->key_as_number("shuffle",
-                                ds->get_source_hop_shuffle());
-
-                    _MSG_INFO("Source '{}' setting new hop rate and channel pattern.",
-                            ds->get_source_name());
+                    _MSG_INFO("Source '{}' setting new hop rate and channel pattern.", ds->get_source_name());
 
                     bool cmd_complete_success = false;
 
@@ -1893,7 +1881,7 @@ bool datasource_tracker_httpd_pcap::httpd_verify_path(const char *path, const ch
     return false;
 }
 
-int datasource_tracker_httpd_pcap::httpd_create_stream_response(kis_net_httpd *httpd,
+KIS_MHD_RETURN datasource_tracker_httpd_pcap::httpd_create_stream_response(kis_net_httpd *httpd,
         kis_net_httpd_connection *connection,
         const char *url, const char *method, const char *upload_data,
         size_t *upload_data_size) {
@@ -2067,7 +2055,7 @@ void dst_incoming_remote::kill() {
     close_external();
 
     std::shared_ptr<datasource_tracker> datasourcetracker =
-        Globalreg::FetchGlobalAs<datasource_tracker>("DATASOURCETRACKER");
+        Globalreg::fetch_global_as<datasource_tracker>("DATASOURCETRACKER");
 
     if (datasourcetracker != NULL) 
         datasourcetracker->queue_dead_remote(this);

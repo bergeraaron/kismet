@@ -566,7 +566,7 @@ int fetch_sys_loadavg(uint8_t *in_avgmaj, uint8_t *in_avgmin) {
 }
 #endif
 
-uint32_t adler32_incremental_checksum(const char *in_buf, size_t in_len,
+uint32_t adler32_incremental_checksum(const void *in_buf, size_t in_len,
         uint32_t *s1, uint32_t *s2) {
     size_t i;
     const uint8_t *buf = (const uint8_t *) in_buf;
@@ -595,7 +595,7 @@ uint32_t adler32_checksum(const std::string& in_buf) {
     return adler32_checksum(in_buf.data(), in_buf.length());
 }
 
-uint32_t adler32_checksum(const char *in_buf, size_t in_len) {
+uint32_t adler32_checksum(const void *in_buf, size_t in_len) {
     uint32_t s1, s2;
 
     s1 = 0;

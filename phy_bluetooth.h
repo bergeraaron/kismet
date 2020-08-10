@@ -97,48 +97,69 @@ public:
     }
 
     __ProxyTrackable(service_uuid_vec, tracker_element_vector, service_uuid_vec);
+    __ProxyTrackable(solicitation_uuid_vec, tracker_element_vector, solicitation_uuid_vec);
+    __ProxyTrackable(service_data_bytes, tracker_element_string_map, service_data_bytes);
+
+    __Proxy(scan_data_bytes, std::string, std::string, std::string, scan_data_bytes);
+    void set_scan_data_from_hex(const std::string& in) {
+        scan_data_bytes->from_hex(in);
+    }
+
     __Proxy(txpower, int16_t, int16_t, int16_t, txpower);
+    __Proxy(pathloss, int16_t, int16_t, int16_t, pathloss);
 
 protected:
     virtual void register_fields() override {
-        register_field("bluetooth.device.service_uuid_vec",
-                "advertised service UUIDs", &service_uuid_vec);
-        register_field("bluetooth.device.txpower", 
-                "advertised transmit power", &txpower);
+        register_field("bluetooth.device.service_uuid_vec", "advertised service UUIDs", &service_uuid_vec);
+        register_field("bluetooth.device.solicitation_uuid_vec", 
+				"advertised solicitation UUIDs", &solicitation_uuid_vec);
+
+		register_field("bluetooth.device.scan_data_bytes", "scan result bytes", &scan_data_bytes);
+        register_field("bluetooth.device.service_data_bytes", "per-service result bytes", &service_data_bytes);
+        register_field("bluetooth.device.txpower", "advertised transmit power", &txpower);
+        register_field("bluetooth.device.pathloss", "signal pathloss", &pathloss);
     }
 
     virtual void reserve_fields(std::shared_ptr<tracker_element_map> e) override {
         tracker_component::reserve_fields(e);
-
     }
 
     std::shared_ptr<tracker_element_vector> service_uuid_vec;
+	std::shared_ptr<tracker_element_vector> solicitation_uuid_vec;
+
+	std::shared_ptr<tracker_element_byte_array> scan_data_bytes;
+    // UUIDs as string keys
+	std::shared_ptr<tracker_element_string_map> service_data_bytes;
+
     std::shared_ptr<tracker_element_int16> txpower;
+	std::shared_ptr<tracker_element_int16> pathloss;
 };
 
-class Kis_Bluetooth_Phy : public kis_phy_handler {
+class kis_bluetooth_phy : public kis_phy_handler {
 public:
 	// Stub
-	virtual ~Kis_Bluetooth_Phy();
+	virtual ~kis_bluetooth_phy();
 
 	// Inherited functionality
-	Kis_Bluetooth_Phy(global_registry *in_globalreg) :
+	kis_bluetooth_phy(global_registry *in_globalreg) :
 		kis_phy_handler(in_globalreg) { };
 
 	// Build a strong version of ourselves
 	virtual kis_phy_handler *create_phy_handler(global_registry *in_globalreg,
 											  int in_phyid) {
-		return new Kis_Bluetooth_Phy(in_globalreg, in_phyid);
+		return new kis_bluetooth_phy(in_globalreg, in_phyid);
 	}
 
 	// Strong constructor
-	Kis_Bluetooth_Phy(global_registry *in_globalreg, int in_phyid);
+	kis_bluetooth_phy(global_registry *in_globalreg, int in_phyid);
 
 	// Bluetooth device record classifier to common for the devicetracker layer
-	static int CommonClassifierBluetooth(CHAINCALL_PARMS);
+	static int common_classifier_bluetooth(CHAINCALL_PARMS);
+
+    static int packet_bluetooth_scan_json_classifier(CHAINCALL_PARMS);
    
     // Tracker entry
-	static int PacketTrackerBluetooth(CHAINCALL_PARMS);
+	static int packet_tracker_bluetooth(CHAINCALL_PARMS);
 
     // Load stored data
     virtual void load_phy_storage(shared_tracker_element in_storage, 
@@ -156,7 +177,7 @@ protected:
 	int dev_comp_bluetooth, dev_comp_common;
 
 	// Packet components
-	int pack_comp_btdevice, pack_comp_common, pack_comp_l1info, pack_comp_meta;
+	int pack_comp_btdevice, pack_comp_common, pack_comp_l1info, pack_comp_meta, pack_comp_json;
 };
 
 #endif

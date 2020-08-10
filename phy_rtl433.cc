@@ -21,7 +21,6 @@
 
 #include "phy_rtl433.h"
 #include "devicetracker.h"
-#include "kismet_json.h"
 #include "endian_magic.h"
 #include "macaddr.h"
 #include "kis_httpd_registry.h"
@@ -159,7 +158,7 @@ bool Kis_RTL433_Phy::json_to_rtl(Json::Value json, kis_packet *packet) {
     // synth a mac out of it
     mac_addr rtlmac = json_to_mac(json);
 
-    if (rtlmac.error) {
+    if (rtlmac.state.error) {
         return false;
     }
 
@@ -204,7 +203,7 @@ bool Kis_RTL433_Phy::json_to_rtl(Json::Value json, kis_packet *packet) {
 
     basedev->set_manuf(rtl_manuf);
 
-    basedev->set_type_string("Sensor");
+    basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Sensor"));
     basedev->set_devicename(dn);
 
     auto rtlholder = basedev->get_sub_as<tracker_element_map>(rtl433_holder_id);
@@ -374,6 +373,7 @@ void Kis_RTL433_Phy::add_weather_station(Json::Value json,
         std::shared_ptr<tracker_element_map> rtlholder) {
     auto direction_j = json["direction_deg"];
     auto windstrength_j = json["windstrength"];
+    auto wind_avg_km_j = json["wind_avg_km_h"];
     auto winddirection_j = json["winddirection"];
     auto windspeed_j = json["speed"];
     auto gust_j = json["gust"];
@@ -383,7 +383,7 @@ void Kis_RTL433_Phy::add_weather_station(Json::Value json,
 
     if (!direction_j.isNull() || !windstrength_j.isNull() || !winddirection_j.isNull() ||
             !windspeed_j.isNull() || !gust_j.isNull() || !rain_j.isNull() || !uv_index_j.isNull() ||
-            !lux_j.isNull()) {
+            !lux_j.isNull() || !wind_avg_km_j.isNull()) {
 
         auto weatherdev = 
             rtlholder->get_sub_as<rtl433_tracked_weatherstation>(rtl433_weatherstation_id);
@@ -407,6 +407,11 @@ void Kis_RTL433_Phy::add_weather_station(Json::Value json,
         if (windspeed_j.isNumeric()) {
             weatherdev->set_wind_speed((int32_t) windspeed_j.asInt());
             weatherdev->get_wind_speed_rrd()->add_sample((int64_t) windspeed_j.asInt(), time(0));
+        }
+
+        if (wind_avg_km_j.isNumeric()) {
+            weatherdev->set_wind_speed((int32_t) wind_avg_km_j.asInt());
+            weatherdev->get_wind_speed_rrd()->add_sample((int64_t) wind_avg_km_j.asInt(), time(0));
         }
 
         if (windstrength_j.isNumeric()) {

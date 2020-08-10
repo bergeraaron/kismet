@@ -125,12 +125,12 @@ public:
     // HTTP handlers
     virtual bool httpd_verify_path(const char *path, const char *method) override;
 
-    virtual int httpd_create_stream_response(kis_net_httpd *httpd,
+    virtual KIS_MHD_RETURN httpd_create_stream_response(kis_net_httpd *httpd,
             kis_net_httpd_connection *connection,
             const char *url, const char *method, const char *upload_data,
             size_t *upload_data_size) override;
 
-    virtual int httpd_post_complete(kis_net_httpd_connection *concls) override;
+    virtual KIS_MHD_RETURN httpd_post_complete(kis_net_httpd_connection *concls) override;
 
     // Messagebus API
     virtual void process_message(std::string in_msg, int in_flags) override;
@@ -144,14 +144,9 @@ public:
         return device_mac_filter;
     }
 
-    // event_bus event we inject when the log is opened
-    class event_dblog_opened : public eventbus_event {
-    public:
-        static std::string Event() { return "KISMETDB_LOG_OPEN"; }
-        event_dblog_opened() :
-            eventbus_event(Event()) { }
-        virtual ~event_dblog_opened() {}
-    };
+    static std::string event_log_open() {
+        return "KISMETDB_LOG_OPEN";
+    }
 
 protected:
     // Is the database even enabled?
@@ -236,12 +231,12 @@ protected:
     // Packet clearing API
     std::shared_ptr<kis_net_httpd_simple_post_endpoint> packet_drop_endp;
     unsigned int packet_drop_endpoint_handler(std::ostream& stream, const std::string& uri,
-            shared_structured structured, kis_net_httpd_connection::variable_cache_map& postvars);
+            const Json::Value& json, kis_net_httpd_connection::variable_cache_map& postvars);
 
     // POI API
     std::shared_ptr<kis_net_httpd_simple_post_endpoint> make_poi_endp;
     unsigned int make_poi_endp_handler(std::ostream& stream, const std::string& uri,
-            shared_structured structured, kis_net_httpd_connection::variable_cache_map& postvars);
+            const Json::Value& json, kis_net_httpd_connection::variable_cache_map& postvars);
 
     std::shared_ptr<kis_net_httpd_simple_tracked_endpoint> list_poi_endp;
     std::shared_ptr<tracker_element> list_poi_endp_handler();

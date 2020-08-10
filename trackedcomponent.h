@@ -72,7 +72,7 @@ class tracker_component : public tracker_element_map {
         return (rtype) get_tracker_value<ptype>(cvar); \
     } \
     virtual void set_##name(const itype& in) { \
-        SetTrackerValue<ptype>(cvar, static_cast<ptype>(in)); \
+        set_tracker_value<ptype>(cvar, static_cast<ptype>(in)); \
     }
 
 // Ugly macro for standard proxy access but with an additional mutex; this should
@@ -89,7 +89,7 @@ class tracker_component : public tracker_element_map {
     } \
     virtual void set_##name(const itype& in) { \
         local_locker l((kis_recursive_timed_mutex *) &mvar); \
-        SetTrackerValue<ptype>(cvar, static_cast<ptype>(in)); \
+        set_tracker_value<ptype>(cvar, static_cast<ptype>(in)); \
     }
 
 // Ugly macro for standard proxy access but with an additional mutex; this should
@@ -106,7 +106,7 @@ class tracker_component : public tracker_element_map {
     } \
     virtual void set_##name(const itype& in) { \
         local_locker l(mvar); \
-        SetTrackerValue<ptype>(cvar, static_cast<ptype>(in)); \
+        set_tracker_value<ptype>(cvar, static_cast<ptype>(in)); \
     }
 
 // Ugly trackercomponent macro for proxying trackerelement values
@@ -277,7 +277,7 @@ class tracker_component : public tracker_element_map {
 // Only proxy a Set function for overload
 #define __ProxySet(name, ptype, stype, cvar) \
     virtual void set_##name(const stype& in) { \
-        SetTrackerValue<ptype>(cvar, in); \
+        set_tracker_value<ptype>(cvar, in); \
     } 
 
 
@@ -290,7 +290,7 @@ class tracker_component : public tracker_element_map {
 #define __ProxySetM(name, ptype, stype, cvar, mutex) \
     virtual void set_##name(const stype& in) { \
         local_locker l((kis_recursive_timed_mutex *) &mutex); \
-        SetTrackerValue<ptype>(cvar, in); \
+        set_tracker_value<ptype>(cvar, in); \
     } 
 
 // Get and set only, protected with a std::shared_ptr<mutex>
@@ -302,7 +302,7 @@ class tracker_component : public tracker_element_map {
 #define __ProxySetMS(name, ptype, stype, cvar, mutex) \
     virtual void set_##name(const stype& in) { \
         local_locker l(mutex); \
-        SetTrackerValue<ptype>(cvar, in); \
+        set_tracker_value<ptype>(cvar, in); \
     } 
 
 // Proxy a split public/private get/set function; This is even funkier than the 
@@ -543,6 +543,42 @@ class tracker_component : public tracker_element_map {
     } \
     virtual bool has_##name() const { \
         return cvar != NULL; \
+    } \
+    virtual void clear_##name() { \
+        erase(cvar); \
+        cvar = nullptr; \
+    }
+
+// Proxy dynamic trackable (value in class may be null and is dynamically
+// built); provided function is called when created
+#define __ProxyDynamicTrackableFunc(name, ttype, cvar, id, creator) \
+    virtual std::shared_ptr<ttype> get_##name() { \
+        if (cvar == NULL) { \
+            cvar = Globalreg::globalreg->entrytracker->get_shared_instance_as<ttype>(id); \
+            if (cvar != NULL) \
+                insert(cvar); \
+            creator; \
+        } \
+        return cvar; \
+    } \
+    virtual void set_tracker_##name(std::shared_ptr<ttype> in) { \
+        if (cvar != nullptr) \
+            erase(cvar); \
+        cvar = in; \
+        if (cvar != nullptr) { \
+            cvar->set_id(id); \
+            insert(std::static_pointer_cast<tracker_element>(cvar)); \
+        } \
+    } \
+    virtual std::shared_ptr<ttype> get_tracker_##name() { \
+        return cvar; \
+    } \
+    virtual bool has_##name() const { \
+        return cvar != NULL; \
+    } \
+    virtual void clear_##name() { \
+        erase(cvar); \
+        cvar = nullptr; \
     }
 
 // Proxy dynamic trackable (value in class may be null and is dynamically
@@ -574,6 +610,10 @@ class tracker_component : public tracker_element_map {
     virtual bool has_##name() const { \
         local_shared_locker l((kis_recursive_timed_mutex *) &mutex); \
         return cvar != NULL; \
+    } \
+    virtual void clear_##name() { \
+        erase(cvar); \
+        cvar = nullptr; \
     }
 
 // Proxy dynamic trackable (value in class may be null and is dynamically
@@ -606,6 +646,20 @@ class tracker_component : public tracker_element_map {
         local_shared_locker l(mutex); \
         return cvar != NULL; \
     }
+
+// Simplified swapping of tracked elements
+#define __ProxySwappingTrackable(name, ttype, cvar) \
+        virtual std::shared_ptr<ttype> get_tracker_##name() { \
+            return cvar; \
+        } \
+        virtual void set_tracker_##name(std::shared_ptr<ttype> in) { \
+            if (cvar != nullptr) { \
+                in->set_id(cvar->get_id()); \
+                erase(cvar); \
+            } \
+            insert(in); \
+            cvar = in; \
+        }
 
 // Proxy bitset functions (name, trackable type, data type, class var)
 #define __ProxyBitset(name, dtype, cvar) \
@@ -649,17 +703,62 @@ class tracker_component : public tracker_element_map {
         return (dtype) (get_tracker_value<dtype>(cvar) & bs); \
     }
 
+    class registered_field {
+        // We use negative IDs to indicate dynamic assignment, since this exists for every field
+        // in every tracked element we actually do benefit from squeezing the boolean out
+        public:
+            registered_field(int id, shared_tracker_element *assign) { 
+                this->assign = assign;
+
+                if (assign == nullptr) {
+                    this->id = id * -1; 
+                } else {
+                    this->id = id;
+                }
+            }
+
+            registered_field(int id, shared_tracker_element *assign, bool dynamic) {
+                if (assign == nullptr && dynamic)
+                    throw std::runtime_error("attempted to assign a dynamic field to "
+                            "a null destination");
+
+                if (dynamic)
+                    this->id = id * -1;
+                else
+                    this->id = id;
+                this->assign = assign;
+            }
+
+            int id;
+            shared_tracker_element *assign;
+    };
+
+
 public:
     tracker_component() :
-        tracker_element_map(0) { }
+        tracker_element_map(0),
+        registered_fields{nullptr} {
+            Globalreg::n_tracked_components++;
+        }
 
     tracker_component(int in_id) :
-        tracker_element_map(in_id) { }
+        tracker_element_map(in_id),
+        registered_fields{nullptr} {
+            Globalreg::n_tracked_components++;
+        }
 
     tracker_component(int in_id, std::shared_ptr<tracker_element_map> e __attribute__((unused))) :
-        tracker_element_map(in_id) { }
+        tracker_element_map(in_id),
+        registered_fields{nullptr} {
+            Globalreg::n_tracked_components++;
+        }
 
-	virtual ~tracker_component() { }
+	virtual ~tracker_component() {
+        Globalreg::n_tracked_components--;
+
+        if (registered_fields != nullptr)
+            delete registered_fields;
+    }
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
@@ -725,10 +824,14 @@ protected:
             Globalreg::globalreg->entrytracker->register_field(in_name, 
                     tracker_element_factory<build_type>(), in_desc);
 
+        if (registered_fields == nullptr)
+            registered_fields = new std::vector<std::unique_ptr<registered_field>>();
+
         auto rf = std::unique_ptr<registered_field>(new registered_field(id, 
                     reinterpret_cast<shared_tracker_element *>(in_dest), 
                     true));
-        registered_fields.push_back(std::move(rf));
+
+        registered_fields->push_back(std::move(rf));
 
         return id;
     }
@@ -749,34 +852,7 @@ protected:
     // Add imported or new field to our map for use tracking.
     virtual shared_tracker_element import_or_new(std::shared_ptr<tracker_element_map> e, int i);
 
-    class registered_field {
-        public:
-            registered_field(int id, shared_tracker_element *assign) { 
-                this->id = id; 
-                this->assign = assign;
-
-                if (assign == nullptr)
-                    this->dynamic = true;
-                else
-                    this->dynamic = false;
-            }
-
-            registered_field(int id, shared_tracker_element *assign, bool dynamic) {
-                if (assign == nullptr && dynamic)
-                    throw std::runtime_error("attempted to assign a dynamic field to "
-                            "a null destination");
-
-                this->id = id;
-                this->assign = assign;
-                this->dynamic = dynamic;
-            }
-
-            int id;
-            bool dynamic;
-            shared_tracker_element *assign;
-    };
-
-    std::vector<std::unique_ptr<registered_field>> registered_fields;
+    std::vector<std::unique_ptr<registered_field>> *registered_fields;
 };
 
 

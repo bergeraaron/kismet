@@ -177,7 +177,7 @@ public:
         return std::move(dup);
     }
 
-    __Proxy(src_uuid, uuid, uuid, uuid, src_uuid);
+    __ProxyDynamicTrackable(src_uuid, tracker_element_alias, src_uuid, src_uuid_id);
     __Proxy(first_time, uint64_t, time_t, time_t, first_time);
     __Proxy(last_time, uint64_t, time_t, time_t, last_time);
     __Proxy(num_packets, uint64_t, uint64_t, uint64_t, num_packets);
@@ -191,7 +191,9 @@ public:
 protected:
     virtual void register_fields() override;
 
-    std::shared_ptr<tracker_element_uuid> src_uuid;
+    std::shared_ptr<tracker_element_alias> src_uuid;
+    int src_uuid_id;
+
     std::shared_ptr<tracker_element_uint64> first_time;
     std::shared_ptr<tracker_element_uint64> last_time;
     std::shared_ptr<tracker_element_uint64> num_packets;
@@ -287,7 +289,10 @@ public:
             
             });
 
-    __Proxy(phyname, std::string, std::string, std::string, phyname);
+    // __Proxy(phyname, std::string, std::string, std::string, phyname);
+    __ProxySwappingTrackable(phyname, tracker_element_string, phyname);
+    __ProxyGet(phyname, std::string, std::string, phyname);
+
 	__Proxy(phyid, int32_t, int32_t, int32_t, phyid);
 
     __ProxyL(devicename, std::string, std::string, std::string, devicename, 
@@ -314,29 +319,33 @@ public:
 
     __Proxy(commonname, std::string, std::string, std::string, commonname);
 
-    __Proxy(type_string, std::string, std::string, std::string, type_string);
+    // __Proxy(type_string, std::string, std::string, std::string, type_string);
+    __ProxySwappingTrackable(type_string, tracker_element_string, type_string);
 
     __Proxy(basic_type_set, uint64_t, uint64_t, uint64_t, basic_type_set);
     __ProxyBitset(basic_type_set, uint64_t, basic_type_set);
 
+    __ProxyGet(type_string, std::string, std::string, type_string);
+
+    // Use a function on the following so that we don't force a lookup / cache cycle unless we need the data
+
     // Set the type string if any of the matching set are found
-    void set_type_string_if(std::string in_type, uint64_t if_set) {
+    void set_type_string_if(std::function<std::shared_ptr<tracker_element_string> ()> in_type, uint64_t if_set) {
         if (get_basic_type_set() & if_set) 
-            set_type_string(in_type);
+            set_tracker_type_string(in_type());
     }
 
     // Set the type string if only the matching set is found
-    void set_type_string_ifonly(std::string in_type, uint64_t if_set) {
+    void set_type_string_ifonly(std::function<std::shared_ptr<tracker_element_string> ()> in_type, uint64_t if_set) {
         if (get_basic_type_set() == if_set)
-            set_type_string(in_type);
+            set_tracker_type_string(in_type());
     }
 
     // Set the type string if the matching set is NOT found
-    void set_type_string_ifnot(std::string in_type, uint64_t if_set) {
+    void set_type_string_ifnot(std::function<std::shared_ptr<tracker_element_string> ()> in_type, uint64_t if_set) {
         if (!(get_basic_type_set() & if_set))
-            set_type_string(in_type);
+            set_tracker_type_string(in_type());
     }
-
 
     __Proxy(crypt_string, std::string, std::string, std::string, crypt_string);
 
@@ -418,7 +427,7 @@ public:
     void inc_seenby_count(kis_datasource *source, time_t tv_sec, int frequency,
             packinfo_sig_combo *siginfo, bool update_rrd);
 
-    __ProxyTrackable(tag_map, tracker_element_string_map, tag_map);
+    __ProxyDynamicTrackable(tag_map, tracker_element_string_map, tag_map, tag_map_id);
 
     __Proxy(server_uuid, uuid, uuid, uuid, server_uuid);
 
@@ -550,6 +559,7 @@ protected:
 
     // Stringmap of tags
     std::shared_ptr<tracker_element_string_map> tag_map;
+    int tag_map_id;
     // Entry ID for tag map
     int tag_entry_id;
 

@@ -36,8 +36,16 @@ class KismetProxyTest(object):
             print("        Kismet itself; running it on its own won't do what you want")
             sys.exit(1)
 
+        print("ProxyTest loaded KismetExternal {}".format(kismetexternal.__version__))
+
         # Initialize our external interface
         self.kei = kismetexternal.ExternalInterface(self.results.infd, self.results.outfd)
+
+        # self.kei.debug = True
+
+        # Start the external handler BEFORE we register our handlers, since we need to be
+        # connected to send them!
+        self.kei.start()
 
         # External tools can request a HTTP authentication token; this can be used as the
         # 'KISMET' session cookie to perform administrative actions against the Kismet
@@ -58,8 +66,8 @@ class KismetProxyTest(object):
 
         self.kei.send_message("Hello from python!  This is sent over the IPC message bus.")
 
-        # Start the external handler
-        self.kei.start()
+        # Start the IO loops running
+        self.kei.run()
 
     # Callback for when we've gotten back our auth token for the webserver
     def handle_web_auth_token(self):
@@ -69,7 +77,7 @@ class KismetProxyTest(object):
     def handle_web_python(self, externalhandler, request):
         print("PYTHON - Handle web req {} {} {}".format(request.req_id, request.method, request.uri))
         # Print a static response
-        externalhandler.send_http_response(request.req_id, "<html><body><b>This is from python!</b></body></html>")
+        externalhandler.send_http_response(request.req_id, bytes("<html><body><b>This is from python!</b></body></html>", "UTF-8"))
 
     # Callback function for handling a req of our variabls.html endpoint
     def handle_web_python_get(self, externalhandler, request):
@@ -78,7 +86,7 @@ class KismetProxyTest(object):
         for i in request.variable_data:
             print("PYTHON - GET {}:{}".format(i.field, i.content))
 
-        externalhandler.send_http_response(request.req_id, "<html><body><b>This is from python!</b></body></html>")
+        externalhandler.send_http_response(request.req_id, bytes("<html><body><b>This is from python!</b></body></html>", "UTF-8"))
 
     # Callback function for handling a req of our variabls.html endpoint
     def handle_web_python_post(self, externalhandler, request):
@@ -86,7 +94,7 @@ class KismetProxyTest(object):
         for i in request.variable_data:
             print("PYTHON - POST {}:{}".format(i.field, i.content))
 
-        externalhandler.send_http_response(request.req_id, "<html><body><b>This is from python!</b></body></html>")
+        externalhandler.send_http_response(request.req_id, bytes("<html><body><b>This is from python!</b></body></html>", "UTF-8"))
 
     # Callback function to demonstrate streaming
     def handle_web_stream(self, externalhandler, request):
@@ -99,13 +107,13 @@ class KismetProxyTest(object):
     def stream_web_data(self, externalhandler, request):
         counter = 0
         while self.kei.is_running:
-            externalhandler.send_http_response(request.req_id, "Stream {}\n".format(counter), stream = True, finished = False)
+            externalhandler.send_http_response(request.req_id, bytes("Stream {}\n".format(counter), "UTF-8"), stream = True, finished = False)
             counter += 1
             time.sleep(0.5)
 
     # Loop forever
     def loop(self):
-        while self.kei.is_running:
+        while self.kei.is_running():
             self.kei.send_ping()
             time.sleep(1)
 

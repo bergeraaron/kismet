@@ -113,6 +113,7 @@ typedef struct {
      * broken interfaces */
     int use_mac80211_vif;
     int use_mac80211_channels;
+    int use_mac80211_mode;
 
     /* Cached mac80211 controls */
     void *mac80211_socket;
@@ -936,7 +937,7 @@ int probe_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition
     return 1;
 }
 
-int build_localdev_filter(char **filter) {
+int build_first_localdev_filter(char **filter) {
     typedef struct macaddr_list {
         uint8_t macaddr[6];
         struct macaddr_list *next;
@@ -1036,6 +1037,153 @@ int build_localdev_filter(char **filter) {
     return num_macs;
 }
 
+int build_named_filters(char **interfaces, int num_interfaces, char **filter) {
+    typedef struct macaddr_list {
+        uint8_t macaddr[6];
+        struct macaddr_list *next;
+    } macaddr_list_t;
+
+    macaddr_list_t *macs = NULL;
+    size_t num_macs = 0;
+    size_t filtered_macs = 0;
+    macaddr_list_t *mi = NULL, *mb = NULL;
+
+    size_t filter_len = 0;
+    unsigned int need_and = 0;
+    size_t fpos = 0;
+
+    char errstr[STATUS_MAX];
+
+    if (num_interfaces <= 0)
+        return num_interfaces;
+
+    int i_pos;
+
+    for (i_pos = 0; i_pos < num_interfaces; i_pos++) {
+        if (interfaces[i_pos] == NULL)
+            continue;
+
+        mi = (macaddr_list_t *) malloc(sizeof(macaddr_list_t));
+
+        if (ifconfig_get_hwaddr(interfaces[i_pos], errstr, mi->macaddr) < 0) {
+            free(mi);
+            continue;
+        }
+
+        /* Skip interfaces with a 0 mac */
+        if (memcmp(mi->macaddr, "\x00\x00\x00\x00\x00\x00", 6) == 0) {
+            free(mi);
+            continue;
+        }
+
+        mi->next = macs;
+        macs = mi;
+
+        num_macs++;
+    }
+
+    if (num_macs == 0) {
+        *filter = NULL;
+        return 0;
+    }
+
+    /*
+       For now write the filter as a string and compile it
+       'not ether host aa:bb:cc:dd:ee:ff'
+       32 bytes per mac 
+       ' and '
+       6 bytes per join
+    */
+   
+    filter_len = (num_macs * 32) + ((num_macs - 1) * 6) + 1;
+
+    *filter = (char *) malloc(filter_len);
+
+    mi = macs;
+
+    while (mi != NULL) {
+        if (filtered_macs < 8) {
+            filtered_macs++; 
+
+            if (need_and) {
+                snprintf(*filter + fpos, filter_len - fpos, " and ");
+                fpos += 5;
+            }
+            need_and = 1;
+
+            snprintf(*filter + fpos, filter_len - fpos, 
+                    "not ether host %02x:%02x:%02x:%02x:%02x:%02x",
+                    mi->macaddr[0], mi->macaddr[1], mi->macaddr[2], 
+                    mi->macaddr[3], mi->macaddr[4], mi->macaddr[5]);
+            fpos += 32;
+        }
+
+        mb = mi->next;
+        free(mi);
+        mi = mb;
+    }
+
+    return num_macs;
+}
+
+int build_explicit_filters(char **stringmacs, int num_macs, char **filter) {
+    size_t filter_len = 0;
+    unsigned int need_and = 0;
+    size_t fpos = 0;
+
+    if (num_macs <= 0)
+        return num_macs;
+
+    int i_pos;
+    int filtered_macs = 0;
+
+    if (num_macs == 0) {
+        *filter = NULL;
+        return 0;
+    }
+
+    unsigned int mac_seg;
+
+    /*
+       For now write the filter as a string and compile it
+       'not ether host aa:bb:cc:dd:ee:ff'
+       32 bytes per mac 
+       ' and '
+       6 bytes per join
+    */
+   
+    filter_len = (num_macs * 32) + ((num_macs - 1) * 6) + 1;
+
+    *filter = (char *) malloc(filter_len);
+
+    for (i_pos = 0; i_pos < num_macs; i_pos++) {
+        if (stringmacs[i_pos] == NULL)
+            continue;
+
+        if (sscanf(stringmacs[i_pos], "%02X:%02X:%02X:%02X:%02X:%02X",
+                    &mac_seg, &mac_seg, &mac_seg,
+                    &mac_seg, &mac_seg, &mac_seg) != 6)
+            continue;
+
+        if (filtered_macs < 8) {
+            filtered_macs++; 
+
+            if (need_and) {
+                snprintf(*filter + fpos, filter_len - fpos, " and ");
+                fpos += 5;
+            }
+            need_and = 1;
+
+            snprintf(*filter + fpos, filter_len - fpos, 
+                    "not ether host %17s", stringmacs[i_pos]);
+            fpos += 32;
+        }
+
+    }
+
+    return num_macs;
+}
+
 
 int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         char *msg, uint32_t *dlt, char **uuid, KismetExternal__Command *frame,
@@ -1095,13 +1243,20 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     char *ignore_filter = NULL;
     struct bpf_program bpf;
 
+    int i;
+
 #ifdef HAVE_LIBNM
     NMClient *nmclient = NULL;
     NMDevice *nmdevice = NULL;
     const GPtrArray *nmdevices;
     GError *nmerror = NULL;
-    int i;
 #endif
+
+    int num_filter_interfaces = 0;
+    int num_filter_addresses = 0;
+    char **filter_targets = NULL;
+
+    unsigned int mac_seg;
 
     /* Clean up any existing local state on open; we can get re-opened if we're a 
      * remote source */
@@ -1176,6 +1331,97 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         }
     }
 
+    if ((num_filter_interfaces = 
+                cf_count_flag("filter_interface", definition)) > 0) {
+        if (filter_locals) {
+            snprintf(msg, STATUS_MAX, "Can not combine 'filter_locals' and 'filter_interface' "
+                    "please pick one or the other.");
+            return -1;
+        }
+
+        filter_targets = (char **) malloc(sizeof(char *) * num_filter_interfaces);
+
+        for (i = 0; i < num_filter_interfaces; i++)
+            filter_targets[i] = NULL;
+
+        placeholder = definition;
+        for (i = 0; i < num_filter_interfaces; i++) {
+            if ((placeholder_len =
+                        cf_find_flag(&placeholder, "filter_interface", placeholder)) <= 0) {
+                snprintf(msg, STATUS_MAX, "Could not parse filter_interface from definition: "
+                        "expected an interface.");
+
+                for (i = 0; i < num_filter_interfaces; i++) {
+                    if (filter_targets[i] != NULL) {
+                        free(filter_targets[i]);
+                    }
+                }
+
+                free(filter_targets);
+                return -1;
+            }
+
+            filter_targets[i] = strndup(placeholder, placeholder_len);
+        }
+    }
+
+    if ((num_filter_addresses = 
+                cf_count_flag("filter_address", definition)) > 0) {
+        if (filter_locals) {
+            snprintf(msg, STATUS_MAX, "Can not combine 'filter_locals' and 'filter_address' "
+                    "please pick one or the other.");
+            return -1;
+        }
+
+        if (num_filter_interfaces) {
+            snprintf(msg, STATUS_MAX, "Can not combine 'filter_interface' and 'filter_address' "
+                    "please pick one or the other.");
+            return -1;
+        }
+
+        filter_targets = (char **) malloc(sizeof(char *) * num_filter_addresses);
+
+        for (i = 0; i < num_filter_addresses; i++)
+            filter_targets[i] = NULL;
+
+        placeholder = definition;
+        for (i = 0; i < num_filter_addresses; i++) {
+            if ((placeholder_len =
+                        cf_find_flag(&placeholder, "filter_address", placeholder)) <= 0) {
+                snprintf(msg, STATUS_MAX, "Could not parse filter_address from definition: "
+                        "expected an interface.");
+
+                for (i = 0; i < num_filter_interfaces; i++) {
+                    if (filter_targets[i] != NULL) {
+                        free(filter_targets[i]);
+                    }
+                }
+
+                free(filter_targets);
+                return -1;
+            }
+
+            if (sscanf(placeholder, "%02X:%02X:%02X:%02X:%02X:%02X",
+                        &mac_seg, &mac_seg, &mac_seg,
+                        &mac_seg, &mac_seg, &mac_seg) != 6) {
+
+                snprintf(msg, STATUS_MAX, "Could not parse MAC address from definition: "
+                        "Expected MAC address of format AA:BB:CC:DD:EE:FF.");
+
+                for (i = 0; i < num_filter_interfaces; i++) {
+                    if (filter_targets[i] != NULL) {
+                        free(filter_targets[i]);
+                    }
+                }
+
+                free(filter_targets);
+                return -1;
+            }
+
+            filter_targets[i] = strndup(placeholder, placeholder_len);
+        }
+    }
+
     /* get the mac address; this should be standard for anything */
     if (ifconfig_get_hwaddr(local_wifi->interface, errstr, hwaddr) < 0) {
         snprintf(msg, STATUS_MAX, "Could not fetch interface address from '%s': %s",
@@ -1242,13 +1488,28 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         cf_send_warning(caph, errstr);
 
         local_wifi->use_mac80211_vif = 0;
-    } else if (strcmp(driver, "rtl88xxau") == 0) {
+    } else if (strcasecmp(driver, "rtl88XXau") == 0) {
+        /* This driver changes its name all the time; sometimes its 88xxau sometimes it's 88XXau,
+         * but both appear to handle iw dev set mode netlink. */
         snprintf(errstr, STATUS_MAX, "%s interface '%s' looks to use the rtl88xxau driver, "
-                "which has problems using mac80211 VIF mode.  Disabling mac80211 VIF "
-                "creation but retaining mac80211 channel controls.",
+                "which can not mac80211 VIF mode.  Disabling mac80211 VIF "
+                "creation but retaining mac80211 channel controls.  Beware, this driver is known "
+                "to have issues with packet capture.",
                 local_wifi->name, local_wifi->interface);
         cf_send_warning(caph, errstr);
         local_wifi->use_mac80211_vif = 0;
+        local_wifi->use_mac80211_mode = 1;
+    } else if (strcasecmp(driver, "88XXau") == 0) {
+        /* This driver changes its name all the time; sometimes its 88xxau sometimes it's 88XXau,
+         * but both appear to handle iw dev set mode netlink. */
+        snprintf(errstr, STATUS_MAX, "%s interface '%s' looks to use the rtl88xxau driver, "
+                "which can not mac80211 VIF mode.  Disabling mac80211 VIF "
+                "creation but retaining mac80211 channel controls.  Beware, this driver is known "
+                "to have issues with packet capture.",
+                local_wifi->name, local_wifi->interface);
+        cf_send_warning(caph, errstr);
+        local_wifi->use_mac80211_vif = 0;
+        local_wifi->use_mac80211_mode = 1;
     } else if (strcmp(driver, "rtl8812au") == 0) {
         snprintf(errstr, STATUS_MAX, "%s interface '%s' looks to use the rtl8812au driver, "
                 "these drivers have been very unreliable and typically will not properly "
@@ -1416,7 +1677,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     if (mode != LINUX_WLEXT_MONITOR) {
         int existing_ifnum;
 
-        /* If we don't use vifs at all, per a priori knowledge of the driver */
+        /* If we don't use vifs at all... */
         if (local_wifi->use_mac80211_vif == 0) {
             local_wifi->cap_interface = strdup(local_wifi->interface);
         } else {
@@ -1789,6 +2050,73 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
                         local_wifi->name, local_wifi->interface);
                 return -1;
             }
+        } else if (local_wifi->use_mac80211_mode) {
+            /* If we're using mac80211 to set mode, try to do so here... */
+
+            unsigned int num_flags = 0;
+            unsigned int fi;
+            unsigned int *flags = NULL;
+
+            bool fcs = false;
+            bool plcp = false;
+
+            if ((placeholder_len = cf_find_flag(&placeholder, "fcsfail", definition)) > 0) {
+                if (strncasecmp(placeholder, "true", placeholder_len) == 0) {
+                    snprintf(errstr, STATUS_MAX,
+                            "%s source '%s' configuring monitor interface to pass packets "
+                            "which fail FCS checksum", 
+                            local_wifi->name, local_wifi->interface);
+                    cf_send_message(caph, errstr, MSGFLAG_INFO);
+                    num_flags++;
+                    fcs = true;
+                }
+            }
+
+            if ((placeholder_len = cf_find_flag(&placeholder, "plcpfail", 
+                            definition)) > 0) {
+                if (strncasecmp(placeholder, "true", placeholder_len) == 0) {
+                    snprintf(errstr, STATUS_MAX,
+                            "%s source '%s' configuring monitor interface to pass packets "
+                            "which fail PLCP checksum", local_wifi->name, local_wifi->interface);
+                    cf_send_message(caph, errstr, MSGFLAG_INFO);
+                    num_flags++;
+                    plcp = true;
+                }
+            }
+
+            /* Allocate the flag list */
+            flags = (unsigned int *) malloc(sizeof(unsigned int) * num_flags);
+
+            fi = 0;
+
+            if (fcs)
+                flags[fi++] = NL80211_MNTR_FLAG_FCSFAIL;
+
+            if (plcp)
+                flags[fi++] = NL80211_MNTR_FLAG_PLCPFAIL;
+
+            if (mac80211_set_monitor_interface(local_wifi->interface, flags, num_flags, errstr) < 0) {
+                free(flags);
+
+                /* Close the sem if it's open */
+                if (local_wifi->interface_sem != NULL) {
+                    sem_post(local_wifi->interface_sem);
+                    sem_close(local_wifi->interface_sem);
+                    local_wifi->interface_sem = NULL;
+                }
+
+                snprintf(errstr2, STATUS_MAX, "%s %s failed to put interface in monitor mode: %s", 
+                        local_wifi->name, local_wifi->interface, errstr);
+                cf_send_message(caph, errstr2, MSGFLAG_ERROR);
+
+                /* We've failed at everything */
+                snprintf(msg, STATUS_MAX, "%s could not not set mode of existing interface, "
+                        "unable to put '%s' into monitor mode.", local_wifi->name, local_wifi->interface);
+                return -1;
+
+            }
+
+            free(flags);
         } else if (iwconfig_set_mode(local_wifi->interface, errstr, LINUX_WLEXT_MONITOR) < 0) {
             /* Close the sem if it's open */
             if (local_wifi->interface_sem != NULL) {
@@ -1797,7 +2125,6 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
                 local_wifi->interface_sem = NULL;
             }
 
-            /* Otherwise we're some sort of non-vif wext? */
             snprintf(errstr2, STATUS_MAX, "%s %s failed to put interface '%s' in monitor mode: %s", 
                     local_wifi->name, local_wifi->cap_interface, local_wifi->interface, errstr);
             cf_send_message(caph, errstr2, MSGFLAG_ERROR);
@@ -2026,7 +2353,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     }
 
     if (filter_locals) {
-        if ((ret = build_localdev_filter(&ignore_filter)) > 0) {
+        if ((ret = build_first_localdev_filter(&ignore_filter)) > 0) {
             if (ret > 8) {
                 snprintf(errstr, STATUS_MAX, "%s found more than 8 local interfaces (%d), limiting "
                         "the exclusion filter to the first 8 because of limited kernel filter memory.",
@@ -2049,6 +2376,56 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
             }
 
             free(ignore_filter);
+        }
+    } else if (num_filter_interfaces > 0) {
+        if ((ret = build_named_filters(filter_targets, num_filter_interfaces, &ignore_filter)) > 0) {
+            if (pcap_compile(local_wifi->pd, &bpf, ignore_filter, 0, 0) < 0) {
+                snprintf(errstr, STATUS_MAX, "%s unable to compile filter to exclude "
+                        "local interfaces: %s",
+                        local_wifi->name, pcap_geterr(local_wifi->pd));
+                cf_send_message(caph, errstr, MSGFLAG_INFO);
+            } else {
+                if (pcap_setfilter(local_wifi->pd, &bpf) < 0) {
+                    snprintf(errstr, STATUS_MAX, "%s unable to assign filter to exclude "
+                            "local interfaces: %s",
+                            local_wifi->name, pcap_geterr(local_wifi->pd));
+                    cf_send_message(caph, errstr, MSGFLAG_INFO);
+                }
+            }
+
+            free(ignore_filter);
+
+            for (i = 0; i < num_filter_interfaces; i++) {
+                if (filter_targets[i] != NULL)
+                    free(filter_targets[i]);
+            }
+
+            free(filter_targets);
+        }
+    } else if (num_filter_addresses > 0) {
+        if ((ret = build_explicit_filters(filter_targets, num_filter_addresses, &ignore_filter)) > 0) {
+            if (pcap_compile(local_wifi->pd, &bpf, ignore_filter, 0, 0) < 0) {
+                snprintf(errstr, STATUS_MAX, "%s unable to compile filter to exclude "
+                        "specific addresses: %s",
+                        local_wifi->name, pcap_geterr(local_wifi->pd));
+                cf_send_message(caph, errstr, MSGFLAG_INFO);
+            } else {
+                if (pcap_setfilter(local_wifi->pd, &bpf) < 0) {
+                    snprintf(errstr, STATUS_MAX, "%s unable to assign filter to exclude "
+                            "specific addresses: %s",
+                            local_wifi->name, pcap_geterr(local_wifi->pd));
+                    cf_send_message(caph, errstr, MSGFLAG_INFO);
+                }
+            }
+
+            free(ignore_filter);
+
+            for (i = 0; i < num_filter_addresses; i++) {
+                if (filter_targets[i] != NULL)
+                    free(filter_targets[i]);
+            }
+
+            free(filter_targets);
         }
     }
 
@@ -2365,8 +2742,9 @@ int main(int argc, char *argv[]) {
         .override_dlt = -1,
         .use_mac80211_vif = 1,
         .use_mac80211_channels = 1,
-        .up_before_mode = false,
+        .use_mac80211_mode = 0,
         .mac80211_socket = NULL,
+        .up_before_mode = false,
         .use_ht_channels = 1,
         .use_vht_channels = 1,
         .seq_channel_failure = 0,

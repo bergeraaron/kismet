@@ -51,9 +51,6 @@
 #include "devicetracker_component.h"
 #include "phy_80211.h"
 
-#include "structured.h"
-#include "kismet_json.h"
-
 #include "kis_httpd_registry.h"
 
 #include "boost_like_hash.h"
@@ -113,6 +110,8 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
         // Packet classifier - makes basic records plus dot11 data
         packetchain->register_handler(&packet_dot11_common_classifier, this,
                 CHAINPOS_CLASSIFIER, -100);
+        packetchain->register_handler(&packet_dot11_scan_json_classifier, this,
+                CHAINPOS_CLASSIFIER, -99);
         packetchain->register_handler(&phydot11_packethook_wep, this,
                 CHAINPOS_DECRYPT, -100);
         packetchain->register_handler(&phydot11_packethook_dot11, this,
@@ -149,6 +148,9 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
 
         pack_comp_l1info =
             packetchain->register_packet_component("RADIODATA");
+
+        pack_comp_json =
+            packetchain->register_packet_component("JSON");
 
         ssid_regex_vec =
             Globalreg::globalreg->entrytracker->register_and_get_field_as<tracker_element_vector>("phy80211.ssid_alerts", 
@@ -396,11 +398,26 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 "incorrect length may indicate an attempted buffer overflow attack.  "
                 "Specific attacks have their own alerts; this indicates a general, but "
                 "otherwise unknown, malformed tag.");
-	alert_rtlwifi_p2p_ref =
-		alertracker->activate_configured_alert("RTLWIFIP2P",
-				"A bug in the Linux RTLWIFI P2P parsers could result in a crash "
-				"or potential code execution due to malformed notification of "
-				"absence records, as detailed in CVE-2019-17666");
+    alert_rtlwifi_p2p_ref =
+        alertracker->activate_configured_alert("RTLWIFIP2P",
+                "A bug in the Linux RTLWIFI P2P parsers could result in a crash "
+                "or potential code execution due to malformed notification of "
+                "absence records, as detailed in CVE-2019-17666");
+    alert_deauthflood_ref =
+        alertracker->activate_configured_alert("DEAUTHFLOOD",
+                "By spoofing disassociate or deauthenticate packets, an attacker "
+                "may disconnect clients from a network which does not support "
+                "management frame protection (MFP); This can be used to cause a "
+                "denial of service or to disconnect clients in an attempt to "
+                "capture handshakes for attacking WPA.",
+                phyid);
+    alert_noclientmfp_ref =
+        alertracker->activate_configured_alert("NOCLIENTMFP",
+                "Client does not support management frame protection (MFP); By spoofing "
+                "disassociate or deauthenticate packets, an attacker may disconnect it "
+                "from a network. This can be used to cause a denial of service or to "
+                "disconnect it in an attempt to capture handshakes for attacking WPA.",
+                phyid);
 
     // Threshold
     signal_too_loud_threshold = 
@@ -470,8 +487,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
         _MSG(ss.str(), MSGFLAG_INFO);
 
         device_idle_timer =
-            timetracker->register_timer(SERVER_TIMESLICES_SEC * 60, NULL, 
-                1, this);
+            timetracker->register_timer(SERVER_TIMESLICES_SEC * 60, NULL, 1, this);
     } else {
         device_idle_timer = -1;
     }
@@ -483,6 +499,8 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
 	ssid_conf->parse_config(ssid_conf->expand_log_path(Globalreg::globalreg->kismet_config->fetch_opt("configdir") + "/" + "ssid_map.conf", "", "", 0, 1).c_str());
     Globalreg::globalreg->insert_global("SSID_CONF_FILE", std::shared_ptr<config_file>(ssid_conf));
 #endif
+
+    ssidtracker = phy_80211_ssid_tracker::create_dot11_ssidtracker();
 
     httpd_pcap.reset(new phy_80211_httpd_pcap());
 
@@ -524,7 +542,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
         for (auto m : str_tokenize(fetch_opt("validmacs", &optvec), ",", true)) {
             mac_addr ma(m);
 
-            if (ma.error) {
+            if (ma.state.error) {
                 macvec.clear();
                 break;
             }
@@ -610,6 +628,16 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
         Globalreg::globalreg->kismet_config->fetch_opt_bool("dot11_keep_ietags", false);
     if (keep_ie_tags_per_bssid)
         _MSG_INFO("Keeping a copy of advertised IE tags for each SSID; this can use more CPU and RAM.");
+
+
+    keep_eapol_packets =
+        Globalreg::globalreg->kismet_config->fetch_opt_bool("dot11_keep_eapol", true);
+    if (keep_eapol_packets)
+        _MSG_INFO("Keeping EAPOL packets in memory for easy download and WIDS functionality; this can use "
+                "more RAM.");
+    else
+        _MSG_INFO("Not keeping EAPOL packets in memory, EAP replay WIDS and handshake downloads will not "
+                "be available.");
 
     // access-point view
     if (Globalreg::globalreg->kismet_config->fetch_opt_bool("dot11_view_accesspoints", true)) {
@@ -860,7 +888,7 @@ int kis_80211_phy::load_wepkeys() {
 
         mac_addr bssid_mac = wepline.substr(0, rwsplit).c_str();
 
-        if (bssid_mac.error == 1) {
+        if (bssid_mac.state.error == 1) {
             _MSG("Malformed 'wepkey' option in the config file", MSGFLAG_FATAL);
             Globalreg::globalreg->fatal_condition = 1;
 			return -1;
@@ -908,6 +936,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
     // Get the 802.11 info
     dot11_packinfo *dot11info = 
         (dot11_packinfo *) in_pack->fetch(d11phy->pack_comp_80211);
+
     if (dot11info == NULL)
         return 0;
 
@@ -1145,22 +1174,22 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
             // Detect if we're an adhoc bssid
             if (dot11info->ibss) {
                 bssid_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
-                bssid_dev->set_type_string("Wi-Fi Ad-Hoc");
+                bssid_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi Ad-Hoc"));
                 bssid_dot11->bitset_type_set(DOT11_DEVICE_TYPE_ADHOC);
             } else {
                 bssid_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_AP);
-                bssid_dev->set_type_string("Wi-Fi AP");
+                bssid_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi AP"));
             }
 
             // Do some maintenance on the bssid device if we're a beacon or other ssid-carrying
             // packet...
 
             if (dot11info->subtype == packet_sub_beacon) {
-                d11phy->HandleSSID(bssid_dev, bssid_dot11, in_pack, dot11info, pack_gpsinfo);
+                d11phy->handle_ssid(bssid_dev, bssid_dot11, in_pack, dot11info, pack_gpsinfo);
                 bssid_dot11->set_last_beacon_timestamp(in_pack->ts.tv_sec);
                 bssid_dot11->bitset_type_set(DOT11_DEVICE_TYPE_BEACON_AP);
             } else if (dot11info->subtype == packet_sub_probe_resp) {
-                d11phy->HandleSSID(bssid_dev, bssid_dot11, in_pack, dot11info, pack_gpsinfo);
+                d11phy->handle_ssid(bssid_dev, bssid_dot11, in_pack, dot11info, pack_gpsinfo);
                 bssid_dot11->bitset_type_set(DOT11_DEVICE_TYPE_PROBE_AP);
             }
 
@@ -1206,13 +1235,15 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
             // If it's sending ibss-flagged packets it's got to be adoc
             if (dot11info->ibss) {
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
-                source_dev->set_type_string("Wi-Fi Ad-Hoc");
+                source_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi Ad-Hoc"));
                 source_dot11->bitset_type_set(DOT11_DEVICE_TYPE_ADHOC);
             } else {
                 // If it's the source of a mgmt packet, it's got to be a wifi device of 
                 // some sort and not just bridged
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_CLIENT);
-                source_dev->set_type_string_ifnot("Wi-Fi Client", KIS_DEVICE_BASICTYPE_CLIENT);
+                source_dev->set_type_string_ifnot([d11phy]() { 
+                        return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Client"); 
+                        }, KIS_DEVICE_BASICTYPE_CLIENT);
             }
 
             if (dot11info->subtype == packet_sub_probe_req ||
@@ -1245,7 +1276,9 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
             // If it's receiving a management packet, it must be a wifi device
             dest_dev->bitclear_basic_type_set(KIS_DEVICE_BASICTYPE_WIRED);
             dest_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_CLIENT);
-            dest_dev->set_type_string_ifnot("Wi-Fi Client", KIS_DEVICE_BASICTYPE_AP);
+            dest_dev->set_type_string_ifnot([d11phy]() {
+                    return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Client");
+                    }, KIS_DEVICE_BASICTYPE_AP);
 
             if (dot11info->channel != "0" && dot11info->channel != "") {
                 dest_dev->set_channel(dot11info->channel);
@@ -1277,6 +1310,31 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                 } else {
                     d11phy->process_client(bssid_dev, bssid_dot11, dest_dev, dest_dot11, 
                             in_pack, dot11info, pack_gpsinfo, pack_datainfo);
+                }
+            }
+
+            // Look for DEAUTH floods
+            if (bssid_dot11 != NULL && (dot11info->subtype == packet_sub_disassociation ||
+                    dot11info->subtype == packet_sub_deauthentication)) {
+                // if we're w/in time of the last one, update, otherwise clear
+                if (globalreg->timestamp.tv_sec - bssid_dot11->get_client_disconnects_last() > 1)
+                    bssid_dot11->set_client_disconnects(1);
+                else
+                    bssid_dot11->inc_client_disconnects(1);
+
+                bssid_dot11->set_client_disconnects_last(globalreg->timestamp.tv_sec);
+
+                if (bssid_dot11->get_client_disconnects() > 10) {
+                    if (d11phy->alertracker->potential_alert(d11phy->alert_deauthflood_ref)) {
+                        std::string al = "Deauth/Disassociate flood on " + dot11info->bssid_mac.mac_to_string();
+
+                        d11phy->alertracker->raise_alert(d11phy->alert_deauthflood_ref, in_pack,
+                            dot11info->bssid_mac, dot11info->source_mac,
+                            dot11info->dest_mac, dot11info->other_mac,
+                            dot11info->channel, al);
+                    }
+
+                    bssid_dot11->set_client_disconnects(1);
                 }
             }
 
@@ -1403,11 +1461,11 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
             if (dot11info->distrib == distrib_adhoc) {
                 // Otherwise, we're some sort of adhoc device
                 bssid_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
-                bssid_dev->set_type_string("Wi-Fi Ad-Hoc");
+                bssid_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi Ad-Hoc"));
             } else {
                 // If we're the bssid, sending an ess data frame, we must be an access point
                 bssid_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_AP);
-                bssid_dev->set_type_string("Wi-Fi AP");
+                bssid_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi AP"));
 
                 // Throw alert if device changes between bss and adhoc
                 if (bssid_dev->bitcheck_basic_type_set(DOT11_DEVICE_TYPE_ADHOC) &&
@@ -1478,27 +1536,32 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                     dot11info->subtype == packet_sub_data_qos_null) {
                 // Only wireless devices can send null function data
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_CLIENT);
-                source_dev->set_type_string_ifnot("Wi-Fi Client", KIS_DEVICE_BASICTYPE_AP);
+                source_dev->set_type_string_ifnot([d11phy]() {
+                        return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Client");
+                        }, KIS_DEVICE_BASICTYPE_AP);
             } else if (dot11info->distrib == distrib_inter) {
                 // If it's from the ess, we're some sort of wired device; set the type
                 // accordingly
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
 
-                source_dev->set_type_string_ifonly("Wi-Fi WDS",
-                        KIS_DEVICE_BASICTYPE_PEER | KIS_DEVICE_BASICTYPE_DEVICE);
+                source_dev->set_type_string_ifonly([d11phy]() {
+                        return d11phy->devicetracker->get_cached_devicetype("Wi-Fi WDS");
+                        }, KIS_DEVICE_BASICTYPE_PEER | KIS_DEVICE_BASICTYPE_DEVICE);
             } else if (dot11info->distrib == distrib_adhoc && dot11info->ibss) {
                 // We're some sort of adhoc device
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
-                source_dev->set_type_string("Wi-Fi Ad-Hoc");
+                source_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi Ad-Hoc"));
             } else if (dot11info->distrib == distrib_from) {
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_WIRED);
-                source_dev->set_type_string_ifnot("Wi-Fi Bridged",
-                        KIS_DEVICE_BASICTYPE_CLIENT | KIS_DEVICE_BASICTYPE_AP);
+                source_dev->set_type_string_ifnot([d11phy]() {
+                        return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Bridged");
+                        }, KIS_DEVICE_BASICTYPE_CLIENT | KIS_DEVICE_BASICTYPE_AP);
             } else {
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_CLIENT);
 
-                source_dev->set_type_string_ifnot("Wi-Fi Client",
-                        KIS_DEVICE_BASICTYPE_AP);
+                source_dev->set_type_string_ifnot([d11phy]() {
+                        return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Client");
+                        }, KIS_DEVICE_BASICTYPE_AP);
             }
 
             source_dot11->inc_datasize(dot11info->datasize);
@@ -1576,16 +1639,19 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
             if (dot11info->distrib == distrib_inter) {
                 dest_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
 
-                dest_dev->set_type_string_ifonly("Wi-Fi WDS",
-                        KIS_DEVICE_BASICTYPE_PEER | KIS_DEVICE_BASICTYPE_DEVICE);
+                dest_dev->set_type_string_ifonly([d11phy]() {
+                        return d11phy->devicetracker->get_cached_devicetype("Wi-Fi WDS");
+                        }, KIS_DEVICE_BASICTYPE_PEER | KIS_DEVICE_BASICTYPE_DEVICE);
             } else if (dot11info->distrib == distrib_adhoc) {
                 // Otherwise, we're some sort of adhoc device
                 dest_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
-                dest_dev->set_type_string("Wi-Fi Ad-Hoc");
+                dest_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi Ad-Hoc"));
             } else {
                 // We can't define the type with only a destination device; we can't
                 // call it wired or wireless until it talks itself
-                dest_dev->set_type_string_ifonly("Wi-Fi Device", KIS_DEVICE_BASICTYPE_DEVICE);
+                dest_dev->set_type_string_ifonly([d11phy]() {
+                        return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Device");
+                        }, KIS_DEVICE_BASICTYPE_DEVICE);
             }
 
             dest_dot11->inc_datasize(dot11info->datasize);
@@ -1630,7 +1696,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
             }
 
             other_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_AP | KIS_DEVICE_BASICTYPE_PEER);
-            other_dev->set_type_string("Wi-Fi WDS AP");
+            other_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi WDS AP"));
 
             other_dot11->inc_datasize(dot11info->datasize);
 
@@ -1676,6 +1742,368 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
         }
     }
 
+    return 1;
+}
+
+int kis_80211_phy::packet_dot11_scan_json_classifier(CHAINCALL_PARMS) {
+    kis_80211_phy *d11phy = (kis_80211_phy *) auxdata;
+
+    if (in_pack->error || in_pack->filtered || in_pack->duplicate)
+        return 0;
+
+    auto pack_json =
+        in_pack->fetch<kis_json_packinfo>(d11phy->pack_comp_json);
+
+    if (pack_json == nullptr)
+        return 0;
+
+    auto pack_l1info =
+        in_pack->fetch<kis_layer1_packinfo>(d11phy->pack_comp_l1info);
+
+    auto commoninfo =
+        in_pack->fetch<kis_common_info>(d11phy->pack_comp_common);
+
+    if (commoninfo != nullptr || pack_l1info == nullptr)
+        return 0;
+
+    // dot11 json fields - in addition to generic report fields translated into l1/gps/etc
+    // "ssid": ssid
+    // "bssid": bssid
+    // "ietags": tag bytes if available
+    // "chanwidth": Channel width as '20', '40', '80', '160', '80+80'
+    // "capabilities": Android-style scanresult capabilities description
+    // "centerfreq0": Center frequency 0
+    // "centerfreq1": Center frequency 1
+
+    try {
+        std::stringstream ss(pack_json->json_string);
+        Json::Value json;
+        ss >> json;
+
+        auto bssid_j = json["bssid"];
+        auto ssid_j = json["ssid"];
+        auto ietags_j = json["ietags"];
+        auto chanwidth_j = json["chanwidth"];
+        auto capabilities_j = json["capabilities"];
+        auto centerfreq0_j = json["centerfreq0"];
+        auto centerfreq1_j = json["centerfreq1"];
+
+        if (bssid_j.isNull()) {
+            _MSG_ERROR("Phy80211/Wi-Fi scan report with no BSSID, dropping.");
+            in_pack->error = true;
+            return 0;
+        }
+
+        auto bssid_mac = mac_addr(bssid_j.asString());
+        if (bssid_mac.state.error) {
+            _MSG_ERROR("Phy80211/Wi-Fi scan report with invalid BSSID, dropping.");
+            in_pack->error = true;
+            return 0;
+        }
+
+        auto ssid_str = std::string();
+
+        if (!ssid_j.isNull())
+            ssid_str = munge_to_printable(ssid_j.asString());
+
+        auto ssid_csum = adler32_checksum(ssid_str);
+
+        commoninfo = new kis_common_info();
+
+        commoninfo->type = packet_basic_mgmt;
+        commoninfo->direction = packet_direction_from;
+        commoninfo->phyid = d11phy->fetch_phy_id();
+
+        commoninfo->channel = pack_l1info->channel;
+        commoninfo->freq_khz = pack_l1info->freq_khz;
+
+        commoninfo->source = bssid_mac;
+        commoninfo->network = bssid_mac;
+        commoninfo->transmitter = bssid_mac;
+        commoninfo->dest = Globalreg::globalreg->broadcast_mac;
+
+        in_pack->insert(d11phy->pack_comp_common, commoninfo);
+
+        auto bssid_dev =
+            d11phy->devicetracker->update_common_device(commoninfo, 
+                    bssid_mac, d11phy, in_pack, 
+                    (UCD_UPDATE_SIGNAL | UCD_UPDATE_FREQUENCIES |
+                     UCD_UPDATE_PACKETS | UCD_UPDATE_LOCATION |
+                     UCD_UPDATE_SEENBY | UCD_UPDATE_ENCRYPTION),
+                    "Wi-Fi Device");
+
+        local_locker bssidlocker(&(bssid_dev->device_mutex));
+
+        auto bssid_dot11 =
+            bssid_dev->get_sub_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+        std::stringstream newdevstr;
+
+        if (bssid_dot11 == NULL) {
+            _MSG_INFO("Detected new 802.11 Wi-Fi access point {}",
+                    bssid_dev->get_macaddr().mac_to_string());
+
+            bssid_dot11 =
+                std::make_shared<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+
+            dot11_tracked_device::attach_base_parent(bssid_dot11, bssid_dev);
+        }
+
+        bssid_dot11->set_last_bssid(bssid_dev->get_macaddr());
+
+        if (pack_l1info->channel != "" && pack_l1info->channel != "0") {
+            bssid_dev->set_channel(pack_l1info->channel);
+        } else if (pack_l1info->freq_khz != bssid_dev->get_frequency() ||
+                bssid_dev->get_channel() == "") {
+            try {
+                bssid_dev->set_channel(khz_to_channel(pack_l1info->freq_khz));
+            } catch (const std::runtime_error& e) {
+                ;
+            }
+        }
+
+        // TODO - handle raw IE tag data once we get some examples of that coming from
+        // wpasupplicant scanning mode, ought to be able to reuse the beacon processing
+        // system with some modifications, but for now just handle the android capabilities
+
+        uint64_t cryptset = 0;
+
+        if (!capabilities_j.isNull()) {
+            auto capabilities = capabilities_j.asString();
+
+            if (capabilities.find("IBSS") != std::string::npos) {
+                bssid_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_PEER);
+                bssid_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi Ad-Hoc"));
+                bssid_dot11->bitset_type_set(DOT11_DEVICE_TYPE_ADHOC);
+            } else {
+                bssid_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_AP);
+                bssid_dev->set_tracker_type_string(d11phy->devicetracker->get_cached_devicetype("Wi-Fi AP"));
+            }
+
+            if (capabilities.find("WPS") != std::string::npos) {
+                cryptset |= crypt_wps;
+            }
+
+            if (capabilities.find("WEP") != std::string::npos) {
+                cryptset |= crypt_wep;
+            }
+
+            auto caps_list = str_tokenize(capabilities, "[");
+
+            for (auto c : caps_list) {
+                if (c.find("PSK") != std::string::npos) {
+                    if (c.find("WPA2") != std::string::npos)
+                        cryptset |= crypt_wpa + crypt_psk + crypt_version_wpa2;
+                    else
+                        cryptset |= crypt_wpa + crypt_psk + crypt_version_wpa;
+                }
+
+                if (c.find("EAP") != std::string::npos) {
+                    if (c.find("WPA2") != std::string::npos)
+                        cryptset |= crypt_wpa + crypt_eap + crypt_version_wpa2;
+                    else
+                        cryptset |= crypt_wpa + crypt_eap + crypt_version_wpa;
+
+                    if (c.find("PEAP") != std::string::npos)
+                        cryptset |= crypt_peap;
+
+                    if (c.find("TLS") != std::string::npos)
+                        cryptset |= crypt_tls;
+
+                    if (c.find("TTLS") != std::string::npos)
+                        cryptset |= crypt_ttls;
+
+                    if (c.find("SAE") != std::string::npos)
+                        cryptset |= crypt_sae;
+                }
+
+                // Not sure if this is actually a valid option
+                if (c.find("OWE") != std::string::npos) {
+                    cryptset |= crypt_wpa_owe;
+                }
+            }
+
+        }
+
+        // We can only get beaconing APs from scan results
+        bssid_dot11->bitset_type_set(DOT11_DEVICE_TYPE_BEACON_AP);
+
+        auto adv_ssid_map = bssid_dot11->get_advertised_ssid_map();
+
+        std::shared_ptr<dot11_advertised_ssid> ssid;
+
+        if (adv_ssid_map == NULL) {
+            fprintf(stderr, "debug - dot11phy::HandleSSID can't find the adv_ssid_map or probe_ssid_map struct, something is wrong\n");
+            return 0;
+        }
+
+        // Either calculate the actual checksums from the ietags or fake one from the capabilities
+        uint32_t ietag_csum = 0;
+
+        if (!ietags_j.isNull()) 
+            ietag_csum = adler32_checksum(ietags_j.asString());
+        else if (!capabilities_j.isNull())
+            ietag_csum = adler32_checksum(ssid_str + capabilities_j.asString());
+
+
+        if (bssid_dot11->get_last_adv_ie_csum() == ietag_csum) {
+            ssid = bssid_dot11->get_last_adv_ssid();
+
+            if (ssid != nullptr) {
+                if (ssid->get_last_time() < in_pack->ts.tv_sec)
+                    ssid->set_last_time(in_pack->ts.tv_sec);
+            }
+
+            return 1;
+        }
+
+        bssid_dot11->set_last_adv_ie_csum(ietag_csum);
+
+        // If we fail parsing...
+        // if (packet_dot11_ie_dissector(in_pack, dot11info) < 0) {
+        //    return;
+        //}
+
+        auto ssid_itr = adv_ssid_map->find(ssid_csum);
+
+        if (ssid_itr == adv_ssid_map->end()) {
+            ssid = bssid_dot11->new_advertised_ssid();
+            adv_ssid_map->insert(ssid_csum, ssid);
+
+            ssid->set_crypt_set(cryptset);
+            ssid->set_first_time(in_pack->ts.tv_sec);
+            ssid->set_last_time(in_pack->ts.tv_sec);
+
+            bssid_dev->set_crypt_string(crypt_to_simple_string(cryptset));
+
+            ssid->set_ssid(ssid_str);
+
+            if (ssid_str.length() == 0)
+                ssid->set_ssid_cloaked(true);
+
+            ssid->set_ssid_len(ssid_str.length());
+
+            _MSG_INFO("802.11 Wi-Fi device {} advertising SSID '{}'", 
+                    bssid_dev->get_macaddr(), ssid_str);
+
+            if (d11phy->alertracker->potential_alert(d11phy->alert_airjackssid_ref) &&
+                    ssid->get_ssid() == "AirJack" ) {
+
+                std::string al = "IEEE80211 Access Point BSSID " +
+                    bssid_dev->get_macaddr().mac_to_string() + " broadcasting SSID "
+                    "\"AirJack\" which implies an attempt to disrupt "
+                    "networks.";
+
+                d11phy->alertracker->raise_alert(d11phy->alert_airjackssid_ref, in_pack, 
+                        commoninfo->network, commoninfo->source,
+                        commoninfo->dest, commoninfo->transmitter,
+                        commoninfo->channel, al);
+            }
+
+            if (ssid->get_ssid() != "") {
+                bssid_dev->set_devicename(ssid->get_ssid());
+            } else {
+                bssid_dev->set_devicename(bssid_dev->get_macaddr().mac_to_string());
+            }
+
+            // If we have a new ssid and we can consider raising an alert, do the 
+            // regex compares to see if we trigger apspoof
+            if (ssid_str.length() != 0 &&
+                    d11phy->alertracker->potential_alert(d11phy->alert_ssidmatch_ref)) {
+                for (auto s : *d11phy->ssid_regex_vec) {
+                    std::shared_ptr<dot11_tracked_ssid_alert> sa =
+                        std::static_pointer_cast<dot11_tracked_ssid_alert>(s);
+
+                    if (sa->compare_ssid(ssid_str, commoninfo->source)) {
+                        auto al = fmt::format("IEEE80211 Unauthorized device ({}) advertising  "
+                                "for SSID '{}', matching APSPOOF rule {} which may indicate "
+                                "spoofing or impersonation.", commoninfo->source, 
+                                ssid_str, sa->get_group_name());
+
+                        d11phy->alertracker->raise_alert(d11phy->alert_ssidmatch_ref, in_pack, 
+                                commoninfo->network,
+                                commoninfo->source,
+                                commoninfo->dest,
+                                commoninfo->transmitter,
+                                commoninfo->channel, al);
+                        break;
+                    }
+                }
+            }
+        } else {
+            ssid = std::static_pointer_cast<dot11_advertised_ssid>(ssid_itr->second);
+            if (ssid->get_last_time() < in_pack->ts.tv_sec)
+                ssid->set_last_time(in_pack->ts.tv_sec);
+        }
+
+        d11phy->ssidtracker->handle_broadcast_ssid(ssid->get_ssid(), ssid->get_ssid_len(),
+                ssid->get_crypt_set(), bssid_dev);
+
+        bssid_dot11->set_last_adv_ssid(ssid);
+
+        // Alias the last ssid snapshot
+        auto lbr = bssid_dot11->get_last_beaconed_ssid_record();
+        lbr->set(ssid);
+
+        ssid->set_ietag_checksum(ietag_csum);
+
+        if (ssid->get_crypt_set() != cryptset) {
+            if (ssid->get_crypt_set() && cryptset == crypt_none &&
+                    d11phy->alertracker->potential_alert(d11phy->alert_wepflap_ref)) {
+
+                std::string al = "IEEE80211 Access Point BSSID " +
+                    bssid_dev->get_macaddr().mac_to_string() + " SSID \"" +
+                    ssid->get_ssid() + "\" changed advertised encryption from " +
+                    crypt_to_string(ssid->get_crypt_set()) + " to Open which may "
+                    "indicate AP spoofing/impersonation";
+
+                d11phy->alertracker->raise_alert(d11phy->alert_wepflap_ref, in_pack, 
+                        commoninfo->network, commoninfo->source, 
+                        commoninfo->dest, commoninfo->transmitter, 
+                        commoninfo->channel, al);
+            } else if (ssid->get_crypt_set() != cryptset &&
+                    d11phy->alertracker->potential_alert(d11phy->alert_cryptchange_ref)) {
+
+                auto al = fmt::format("IEEE80211 Access Point BSSID {} SSID \"{}\" changed advertised "
+                        "encryption from {} to {} which may indicate AP spoofing/impersonation",
+                        bssid_dev->get_macaddr(), ssid->get_ssid(), 
+                        crypt_to_string(ssid->get_crypt_set()),
+                        crypt_to_string(cryptset));
+
+                d11phy->alertracker->raise_alert(d11phy->alert_cryptchange_ref, in_pack, 
+                        commoninfo->network, commoninfo->source, 
+                        commoninfo->dest, commoninfo->transmitter, 
+                        commoninfo->channel, al);
+            }
+
+            ssid->set_crypt_set(cryptset);
+            bssid_dev->set_crypt_string(crypt_to_simple_string(cryptset));
+        }
+
+        if (ssid->get_channel().length() > 0 &&
+                ssid->get_channel() != commoninfo->channel && commoninfo->channel != "0") {
+
+            auto al = 
+                fmt::format("IEEE80211 Access Point BSSID {} SSID \"{}\" changed advertised "
+                        "channel from {} to {}, which may indicate spoofing or impersonation.  "
+                        "This may also be a normal event where the AP seeks a less congested channel.",
+                        bssid_dev->get_macaddr(), ssid->get_ssid(), ssid->get_channel(), 
+                        commoninfo->channel);
+
+            d11phy->alertracker->raise_alert(d11phy->alert_chan_ref, in_pack, 
+                        commoninfo->network, commoninfo->source, 
+                        commoninfo->dest, commoninfo->transmitter, 
+                        commoninfo->channel, al);
+
+            ssid->set_channel(commoninfo->channel); 
+        }
+
+        d11phy->devicetracker->update_view_device(bssid_dev);
+
+    } catch (const std::exception& e) {
+        _MSG_ERROR("Invalid phy80211/Wi-Fi scan report: {}", e.what());
+        in_pack->error = true;
+        return 0;
+    }
 
     return 1;
 }
@@ -1717,7 +2145,7 @@ void kis_80211_phy::add_wep_key(mac_addr bssid, uint8_t *key, unsigned int len,
     wepkeys.insert(std::make_pair(winfo->bssid, winfo));
 }
 
-void kis_80211_phy::HandleSSID(std::shared_ptr<kis_tracked_device_base> basedev,
+void kis_80211_phy::handle_ssid(std::shared_ptr<kis_tracked_device_base> basedev,
         std::shared_ptr<dot11_tracked_device> dot11dev,
         kis_packet *in_pack,
         dot11_packinfo *dot11info,
@@ -1741,7 +2169,7 @@ void kis_80211_phy::HandleSSID(std::shared_ptr<kis_tracked_device_base> basedev,
     if (dot11dev->get_last_adv_ie_csum() == dot11info->ietag_csum) {
         ssid = dot11dev->get_last_adv_ssid();
 
-        if (ssid != NULL) {
+        if (ssid != nullptr) {
             if (ssid->get_last_time() < in_pack->ts.tv_sec)
                 ssid->set_last_time(in_pack->ts.tv_sec);
 
@@ -1888,18 +2316,28 @@ void kis_80211_phy::HandleSSID(std::shared_ptr<kis_tracked_device_base> basedev,
             ssid->set_last_time(in_pack->ts.tv_sec);
     }
 
+    // Always process the SSID so we update the timestamps
+    if (dot11info->subtype == packet_sub_probe_resp) {
+        ssidtracker->handle_response_ssid(ssid->get_ssid(), ssid->get_ssid_len(),
+                ssid->get_crypt_set(), basedev);
+    } else {
+        ssidtracker->handle_broadcast_ssid(ssid->get_ssid(), ssid->get_ssid_len(),
+                ssid->get_crypt_set(), basedev);
+    }
+
     dot11dev->set_last_adv_ssid(ssid);
 
     ssid->set_ietag_checksum(dot11info->ietag_csum);
 
-    auto taglist = PacketDot11IElist(in_pack, dot11info);
-    ssid->get_ie_tag_list()->clear();
-    for (auto ti : taglist) 
-        ssid->get_ie_tag_list()->push_back(std::get<0>(ti));
+    if (keep_ie_tags_per_bssid) {
+        auto taglist = PacketDot11IElist(in_pack, dot11info);
+        ssid->get_ie_tag_list()->clear();
+        for (auto ti : taglist) 
+            ssid->get_ie_tag_list()->push_back(std::get<0>(ti));
 
-    // If we snapshot the ie tags, do so
-    if (keep_ie_tags_per_bssid)
+        // If we snapshot the ie tags, do so
         ssid->set_ietag_content_from_packet(dot11info->ie_tags);
+    }
 
     // Alias the last ssid snapshot
     auto lbr = dot11dev->get_last_beaconed_ssid_record();
@@ -2104,7 +2542,7 @@ void kis_80211_phy::HandleSSID(std::shared_ptr<kis_tracked_device_base> basedev,
         }
     }
 
-    // Only process dot11 from beacons
+    // Only process dot11d from beacons
     if (dot11info->subtype == packet_sub_beacon) {
         bool dot11dmismatch = false;
 
@@ -2113,19 +2551,25 @@ void kis_80211_phy::HandleSSID(std::shared_ptr<kis_tracked_device_base> basedev,
             dot11dmismatch = true;
         }
 
-        auto dot11dvec(ssid->get_dot11d_vec());
-        for (unsigned int vc = 0; 
-                vc < dot11dvec->size() && vc < dot11info->dot11d_vec.size(); vc++) {
-            std::shared_ptr<dot11_11d_tracked_range_info> ri =
-                std::static_pointer_cast<dot11_11d_tracked_range_info>(*(dot11dvec->begin() + vc));
+        if (ssid->has_dot11d_vec()) {
+            auto dot11dvec(ssid->get_dot11d_vec());
 
-            if (ri->get_startchan() != dot11info->dot11d_vec[vc].startchan ||
-                    ri->get_numchan() != dot11info->dot11d_vec[vc].numchan ||
-                    ri->get_txpower() != dot11info->dot11d_vec[vc].txpower) {
-                dot11dmismatch = true;
-                break;
+            if (dot11dvec->size() != dot11info->dot11d_vec.size()) {
+                dot11dmismatch = true; 
+            } else {
+                for (unsigned int vc = 0; 
+                        vc < dot11dvec->size() && vc < dot11info->dot11d_vec.size(); vc++) {
+                    std::shared_ptr<dot11_11d_tracked_range_info> ri =
+                        std::static_pointer_cast<dot11_11d_tracked_range_info>(*(dot11dvec->begin() + vc));
+
+                    if (ri->get_startchan() != dot11info->dot11d_vec[vc].startchan ||
+                            ri->get_numchan() != dot11info->dot11d_vec[vc].numchan ||
+                            ri->get_txpower() != dot11info->dot11d_vec[vc].txpower) {
+                        dot11dmismatch = true;
+                        break;
+                    }
+                }
             }
-
         }
 
         if (dot11dmismatch) {
@@ -2145,8 +2589,11 @@ void kis_80211_phy::HandleSSID(std::shared_ptr<kis_tracked_device_base> basedev,
         }
 
         ssid->set_dot11d_country(dot11info->dot11d_country);
-        ssid->set_dot11d_vec(dot11info->dot11d_vec);
 
+        if (dot11info->dot11d_vec.size() > 0 && ssid->has_dot11d_vec())
+            ssid->set_dot11d_vec(dot11info->dot11d_vec);
+        else if (dot11info->dot11d_vec.size() == 0 && ssid->has_dot11d_vec())
+            ssid->clear_dot11d_vec();
     }
 
     ssid->set_wps_state(dot11info->wps);
@@ -2160,15 +2607,8 @@ void kis_80211_phy::HandleSSID(std::shared_ptr<kis_tracked_device_base> basedev,
     if (dot11info->wps_serial_number != "")
         ssid->set_wps_serial_number(dot11info->wps_serial_number);
 
-    if (dot11info->wps_uuid_e != "")
+    if (dot11info->wps_uuid_e != "") 
         ssid->set_wps_uuid_e(dot11info->wps_uuid_e);
-
-    /* kis_manuf should be the IEEE manuf, not inherited from WPS.
-     * Also, never do this - this clobbers the universal 'unknown' manuf.
-    // Do we not know the basedev manuf?
-    if (Globalreg::globalreg->manufdb->is_unknown_manuf(basedev->get_manuf()) && dot11info->wps_manuf != "")
-        basedev->set_manuf(dot11info->wps_manuf);
-        */
 
     if (dot11info->beacon_interval && ssid->get_beaconrate() != 
             Ieee80211Interval2NSecs(dot11info->beacon_interval)) {
@@ -2287,14 +2727,50 @@ void kis_80211_phy::handle_probed_ssid(std::shared_ptr<kis_tracked_device_base> 
         if (dot11info->wps_serial_number != "")
             probessid->set_wps_serial_number(dot11info->wps_serial_number);
 
-        if (dot11info->wps_uuid_e != "")
-            probessid->set_wps_uuid_e(dot11info->wps_uuid_e);
+        if (dot11info->wps_uuid_e != "") {
+            if (probessid->get_wps_uuid_e() != dot11info->wps_uuid_e) {
+                device_tracker_view_function_worker dev_worker(
+                        [this, dot11info, basedev, dot11dev](std::shared_ptr<kis_tracked_device_base> dev) -> bool {
+                            auto bssid_dot11 =
+                                dev->get_sub_as<dot11_tracked_device>(dot11_device_entry_id);
+
+                            if (bssid_dot11 == nullptr) {
+                                return false;
+                            }
+
+                            if (bssid_dot11->has_probed_ssid_map()) {
+                                for (auto pi : *bssid_dot11->probed_ssid_map) {
+                                    auto ps =
+                                        std::static_pointer_cast<dot11_probed_ssid>(pi.second);
+
+                                    if (ps->get_wps_uuid_e() == dot11info->wps_uuid_e)
+                                        return true;
+                                }
+                            }
+
+                        return false;
+                        });
+                devicetracker->do_readonly_device_work(dev_worker);
+
+                // Set a bidirectional relationship
+                for (auto ri : *(dev_worker.getMatchedDevices())) {
+                    auto rdev = std::static_pointer_cast<kis_tracked_device_base>(ri);
+
+                    basedev->add_related_device("dot11_uuid_e", rdev->get_key());
+                    rdev->add_related_device("dot11_uuid_e", basedev->get_key());
+                }
+
+                probessid->set_wps_uuid_e(dot11info->wps_uuid_e);
+            }
+        }
 
         // Update the IE listing at the device level
-        auto taglist = PacketDot11IElist(in_pack, dot11info);
-        probessid->get_ie_tag_list()->clear();
-        for (auto ti : taglist) 
-            probessid->get_ie_tag_list()->push_back(std::get<0>(ti));
+        if (keep_ie_tags_per_bssid) {
+            auto taglist = PacketDot11IElist(in_pack, dot11info);
+            probessid->get_ie_tag_list()->clear();
+            for (auto ti : taglist) 
+                probessid->get_ie_tag_list()->push_back(std::get<0>(ti));
+        }
 
         auto tag_hash = xx_hash_cpp{};
 
@@ -2313,6 +2789,10 @@ void kis_80211_phy::handle_probed_ssid(std::shared_ptr<kis_tracked_device_base> 
 
         // XXHash32 says the canonical representation of the hash is little-endian
         dot11dev->set_probe_fingerprint(htole32(tag_hash.hash()));
+
+        // Enter it in the ssid tracker
+        ssidtracker->handle_probe_ssid(probessid->get_ssid(), probessid->get_ssid_len(),
+                probessid->get_crypt_set(), basedev);
     }
 
 }
@@ -2376,6 +2856,21 @@ void kis_80211_phy::process_client(std::shared_ptr<kis_tracked_device_base> bssi
                     for (auto c : dot11info->supported_channels->supported_channels()) 
                         clientdot11->get_supported_channels()->push_back(c);
                 }
+
+		if ((dot11info->rsn == nullptr || !dot11info->rsn->rsn_capability_mfp_supported()) &&
+                        alertracker->potential_alert(alert_noclientmfp_ref)) {
+                    std::string al = "IEEE80211 network BSSID " +
+                        client_record->get_bssid().mac_to_string() +
+                        " client " +
+                        clientdev->get_macaddr().mac_to_string() +
+                        " does not support management frame protection (MFP) which "
+                        "may ease client disassocation or deauthentication";
+
+                    alertracker->raise_alert(alert_noclientmfp_ref, in_pack,
+                            dot11info->bssid_mac, dot11info->source_mac,
+                            dot11info->dest_mac, dot11info->other_mac,
+                            dot11info->channel, al);
+                }
             }
 
         } else if (dot11info->type == packet_data) {
@@ -2389,8 +2884,8 @@ void kis_80211_phy::process_client(std::shared_ptr<kis_tracked_device_base> bssi
                 client_record->inc_datasize_retry(dot11info->datasize);
             }
 
-            if (pack_datainfo != NULL && pack_datainfo->proto == proto_eap) {
-                if (pack_datainfo->auxstring != "") {
+            if (pack_datainfo != NULL) {
+                if (pack_datainfo->proto == proto_eap && pack_datainfo->auxstring != "") {
                     client_record->set_eap_identity(pack_datainfo->auxstring);
                 }
 
@@ -2445,6 +2940,33 @@ void kis_80211_phy::process_client(std::shared_ptr<kis_tracked_device_base> bssi
                 if (pack_datainfo->cdp_port_id != "") {
                     client_record->set_cdp_port(pack_datainfo->cdp_port_id);
                 }
+
+                switch(pack_datainfo->proto) {
+                    case proto_arp:
+                        if (dot11info->source_mac == clientdev->get_macaddr()) {
+	                    client_record->get_ipdata()->set_ip_addr(pack_datainfo->ip_source_addr.s_addr);
+	                    client_record->get_ipdata()->set_ip_type(ipdata_arp);
+                        }
+                        break;
+                    case proto_dhcp_offer:
+                        if (dot11info->dest_mac == clientdev->get_macaddr()) {
+                            client_record->get_ipdata()->set_ip_addr(pack_datainfo->ip_dest_addr.s_addr);
+                            client_record->get_ipdata()->set_ip_netmask(pack_datainfo->ip_netmask_addr.s_addr);
+                            client_record->get_ipdata()->set_ip_gateway(pack_datainfo->ip_gateway_addr.s_addr);
+                            client_record->get_ipdata()->set_ip_type(ipdata_dhcp);
+                        }
+                        break;
+                    case proto_tcp:
+                    case proto_udp:
+                        if (dot11info->source_mac == clientdev->get_macaddr())
+                            client_record->get_ipdata()->set_ip_addr(pack_datainfo->ip_source_addr.s_addr);
+                        if (dot11info->dest_mac == clientdev->get_macaddr())
+                            client_record->get_ipdata()->set_ip_addr(pack_datainfo->ip_dest_addr.s_addr);
+                        client_record->get_ipdata()->set_ip_type(ipdata_udptcp);
+                        break;
+                    default:
+                        break;
+                }
             }
 
         }
@@ -2481,6 +3003,9 @@ void kis_80211_phy::process_wpa_handshake(std::shared_ptr<kis_tracked_device_bas
     std::shared_ptr<dot11_tracked_eapol> eapol = packet_dot11_eapol_handshake(in_pack, bssid_dot11);
 
     if (eapol == NULL)
+        return;
+
+    if (!keep_eapol_packets)
         return;
 
     if (bssid_dev == nullptr || dest_dev == nullptr)
@@ -2535,8 +3060,10 @@ void kis_80211_phy::process_wpa_handshake(std::shared_ptr<kis_tracked_device_bas
 
         bssid_dot11->set_wpa_present_handshake(keymask);
 
-        eventbus->publish(std::make_shared<event_dot11_wpa_handshake>(bssid_dev, bssid_dot11));
-
+        auto evt = eventbus->get_eventbus_event(dot11_wpa_handshake_event);
+        evt->get_event_content()->insert(dot11_wpa_handshake_event_base, bssid_dev);
+        evt->get_event_content()->insert(dot11_wpa_handshake_event_dot11, bssid_dot11);
+        eventbus->publish(evt);
     }
 
     {
@@ -2934,21 +3461,23 @@ void kis_80211_phy::generate_handshake_pcap(std::shared_ptr<kis_tracked_device_b
 
             if (tokenurl[6] == tokenurl[4] + "-handshake.pcap") {
                 // Write all the handshakes
-                for (auto i : *(dot11dev->get_wpa_key_vec())) {
-                    auto eapol =
-                        std::static_pointer_cast<dot11_tracked_eapol>(i);
+                if (dot11dev->has_wpa_key_vec()) {
+                    for (auto i : *(dot11dev->get_wpa_key_vec())) {
+                        auto eapol =
+                            std::static_pointer_cast<dot11_tracked_eapol>(i);
 
-                    auto packet = eapol->get_eapol_packet();
+                        auto packet = eapol->get_eapol_packet();
 
-                    // Make a pcap header
-                    pkt_hdr.timeval_s = packet->get_ts_sec();
-                    pkt_hdr.timeval_us = packet->get_ts_usec();
+                        // Make a pcap header
+                        pkt_hdr.timeval_s = packet->get_ts_sec();
+                        pkt_hdr.timeval_us = packet->get_ts_usec();
 
-                    pkt_hdr.len = packet->get_data()->length();
-                    pkt_hdr.caplen = pkt_hdr.len;
+                        pkt_hdr.len = packet->get_data()->length();
+                        pkt_hdr.caplen = pkt_hdr.len;
 
-                    stream.write((const char *) &pkt_hdr, sizeof(pkt_hdr));
-                    stream.write((const char *) packet->get_data()->get().data(), pkt_hdr.len);
+                        stream.write((const char *) &pkt_hdr, sizeof(pkt_hdr));
+                        stream.write((const char *) packet->get_data()->get().data(), pkt_hdr.len);
+                    }
                 }
             } else if (tokenurl[6] == tokenurl[4] + "-pmkid.pcap") {
                 // Write just the pmkid
@@ -3009,7 +3538,7 @@ void kis_80211_phy::httpd_create_stream_response(kis_net_httpd *httpd,
     return;
 }
 
-int kis_80211_phy::httpd_post_complete(kis_net_httpd_connection *concls) {
+KIS_MHD_RETURN kis_80211_phy::httpd_post_complete(kis_net_httpd_connection *concls) {
     bool handled = false;
 
     std::string stripped = httpd_strip_suffix(concls->url);
@@ -3024,32 +3553,29 @@ int kis_80211_phy::httpd_post_complete(kis_net_httpd_connection *concls) {
         concls->response_stream << "OK";
     }
 
-    return 1;
+    return MHD_YES;
 }
 
-class phy80211_devicetracker_expire_worker : public device_tracker_filter_worker {
+class phy80211_devicetracker_expire_worker : public device_tracker_view_worker {
 public:
-    phy80211_devicetracker_expire_worker(global_registry *in_globalreg, 
-            int in_timeout, unsigned int in_packets, int entry_id) {
-        globalreg = in_globalreg;
+    phy80211_devicetracker_expire_worker(int in_timeout, unsigned int in_packets, int entry_id) {
         dot11_device_entry_id = entry_id;
         timeout = in_timeout;
         packets = in_packets;
+        devicetracker =
+            Globalreg::fetch_mandatory_global_as<device_tracker>();
     }
 
     virtual ~phy80211_devicetracker_expire_worker() { }
 
-    virtual bool match_device(device_tracker *devicetracker, 
-            std::shared_ptr<kis_tracked_device_base> device) {
+    virtual bool match_device(std::shared_ptr<kis_tracked_device_base> device) override {
         auto dot11dev =
             device->get_sub_as<dot11_tracked_device>(dot11_device_entry_id);
 
-        // Not 802.11?  nothing we can do
         if (dot11dev == NULL) {
             return false;
         }
 
-        // Iterate over all the SSID records
         auto adv_ssid_map = dot11dev->get_advertised_ssid_map();
         std::shared_ptr<dot11_advertised_ssid> ssid = NULL;
         tracker_element_int_map::iterator int_itr;
@@ -3112,7 +3638,7 @@ public:
     }
 
 protected:
-    global_registry *globalreg;
+    std::shared_ptr<device_tracker> devicetracker;
     int dot11_device_entry_id;
     int timeout;
     unsigned int packets;
@@ -3121,9 +3647,8 @@ protected:
 int kis_80211_phy::timetracker_event(int eventid) {
     // Spawn a worker to handle this
     if (eventid == device_idle_timer) {
-        auto worker = 
-            std::make_shared<phy80211_devicetracker_expire_worker>(Globalreg::globalreg,
-                device_idle_expiration, device_idle_min_packets, dot11_device_entry_id);
+        phy80211_devicetracker_expire_worker worker(device_idle_expiration, 
+                device_idle_min_packets, dot11_device_entry_id);
         devicetracker->do_device_work(worker);
     }
 

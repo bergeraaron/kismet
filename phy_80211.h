@@ -1,4 +1,5 @@
 /*
+Minor cleanup to pcapng generation
    This file is part of Kismet
 
    Kismet is free software; you can redistribute it and/or modify
@@ -46,6 +47,9 @@
 #include "kis_net_microhttpd.h"
 #include "phy_80211_components.h"
 #include "phy_80211_httpd_pcap.h"
+#include "phy_80211_ssidtracker.h"
+
+#include "datasource_dot11_scan.h"
 
 #include "kaitai/kaitaistream.h"
 #include "dot11_parsers/dot11_wpa_eap.h"
@@ -347,6 +351,9 @@ public:
     // 802.11 packet classifier to common for the devicetracker layer
     static int packet_dot11_common_classifier(CHAINCALL_PARMS);
 
+    // 802.11 virtual source scan classifier
+    static int packet_dot11_scan_json_classifier(CHAINCALL_PARMS);
+
     // Dot11 tracker for building phy-specific elements
     int tracker_dot11(kis_packet *in_pack);
 
@@ -368,7 +375,7 @@ public:
             const char *url, const char *method, const char *upload_data,
             size_t *upload_data_size, std::stringstream &stream) override;
 
-    virtual int httpd_post_complete(kis_net_httpd_connection *concls) override;
+    virtual KIS_MHD_RETURN httpd_post_complete(kis_net_httpd_connection *concls) override;
 
     // time_tracker event handler
     virtual int timetracker_event(int eventid) override;
@@ -381,19 +388,9 @@ public:
     // if this cannot be converted or is an invalid frequency
     static const std::string khz_to_channel(const double in_khz);
 
-    // event_bus event we inject when a handshake is captured
-    class event_dot11_wpa_handshake : public eventbus_event {
-    public:
-        static std::string Event() { return "DOT11_WPA_HANDSHAKE"; }
-        event_dot11_wpa_handshake(std::shared_ptr<kis_tracked_device_base> base_device, std::shared_ptr<dot11_tracked_device> dot11_device) :
-            eventbus_event(Event()),
-            base_device{base_device},
-            dot11_device{dot11_device} { }
-        virtual ~event_dot11_wpa_handshake() {}
-
-        std::shared_ptr<kis_tracked_device_base> base_device;
-        std::shared_ptr<dot11_tracked_device> dot11_device;
-    };
+    const std::string dot11_wpa_handshake_event = "DOT11_WPA_HANDSHAKE";
+    const std::string dot11_wpa_handshake_event_base = "DOT11_WPA_HANDSHAKE_BASEDEV";
+    const std::string dot11_wpa_handshake_event_dot11 = "DOT11_WPA_HANDSHAKE_DOT11";
 
 protected:
     std::shared_ptr<alert_tracker> alertracker;
@@ -408,7 +405,7 @@ protected:
     unsigned int recent_packet_checksum_pos;
 
     // Handle advertised SSIDs
-    void HandleSSID(std::shared_ptr<kis_tracked_device_base> basedev, 
+    void handle_ssid(std::shared_ptr<kis_tracked_device_base> basedev, 
             std::shared_ptr<dot11_tracked_device> dot11dev,
             kis_packet *in_pack,
             dot11_packinfo *dot11info,
@@ -458,7 +455,7 @@ protected:
     int pack_comp_80211, pack_comp_basicdata, pack_comp_mangleframe,
         pack_comp_strings, pack_comp_checksum, pack_comp_linkframe,
         pack_comp_decap, pack_comp_common, pack_comp_datapayload,
-        pack_comp_gps, pack_comp_l1info;
+        pack_comp_gps, pack_comp_l1info, pack_comp_json;
 
     // Do we do any data dissection or do we hide it all (legal safety
     // cutout)
@@ -477,7 +474,7 @@ protected:
         alert_longssid_ref, alert_disconinvalid_ref, alert_deauthinvalid_ref,
         alert_dhcpclient_ref, alert_wmm_ref, alert_nonce_zero_ref, 
         alert_nonce_duplicate_ref, alert_11kneighborchan_ref, alert_probechan_ref,
-		alert_rtlwifi_p2p_ref;
+        alert_rtlwifi_p2p_ref, alert_deauthflood_ref, alert_noclientmfp_ref;
 
     // Are we allowed to send wepkeys to the client (server config)
     int client_wepkey_allowed;
@@ -534,11 +531,17 @@ protected:
     // AP view
     std::shared_ptr<device_tracker_view> ap_view;
 
+    // SSID tracker subsystem
+    std::shared_ptr<phy_80211_ssid_tracker> ssidtracker; 
+
     // bssts time for grouping, in usec
     uint64_t bss_ts_group_usec;
 
     // Do we store the last beaconed tags in the ssid record?
     bool keep_ie_tags_per_bssid;
+
+    // Do we keep WPA packets?
+    bool keep_eapol_packets;
 };
 
 #endif

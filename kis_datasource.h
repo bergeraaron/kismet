@@ -413,6 +413,19 @@ public:
         local_shared_unlocker ul(ext_mutex);
     }
 
+    static std::string event_datasource_error() {
+        return "DATASOURCE_ERROR";
+    }
+
+    static std::string event_datasource_opened() {
+        return "DATASOURCE_OPENED";
+    }
+
+    static std::string event_datasource_closed() {
+        return "DATASOURCE_CLOSED";
+    }
+
+
 protected:
     // Source error; sets error state, fails all pending function callbacks,
     // shuts down the buffer and ipc, and initiates retry if we retry errors
@@ -609,8 +622,8 @@ protected:
     std::shared_ptr<tracker_element_uint8> source_hop_shuffle;
     std::shared_ptr<tracker_element_uint32> source_hop_shuffle_skip;
 
-    std::shared_ptr<tracker_element_uint32> source_num_packets;
-    std::shared_ptr<tracker_element_uint32> source_num_error_packets;
+    std::shared_ptr<tracker_element_uint64> source_num_packets;
+    std::shared_ptr<tracker_element_uint64> source_num_error_packets;
 
     int packet_rate_rrd_id;
     std::shared_ptr<kis_tracked_minute_rrd<>> packet_rate_rrd;

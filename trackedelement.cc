@@ -82,7 +82,7 @@ uint32_t device_key::gen_pkey(std::string phy) {
 }
 
 uint64_t device_key::gen_spkey(uuid s_uuid, std::string phy) {
-    uint64_t uuid32 = adler32_checksum((const char *) s_uuid.uuid_block, 16);
+    uint64_t uuid32 = adler32_checksum((const char *) s_uuid.hash, sizeof(std::size_t));
     uint64_t phy32 = gen_pkey(phy);
 
     return (uuid32 << 32) | phy32;
@@ -132,32 +132,11 @@ void tracker_element_string::coercive_set(double in_num) {
 }
 
 void tracker_element_string::coercive_set(const shared_tracker_element& e) {
-    switch (e->get_type()) {
-        case tracker_type::tracker_int8:
-        case tracker_type::tracker_uint8:
-        case tracker_type::tracker_int16:
-        case tracker_type::tracker_uint16:
-        case tracker_type::tracker_int32:
-        case tracker_type::tracker_uint32:
-        case tracker_type::tracker_int64:
-        case tracker_type::tracker_uint64:
-        case tracker_type::tracker_float:
-        case tracker_type::tracker_double:
-            coercive_set(std::static_pointer_cast<tracker_element_core_scalar>(e)->get());
-            break;
-        case tracker_type::tracker_string:
-            coercive_set(std::static_pointer_cast<tracker_element_string>(e)->get());
-            break;
-        case tracker_type::tracker_uuid:
-            coercive_set(std::static_pointer_cast<tracker_element_uuid>(e)->get().uuid_to_string());
-            break;
-        case tracker_type::tracker_mac_addr:
-            coercive_set(std::static_pointer_cast<tracker_element_mac_addr>(e)->get().mac_to_string());
-            break;
-        default:
-            throw std::runtime_error(fmt::format("Could not coerce {} to {}",
-                        e->get_type_as_string(), get_type_as_string()));
-    }
+    if (e->is_stringable())
+        coercive_set(e->as_string());
+    else
+        throw std::runtime_error(fmt::format("Could not coerce {} to {}",
+                    e->get_type_as_string(), get_type_as_string()));
 }
 
 bool tracker_element_string::less_than(const tracker_element_string& rhs) const {
@@ -191,7 +170,7 @@ void tracker_element_uuid::coercive_set(const shared_tracker_element& e) {
 void tracker_element_mac_addr::coercive_set(const std::string& in_str) {
     mac_addr m(in_str);
 
-    if (m.error)
+    if (m.state.error)
         throw std::runtime_error("Could not coerce string to macaddr");
 
     value = m;
@@ -268,6 +247,8 @@ std::string tracker_element::type_to_string(tracker_type t) {
             return "vector[size_t]";
         case tracker_type::tracker_alias:
             return "alias";
+        case tracker_type::tracker_ipv4_addr:
+            return "ipv4";
     }
 
     return "unknown";
@@ -329,6 +310,8 @@ std::string tracker_element::type_to_typestring(tracker_type t) {
             return "tracker_hashkey_map";
         case tracker_type::tracker_alias:
             return "tracker_alias";
+        case tracker_type::tracker_ipv4_addr:
+            return "tracker_ipv4_addr";
     }
 
     return "TrackerUnknown";
@@ -389,15 +372,41 @@ tracker_type tracker_element::typestring_to_type(const std::string& s) {
         return tracker_type::tracker_hashkey_map;
     if (s == "tracker_alias")
         return tracker_type::tracker_alias;
+    if (s == "tracker_ipv4_addr")
+        return tracker_type::tracker_ipv4_addr;
 
     throw std::runtime_error("Unable to interpret tracker type " + s);
 }
 
+std::ostream& operator<<(std::ostream& os, const tracker_element& e) {
+    os << e.as_string();
+    return os;
+}
+
+std::istream& operator>>(std::istream& is, tracker_element& e) {
+    std::string sline;
+    std::getline(is, sline);
+    e.coercive_set(sline);
+    return is;
+}
+
+std::ostream& operator<<(std::ostream& os, std::shared_ptr<tracker_element> se) {
+    os << se->as_string();
+    return os;
+}
+
 template<> std::string get_tracker_value(const shared_tracker_element& e) {
-#if TE_TYPE_SAFETY == 1
-    e->enforce_type(tracker_type::tracker_string);
+    // Use the generic stringify to get anything as a string, if we can
+
+    if (e->is_stringable())
+        return e->as_string();
+
+#ifdef TE_TYPE_SAFETY
+    throw std::runtime_error(fmt::format("invalid trackedelement access id {}, cannot use a {} "
+                "as a string", e->get_id(), e->get_type_as_string()));
 #endif
-    return std::static_pointer_cast<tracker_element_string>(e)->get();
+
+    return "";
 }
 
 template<> uint8_t get_tracker_value(const shared_tracker_element& e) {
@@ -491,98 +500,98 @@ template<> device_key get_tracker_value(const shared_tracker_element& e) {
     return std::static_pointer_cast<tracker_element_device_key>(e)->get();
 }
 
-template<> void SetTrackerValue(const shared_tracker_element& e, const std::string& v) {
+template<> void set_tracker_value(const shared_tracker_element& e, const std::string& v) {
 #if TE_TYPE_SAFETY == 1
     e->enforce_type(tracker_type::tracker_string, tracker_type::tracker_byte_array);
 #endif
     std::static_pointer_cast<tracker_element_string>(e)->set(v);
 }
 
-template<> void SetTrackerValue(const shared_tracker_element& e, const uint8_t& v) {
+template<> void set_tracker_value(const shared_tracker_element& e, const uint8_t& v) {
 #if TE_TYPE_SAFETY == 1
     e->enforce_type(tracker_type::tracker_uint8);
 #endif
     std::static_pointer_cast<tracker_element_uint8>(e)->set(v);
 }
 
-template<> void SetTrackerValue(const shared_tracker_element& e, const int8_t& v) {
+template<> void set_tracker_value(const shared_tracker_element& e, const int8_t& v) {
 #if TE_TYPE_SAFETY == 1
     e->enforce_type(tracker_type::tracker_int8);
 #endif
     std::static_pointer_cast<tracker_element_int8>(e)->set(v);
 }
 
-template<> void SetTrackerValue(const shared_tracker_element& e, const uint16_t& v) {
+template<> void set_tracker_value(const shared_tracker_element& e, const uint16_t& v) {
 #if TE_TYPE_SAFETY == 1
     e->enforce_type(tracker_type::tracker_uint16);
 #endif
     std::static_pointer_cast<tracker_element_uint16>(e)->set(v);
 }
 
-template<> void SetTrackerValue(const shared_tracker_element& e, const int16_t& v) {
+template<> void set_tracker_value(const shared_tracker_element& e, const int16_t& v) {
 #if TE_TYPE_SAFETY == 1
     e->enforce_type(tracker_type::tracker_int16);
 #endif
     std::static_pointer_cast<tracker_element_int16>(e)->set(v);
 }
 
-template<> void SetTrackerValue(const shared_tracker_element& e, const uint32_t& v) {
+template<> void set_tracker_value(const shared_tracker_element& e, const uint32_t& v) {
 #if TE_TYPE_SAFETY == 1
     e->enforce_type(tracker_type::tracker_uint32);
 #endif
     std::static_pointer_cast<tracker_element_uint32>(e)->set(v);
 }
 
-template<> void SetTrackerValue(const shared_tracker_element& e, const int32_t& v) {
+template<> void set_tracker_value(const shared_tracker_element& e, const int32_t& v) {
 #if TE_TYPE_SAFETY == 1
     e->enforce_type(tracker_type::tracker_int32);
 #endif
     std::static_pointer_cast<tracker_element_int32>(e)->set(v);
 }
 
-template<> void SetTrackerValue(const shared_tracker_element& e, const uint64_t& v) {
+template<> void set_tracker_value(const shared_tracker_element& e, const uint64_t& v) {
 #if TE_TYPE_SAFETY == 1
     e->enforce_type(tracker_type::tracker_uint64);
 #endif
     std::static_pointer_cast<tracker_element_uint64>(e)->set(v);
 }
 
-template<> void SetTrackerValue(const shared_tracker_element& e, const int64_t& v) {
+template<> void set_tracker_value(const shared_tracker_element& e, const int64_t& v) {
 #if TE_TYPE_SAFETY == 1
     e->enforce_type(tracker_type::tracker_int64);
 #endif
     std::static_pointer_cast<tracker_element_int64>(e)->set(v);
 }
 
-template<> void SetTrackerValue(const shared_tracker_element& e, const float& v) {
+template<> void set_tracker_value(const shared_tracker_element& e, const float& v) {
 #if TE_TYPE_SAFETY == 1
     e->enforce_type(tracker_type::tracker_float);
 #endif
     std::static_pointer_cast<tracker_element_float>(e)->set(v);
 }
 
-template<> void SetTrackerValue(const shared_tracker_element& e, const double& v) {
+template<> void set_tracker_value(const shared_tracker_element& e, const double& v) {
 #if TE_TYPE_SAFETY == 1
     e->enforce_type(tracker_type::tracker_double);
 #endif
     std::static_pointer_cast<tracker_element_double>(e)->set(v);
 }
 
-template<> void SetTrackerValue(const shared_tracker_element& e, const mac_addr& v) {
+template<> void set_tracker_value(const shared_tracker_element& e, const mac_addr& v) {
 #if TE_TYPE_SAFETY == 1
     e->enforce_type(tracker_type::tracker_mac_addr);
 #endif
     std::static_pointer_cast<tracker_element_mac_addr>(e)->set(v);
 }
 
-template<> void SetTrackerValue(const shared_tracker_element& e, const uuid& v) {
+template<> void set_tracker_value(const shared_tracker_element& e, const uuid& v) {
 #if TE_TYPE_SAFETY == 1
     e->enforce_type(tracker_type::tracker_uuid);
 #endif
     std::static_pointer_cast<tracker_element_uuid>(e)->set(v);
 }
 
-template<> void SetTrackerValue(const shared_tracker_element& e, const device_key& v) {
+template<> void set_tracker_value(const shared_tracker_element& e, const device_key& v) {
 #if TE_TYPE_SAFETY == 1
     e->enforce_type(tracker_type::tracker_key);
 #endif
@@ -1113,14 +1122,14 @@ std::shared_ptr<tracker_element> summarize_single_tracker_element(shared_tracker
 
     unsigned int fn = 0;
 
-    for (auto si = in_summarization.begin(); si != in_summarization.end(); ++si) {
+    for (auto si : in_summarization) {
         fn++;
 
-        if ((*si)->resolved_path.size() == 0)
+        if (si->resolved_path.size() == 0)
             continue;
 
         shared_tracker_element f =
-            get_tracker_element_path((*si)->resolved_path, in);
+            get_tracker_element_path(si->resolved_path, in);
 
         if (f == NULL) {
             f = Globalreg::globalreg->entrytracker->register_and_get_field("unknown" + int_to_string(fn),
@@ -1129,11 +1138,11 @@ std::shared_ptr<tracker_element> summarize_single_tracker_element(shared_tracker
 
             std::static_pointer_cast<tracker_element_int8>(f)->set(0);
         
-            if ((*si)->rename.length() != 0) {
-                f->set_local_name((*si)->rename);
+            if (si->rename.length() != 0) {
+                f->set_local_name(si->rename);
             } else {
                 // Get the last name of the field in the path, if we can...
-                int lastid = (*si)->resolved_path[(*si)->resolved_path.size() - 1];
+                int lastid = si->resolved_path[si->resolved_path.size() - 1];
 
                 if (lastid < 0)
                     f->set_local_name("unknown" + int_to_string(fn));
@@ -1147,7 +1156,7 @@ std::shared_ptr<tracker_element> summarize_single_tracker_element(shared_tracker
         // to duplicate the summary object and make a reference to our parent
         // object so that when we serialize we can descend the path calling
         // the proper pre-serialization methods
-        if ((*si)->rename.length() != 0 || (*si)->resolved_path.size() > 1) {
+        if (si->rename.length() != 0 || si->resolved_path.size() > 1) {
             auto sum = std::make_shared<tracker_element_summary>(*si);
             sum->parent_element = in;
             (*rename_map)[f] = sum;
@@ -1198,6 +1207,8 @@ bool sort_tracker_element_less(const std::shared_ptr<tracker_element> lhs,
             return tracker_element::safe_cast_as<tracker_element_uuid>(lhs)->less_than(*tracker_element::safe_cast_as<tracker_element_uuid>(rhs));
         case tracker_type::tracker_byte_array:
             return tracker_element::safe_cast_as<tracker_element_byte_array>(lhs)->less_than(*tracker_element::safe_cast_as<tracker_element_byte_array>(rhs));
+        case tracker_type::tracker_ipv4_addr:
+            return tracker_element::safe_cast_as<tracker_element_ipv4_addr>(lhs)->less_than(*tracker_element::safe_cast_as<tracker_element_ipv4_addr>(rhs));
         case tracker_type::tracker_key:
         case tracker_type::tracker_vector:
         case tracker_type::tracker_map:
@@ -1250,6 +1261,8 @@ bool fast_sort_tracker_element_less(const std::shared_ptr<tracker_element> lhs,
             return std::static_pointer_cast<tracker_element_uuid>(lhs)->less_than(*std::static_pointer_cast<tracker_element_uuid>(rhs));
         case tracker_type::tracker_byte_array:
             return std::static_pointer_cast<tracker_element_byte_array>(lhs)->less_than(*std::static_pointer_cast<tracker_element_byte_array>(rhs));
+        case tracker_type::tracker_ipv4_addr:
+            return std::static_pointer_cast<tracker_element_ipv4_addr>(lhs)->less_than(*std::static_pointer_cast<tracker_element_ipv4_addr>(rhs));
         case tracker_type::tracker_key:
         case tracker_type::tracker_vector:
         case tracker_type::tracker_map:

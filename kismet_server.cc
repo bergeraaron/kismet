@@ -78,6 +78,9 @@
 #include "datasource_nxp_kw41z.h"
 #include "datasource_ti_cc_2531.h"
 #include "datasource_atzb_x_233_usb.h"
+#include "datasource_virtual.h"
+#include "datasource_dot11_scan.h"
+#include "datasource_bluetooth_scan.h"
 
 #include "logtracker.h"
 #include "kis_ppilogfile.h"
@@ -232,12 +235,12 @@ global_registry *globalregistry = NULL;
 
 void SpindownKismet(std::shared_ptr<pollable_tracker> pollabletracker) {
     // Shut down the webserver first
-    auto httpd = Globalreg::FetchGlobalAs<kis_net_httpd>("HTTPD_SERVER");
+    auto httpd = Globalreg::fetch_global_as<kis_net_httpd>("HTTPD_SERVER");
     if (httpd != NULL)
         httpd->stop_httpd();
 
     auto devicetracker =
-        Globalreg::FetchGlobalAs<device_tracker>("DEVICETRACKER");
+        Globalreg::fetch_global_as<device_tracker>("DEVICETRACKER");
     if (devicetracker != NULL) {
 #if 0
         devicetracker->store_all_devices();
@@ -246,7 +249,7 @@ void SpindownKismet(std::shared_ptr<pollable_tracker> pollabletracker) {
     }
 
     // shutdown everything
-    globalregistry->Shutdown_Deferred();
+    globalregistry->shutdown_deferred();
     globalregistry->spindown = 1;
 
     // Start a short shutdown cycle for 2 seconds
@@ -264,7 +267,7 @@ void SpindownKismet(std::shared_ptr<pollable_tracker> pollabletracker) {
 
     fprintf(stderr, "Shutting down plugins...\n");
     std::shared_ptr<plugin_tracker> plugintracker =
-        Globalreg::FetchGlobalAs<plugin_tracker>(globalregistry, "PLUGINTRACKER");
+        Globalreg::fetch_global_as<plugin_tracker>(globalregistry, "PLUGINTRACKER");
     if (plugintracker != NULL)
         plugintracker->shutdown_plugins();
 
@@ -286,7 +289,7 @@ void SpindownKismet(std::shared_ptr<pollable_tracker> pollabletracker) {
         fprintf(stderr, "Kismet exiting.\n");
     }
 
-    globalregistry->Deletelifetime_globals();
+    globalregistry->delete_lifetime_globals();
 
     globalregistry->complete = true;
 
@@ -312,7 +315,7 @@ int usage(char *argv) {
            "     --debug                  Disable the console wrapper and the crash\n"
            "                              handling functions, for debugging\n"
            " -f, --config-file <file>     Use alternate configuration file\n"
-           "     --no-line-wrap           Turn of linewrapping of output\n"
+           "     --no-line-wrap           Turn off linewrapping of output\n"
            "                              (for grep, speed, etc)\n"
            " -s, --silent                 Turn off stdout output after setup phase\n"
            "     --daemonize              Spawn detached in the background\n"
@@ -325,6 +328,9 @@ int usage(char *argv) {
            "     --datadir <path>         Use an alternate path as the data\n"
            "                               directory instead of the default set at \n"
            "                               compile time.\n"
+           "     --override <flavor>      Load an alternate configuration override \n"
+           "                               from {confdir}/kismet_{flavor}.conf\n"
+           "                               or as a specific override file.\n"
            );
 
     log_tracker::usage(argv);
@@ -385,7 +391,7 @@ void Load_Kismet_UUID(global_registry *globalreg) {
                 "(or included file)", MSGFLAG_INFO);
 
         globalreg->server_uuid = confuuid;
-        globalreg->server_uuid_hash = adler32_checksum((const char *) confuuid.uuid_block, 16);
+        globalreg->server_uuid_hash = confuuid.hash;
         return;
     }
 
@@ -411,7 +417,7 @@ void Load_Kismet_UUID(global_registry *globalreg) {
 
     _MSG_INFO("Setting server UUID {}", confuuid.uuid_to_string());
     globalreg->server_uuid = confuuid;
-    globalreg->server_uuid_hash = adler32_checksum((const char *) confuuid.uuid_block, 16);
+    globalreg->server_uuid_hash = confuuid.hash;
 }
 
 static sigset_t core_signal_mask;
@@ -472,7 +478,6 @@ int main(int argc, char *argv[], char *envp[]) {
     static struct option wrapper_longopt[] = {
         { "no-ncurses-wrapper", no_argument, 0, 'w' },
         { "no-console-wrapper", no_argument, 0, 'w' },
-        { "show-admin-password", no_argument, 0, 'p' },
         { "daemonize", no_argument, 0, 'D' },
         { "debug", no_argument, 0, 'd' },
         { 0, 0, 0, 0 }
@@ -484,7 +489,6 @@ int main(int argc, char *argv[], char *envp[]) {
     opterr = 0;
 
     bool wrapper = true;
-    bool show_pass = false;
 
     while (1) {
         int r = getopt_long(argc, argv, "-", wrapper_longopt, &option_idx);
@@ -493,8 +497,6 @@ int main(int argc, char *argv[], char *envp[]) {
         if (r == 'w') {
             wrapper = false; 
             glob_linewrap = false;
-        } else if (r == 'p') {
-            show_pass = true;
         } else if (r == 'd') {
             debug_mode = true;
             wrapper = false;
@@ -528,6 +530,9 @@ int main(int argc, char *argv[], char *envp[]) {
     Globalreg::globalreg = new global_registry;
     globalregistry = Globalreg::globalreg;
     globalreg = globalregistry;
+
+    Globalreg::n_tracked_fields = 0;
+    Globalreg::n_tracked_components = 0;
 
     // Block all signals across all threads, then set up a signal handling service thread
     // to deal with them
@@ -573,6 +578,9 @@ int main(int argc, char *argv[], char *envp[]) {
     const int hdwc = globalregistry->getopt_long_num++;
     const int cdwc = globalregistry->getopt_long_num++;
     const int ddwc = globalregistry->getopt_long_num++;
+    const int ovwc = globalregistry->getopt_long_num++;
+
+    std::string override_fname;
 
     // Standard getopt parse run
     static struct option main_longopt[] = {
@@ -586,6 +594,7 @@ int main(int argc, char *argv[], char *envp[]) {
         { "homedir", required_argument, 0, hdwc },
         { "confdir", required_argument, 0, cdwc },
         { "datadir", required_argument, 0, ddwc },
+        { "override", required_argument, 0, ovwc },
         { 0, 0, 0, 0 }
     };
 
@@ -625,6 +634,8 @@ int main(int argc, char *argv[], char *envp[]) {
             globalregistry->etc_dir = std::string(optarg);
         } else if (r == ddwc) {
             globalregistry->data_dir = std::string(optarg);
+        } else if (r == ovwc) {
+            override_fname = std::string(optarg);
         }
     }
 
@@ -640,6 +651,14 @@ int main(int argc, char *argv[], char *envp[]) {
         }
     }
 
+    // Entrytracker needs to be allocated before almost everything else, anything which
+    // handles serializable data needs it
+    std::shared_ptr<entry_tracker> entrytracker =
+        entry_tracker::create_entrytracker();
+
+	// Create the event bus used by inter-code comms
+	event_bus::create_eventbus();
+
     // First order - create our message bus and our client for outputting
     message_bus::create_messagebus(globalregistry);
 
@@ -654,9 +673,6 @@ int main(int argc, char *argv[], char *envp[]) {
     // Register the smart msg printer for everything
     globalregistry->messagebus->register_client(smartmsgcli, MSGFLAG_ALL);
 
-	// Create the event bus
-	event_bus::create_eventbus();
-
     // We need to create the pollable system near the top of execution as well
     auto pollabletracker(pollable_tracker::create_pollabletracker());
 
@@ -668,6 +684,27 @@ int main(int argc, char *argv[], char *envp[]) {
     }
 
     conf = new config_file(globalregistry);
+
+    if (override_fname.length() > 0) {
+        struct stat sbuf;
+        if (stat(override_fname.c_str(), &sbuf) == 0) {
+            _MSG_INFO("Adding config override {}", override_fname);
+            conf->set_final_override(override_fname);
+        } else {
+            auto override_fpath = 
+                conf->expand_log_path(fmt::format("%E/kismet_{}.conf", override_fname), "", "", 0, 1);
+
+            if (stat(override_fpath.c_str(), &sbuf) != 0) {
+                _MSG_FATAL("Could not find override option '{}' as a file or in the Kismet config directory as '{}'.",
+                        override_fname, override_fpath);
+                exit(1);
+            }
+
+            _MSG_INFO("Adding config override {}", override_fpath);
+            conf->set_final_override(override_fpath);
+        }
+    }
+
     if (conf->parse_config(configfilename) < 0) {
         exit(1);
     }
@@ -746,11 +783,6 @@ int main(int argc, char *argv[], char *envp[]) {
 
     if (globalregistry->fatal_condition) 
         SpindownKismet(pollabletracker);
-
-    // Allocate some other critical stuff like the entry tracker and the
-    // serializers
-    std::shared_ptr<entry_tracker> entrytracker =
-        entry_tracker::create_entrytracker(Globalreg::globalreg);
 
     // Create the manuf db
     globalregistry->manufdb = new kis_manuf();
@@ -868,7 +900,7 @@ int main(int argc, char *argv[], char *envp[]) {
     devicetracker->register_phy_handler(new kis_80211_phy(globalregistry));
     devicetracker->register_phy_handler(new Kis_RTL433_Phy(globalregistry));
     devicetracker->register_phy_handler(new Kis_Zwave_Phy(globalregistry));
-    devicetracker->register_phy_handler(new Kis_Bluetooth_Phy(globalregistry));
+    devicetracker->register_phy_handler(new kis_bluetooth_phy(globalregistry));
     devicetracker->register_phy_handler(new Kis_UAV_Phy(globalregistry));
     devicetracker->register_phy_handler(new Kis_Mousejack_Phy(globalregistry));
     devicetracker->register_phy_handler(new kis_btle_phy(globalregistry));
@@ -896,6 +928,9 @@ int main(int argc, char *argv[], char *envp[]) {
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_ticc2531_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_atzbx233usb_builder()));
 
+    // Virtual sources get a special meta-builder
+    datasource_virtual_builder::create_virtualbuilder();
+
     // Create the database logger as a global because it's a special case
     kis_database_logfile::create_kisdatabaselog();
 
@@ -905,6 +940,10 @@ int main(int argc, char *argv[], char *envp[]) {
     logtracker->register_log(shared_log_builder(new ppi_logfile_builder()));
     logtracker->register_log(shared_log_builder(new kis_database_logfile_builder()));
     logtracker->register_log(shared_log_builder(new pcapng_logfile_builder()));
+
+	// Create the scan-only handlers
+	dot11_scan_source::create_dot11_scan_source();
+    bluetooth_scan_source::create_bluetooth_scan_source();
 
     std::shared_ptr<plugin_tracker> plugintracker;
 
@@ -937,16 +976,13 @@ int main(int argc, char *argv[], char *envp[]) {
     Systemmonitor::create_systemmonitor();
 
     // Start up any code that needs everything to be loaded
-    globalregistry->Start_Deferred();
+    globalregistry->start_deferred();
 
     // Set the global silence now that we're set up
     glob_silent = local_silent;
 
     // finalize any plugins which were waiting for other code to load
     plugintracker->finalize_plugins();
-
-    // We can't call this as a deferred because we don't want to mix
-    devicetracker->load_devices();
 
     // Complain about running as root
     if (getuid() == 0) {
@@ -968,7 +1004,7 @@ int main(int argc, char *argv[], char *envp[]) {
     Globalreg::fetch_mandatory_global_as<kis_net_httpd>()->start_httpd();
 
     // Independent time and select threads, which has had problems with timing conflicts
-    timetracker->SpawnTimetrackerThread();
+    timetracker->spawn_timetracker_thread();
     pollabletracker->select_loop(false);
 
     SpindownKismet(pollabletracker);

@@ -21,7 +21,6 @@
 
 #include "phy_rtladsb.h"
 #include "devicetracker.h"
-#include "kismet_json.h"
 #include "endian_magic.h"
 #include "macaddr.h"
 #include "kis_httpd_registry.h"
@@ -69,6 +68,8 @@ kis_rtladsb_phy::kis_rtladsb_phy(global_registry *in_globalreg, int in_phyid) :
                 [this]() -> std::shared_ptr<tracker_element> {
                     return adsb_map_endp_handler();
                 });
+
+    icaodb = std::make_shared<kis_adsb_icao>();
 }
 
 kis_rtladsb_phy::~kis_rtladsb_phy() {
@@ -136,7 +137,7 @@ bool kis_rtladsb_phy::json_to_rtl(Json::Value json, kis_packet *packet) {
     // synth a mac out of it
     mac_addr rtlmac = json_to_mac(json);
 
-    if (rtlmac.error) {
+    if (rtlmac.state.error) {
         return false;
     }
 
@@ -172,7 +173,7 @@ bool kis_rtladsb_phy::json_to_rtl(Json::Value json, kis_packet *packet) {
     std::shared_ptr<kis_tracked_device_base> basedev =
         devicetracker->update_common_device(common, common->source, this, packet,
                 (UCD_UPDATE_FREQUENCIES | UCD_UPDATE_PACKETS |
-                 UCD_UPDATE_SEENBY), "RTLADSB Transmitter");
+                 UCD_UPDATE_SEENBY), "ADSB");
 
     local_locker bssidlock(&(basedev->device_mutex));
 
@@ -185,47 +186,53 @@ bool kis_rtladsb_phy::json_to_rtl(Json::Value json, kis_packet *packet) {
 
     basedev->set_manuf(rtl_manuf);
 
-    basedev->set_type_string("Airplane");
+    basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Airplane"));
     basedev->set_devicename(fmt::format("ADSB {}", dn));
 
     std::shared_ptr<rtladsb_tracked_adsb> adsbdev;
+
     if (is_adsb(json))
         adsbdev = add_adsb(packet, json, basedev);
 
     if (adsbdev != nullptr) {
-        std::stringstream ss;
-        bool need_space = false;
+        auto icao = adsbdev->get_icao_record();
 
-        if (adsbdev->get_atype() != "") {
-            ss << adsbdev->get_atype();
-            need_space = true;
-
-            if (adsbdev->get_callsign() != "") {
-                if (need_space) ss << " ";
-                ss << adsbdev->get_callsign();
-                need_space = true;
-
-                if (adsbdev->get_aoperator() != "") {
-                    if (need_space) ss << " ";
-                    ss << adsbdev->get_aoperator();
-                    need_space = true;
-                }
-
-                basedev->set_devicename(ss.str());
-            } else if (adsbdev->get_regid() != "") {
-                if (need_space) ss << " ";
-                ss << adsbdev->get_regid();
-                need_space = true;
-
-                if (adsbdev->get_aoperator() != "") {
-                    if (need_space) ss << " ";
-                    ss << adsbdev->get_aoperator();
-                    need_space = true;
-                }
-
+        if (icao != icaodb->get_unknown_icao()) {
+            switch (icao->get_atype_short()) {
+                case '1':
+                case '7':
+                    basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Glider"));
+                    break;
+                case '2':
+                    basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Balloon"));
+                    break;
+                case '3':
+                    basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Blimp"));
+                    break;
+                case '4':
+                case '5':
+                    basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Airplane"));
+                    break;
+                case '6':
+                    basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Helicopter"));
+                    break;
+                case '8':
+                    basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Parachute"));
+                    break;
+                case '9':
+                    basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Gyroplane"));
+                    break;
+                default:
+                    basedev->set_tracker_type_string(devicetracker->get_cached_devicetype("Aircraft"));
+                    break;
             }
 
-            basedev->set_devicename(ss.str());
+            auto cs = adsbdev->get_callsign();
+            if (cs.length() != 0)
+                cs += " ";
+
+            basedev->set_devicename(fmt::format("{} {} {}",
+                        cs, icao->get_model_type(), icao->get_owner()));
         }
     }
 
@@ -287,38 +294,9 @@ std::shared_ptr<rtladsb_tracked_adsb> kis_rtladsb_phy::add_adsb(kis_packet *pack
         }
 
         adsbdev->set_icao(icao_j.asString());
-	
-        if (json.isMember("regid")) {
-            auto regid_j = json["regid"];
-            if (regid_j.isString()) {
-                adsbdev->set_regid(regid_j.asString());
-            }
-        }
 
-        if (json.isMember("mdl")) {
-            auto mdl_j = json["mdl"];
-            if (mdl_j.isString()) {
-                adsbdev->set_mdl(mdl_j.asString());
-            }
-        }
-
-        if (json.isMember("type")) {
-            auto type_j = json["type"];
-            if (type_j.isString()) {
-                adsbdev->set_atype(type_j.asString());
-                if (adsbdev->get_mdl() != "")
-                    new_ss << " type '" << adsbdev->get_mdl() << "'";
-            }
-        }
-
-        if (json.isMember("operator")) {
-            auto operator_j = json["operator"];
-            if (operator_j.isString()) {
-                adsbdev->set_aoperator(operator_j.asString());
-                if (adsbdev->get_aoperator() != "")
-                    new_ss << " operator '" << adsbdev->get_aoperator() << "'";
-            }
-        }
+        auto icao_record = icaodb->lookup_icao(icao_j.asString());
+        adsbdev->set_icao_record(icao_record);
 
         if (json.isMember("callsign")) {
             auto callsign_j = json["callsign"];
@@ -335,8 +313,15 @@ std::shared_ptr<rtladsb_tracked_adsb> kis_rtladsb_phy::add_adsb(kis_packet *pack
 
                 adsbdev->set_callsign(mangle_cs);
                 if (adsbdev->get_callsign() != "")
-                    new_ss << " callsign '" << adsbdev->get_callsign() << "'";
+                    new_ss << adsbdev->get_callsign();
             }
+        }
+
+        if (icao_record != icaodb->get_unknown_icao()) {
+            new_ss << " " << icao_record->get_model();
+            new_ss << " " << icao_record->get_model_type();
+            new_ss << " " << icao_record->get_owner();
+            new_ss << " " << icao_record->get_atype()->get();
         }
 
         if (json.isMember("altitude")) {

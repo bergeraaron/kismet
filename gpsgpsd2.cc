@@ -22,7 +22,6 @@
 #include "util.h"
 #include "time.h"
 #include "gpstracker.h"
-#include "kismet_json.h"
 #include "pollabletracker.h"
 #include "timetracker.h"
 
@@ -113,7 +112,7 @@ kis_gps_gpsd_v2::~kis_gps_gpsd_v2() {
 
     tcphandler.reset();
 
-    auto timetracker = Globalreg::FetchGlobalAs<time_tracker>("TIMETRACKER");
+    auto timetracker = Globalreg::fetch_global_as<time_tracker>("TIMETRACKER");
     if (timetracker != nullptr) {
         timetracker->remove_timer(error_reconnect_timer);
         timetracker->remove_timer(data_timeout_timer);
@@ -351,6 +350,9 @@ void kis_gps_gpsd_v2::buffer_available(size_t in_amt) {
                         if (json.isMember("speed")) {
                             new_location->speed = json["speed"].asDouble();
                             set_speed = true;
+
+                            // GPSD JSON reports in meters/second, convert to kph
+                            new_location->speed *= 3.6;
                         }
                     }
 #if 0
@@ -510,10 +512,15 @@ void kis_gps_gpsd_v2::buffer_available(size_t in_amt) {
             else
                 set_alt = true;
 
-            if (pollvec[3].substr(0, 2) == "V=" && sscanf(pollvec[3].c_str(), "V=%lf", &(new_location->speed)) != 1)
+            if (pollvec[3].substr(0, 2) == "V=" && sscanf(pollvec[3].c_str(), "V=%lf", &(new_location->speed)) != 1) {
                 set_speed = false;
-            else 
+            } else  {
                 set_speed = true;
+
+                // Convert from knots to kph - unclear if truly knots still but lets hope; this is only in
+                // an ancient gpsd
+                new_location->speed *= 1.852;
+            }
 
             if (set_alt && new_location->fix < 3)
                 new_location->fix = 3;
@@ -548,28 +555,19 @@ void kis_gps_gpsd_v2::buffer_available(size_t in_amt) {
             else
                 set_alt = true;
 
-#if 0
-            if (sscanf(ggavec[6].c_str(), "%f", &in_hdop) != 1) 
-                use_dop = 0;
-
-            if (sscanf(ggavec[7].c_str(), "%f", &in_vdop) != 1)
-                use_dop = 0;
-#endif
-
             if (sscanf(ggavec[8].c_str(), "%lf", &(new_location->heading)) != 1)
                 set_heading = false;
             else
                 set_heading = true;
 
-            if (sscanf(ggavec[9].c_str(), "%lf", &(new_location->speed)) != 1)
+            if (sscanf(ggavec[9].c_str(), "%lf", &(new_location->speed)) != 1) {
                 set_speed = false;
-            else
+            } else {
                 set_speed = true;
 
-#if 0
-            if (si_units == 0)
-                in_spd *= 0.514; /* Speed in meters/sec from knots */
-#endif
+                // Convert from knots to kph
+                new_location->speed *= 1.852;
+            }
 
             if (set_alt && new_location->fix < 3)
                 new_location->fix = 3;
@@ -598,6 +596,9 @@ void kis_gps_gpsd_v2::buffer_available(size_t in_amt) {
 
             if (sscanf(vtvec[7].c_str(), "%lf", &(new_location->speed)) != 1)
                 continue;
+
+            // Convert from knots to kph
+            new_location->speed *= 1.852;
 
             set_speed = true;
         } else if (poll_mode < 10 && si_raw && inptok[it].substr(0, 6) == "$GPGGA") {
@@ -708,8 +709,6 @@ void kis_gps_gpsd_v2::buffer_available(size_t in_amt) {
 
         if (set_speed) {
             gps_location->speed = new_location->speed;
-            // NMEA reports speed in knots, convert
-            gps_location->speed *= 0.514;
         }
 
         if (set_fix) {
