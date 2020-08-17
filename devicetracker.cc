@@ -326,6 +326,14 @@ device_tracker::device_tracker(global_registry *in_globalreg) :
                 return multikey_endp_handler(stream, uri, json, variable_cache);
                 });
 
+    multikey_dict_endp = 
+        std::make_shared<kis_net_httpd_simple_post_endpoint>("/devices/multikey/as-object/devices",
+                [this](std::ostream& stream, const std::string& uri, 
+                    const Json::Value& json,
+                    kis_net_httpd_connection::variable_cache_map& variable_cache) -> unsigned int {
+                return multikey_dict_endp_handler(stream, uri, json, variable_cache);
+                });
+
     phy_phyentry_id =
         entrytracker->register_field("kismet.phy.phy",
                 tracker_element_factory<tracker_element_map>(),
@@ -804,6 +812,7 @@ std::shared_ptr<kis_tracked_device_base>
                     device->get_data_rrd()->add_sample(pack_common->datasize,
                             globalreg->timestamp.tv_sec);
 
+#if 0
                     if (pack_common->datasize <= 250)
                         device->get_packet_rrd_bin_250()->add_sample(1, 
                                 globalreg->timestamp.tv_sec);
@@ -819,6 +828,7 @@ std::shared_ptr<kis_tracked_device_base>
                     else 
                         device->get_packet_rrd_bin_jumbo()->add_sample(1, 
                                 globalreg->timestamp.tv_sec);
+#endif
                 }
 
             } else if (pack_common->type == packet_basic_mgmt ||
