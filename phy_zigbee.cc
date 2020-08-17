@@ -37,7 +37,7 @@
 
 #include "phy_zigbee.h"
 //802.15.4 header
-struct fcf_s{
+struct _802_15_4_fcf{
     unsigned char type : 3;
     unsigned char security : 1;
     unsigned char pending : 1;
@@ -50,7 +50,7 @@ struct fcf_s{
     unsigned char frame_ver : 2;
     unsigned char src_addr_mode : 2;
 };
-fcf_s * fcf_h;
+_802_15_4_fcf * hdr_802_15_4_fcf;
 
 //zigbee specific header
 struct fcf_z{
@@ -66,17 +66,13 @@ struct fcf_z{
 };
 fcf_z * fcf_zzh;
 
-
-
 uint8_t dest[2] = {0x00,0x00};
 uint8_t dest_pan[2] = {0x00,0x00};
 uint8_t src[2] = {0x00,0x00};
 uint8_t src_pan[2] = {0x00,0x00};
 
 uint8_t ext_dest[8];
-bool have_ext_dest = false;
 uint8_t ext_source[8];
-bool have_ext_source = false;
 
 kis_zigbee_phy::kis_zigbee_phy(global_registry *in_globalreg, int in_phyid) :
     kis_phy_handler(in_globalreg, in_phyid) {
@@ -125,7 +121,7 @@ int kis_zigbee_phy::dissectorzigbee(CHAINCALL_PARMS) {
         return 0;
 
     // Is it a packet we care about?
-    if (packdata == NULL || ((packdata != NULL && packdata->dlt != KDLT_IEEE802_15_4_NOFCS) && (packdata != NULL && packdata->dlt != KDLT_IEEE802_15_4_TAP)))
+    if (packdata == NULL || (packdata != NULL && packdata->dlt != KDLT_IEEE802_15_4_NOFCS))
         return 0;
 
     // Do we have enough data for an OUI?
@@ -158,36 +154,47 @@ int kis_zigbee_phy::dissectorzigbee(CHAINCALL_PARMS) {
         unsigned short fcf = (((short)packdata->data[pkt_ctr+1]) << 8) | (0x00ff & packdata->data[pkt_ctr]);
         pkt_ctr+=2;
         //we need to take a look at what flags are set
-        fcf_h = (fcf_s* )&fcf;
+        hdr_802_15_4_fcf = (_802_15_4_fcf* )&fcf;
 
         //printf("struct\n");
-//        printf("type:%02X\n",fcf_h->type);
-//        printf("security:%02X\n",fcf_h->security);
-        //printf("pending:%02X\n",fcf_h->pending);
-        //printf("ack_req:%02X\n",fcf_h->ack_req);
-        //printf("pan_id_comp:%02X\n",fcf_h->pan_id_comp);
-        //printf("reserved:%02X\n",fcf_h->reserved);
-        //printf("sns:%02X\n",fcf_h->sns);
-        //printf("iep:%02X\n",fcf_h->iep);
-//        printf("dest_addr_mode:%02X\n",fcf_h->dest_addr_mode);
-//        printf("frame_ver:%02X\n",fcf_h->frame_ver);
-//        printf("src_addr_mode:%02X\n",fcf_h->src_addr_mode);
+//        printf("type:%02X\n",hdr_802_15_4_fcf->type);
+//        printf("security:%02X\n",hdr_802_15_4_fcf->security);
+        //printf("pending:%02X\n",hdr_802_15_4_fcf->pending);
+        //printf("ack_req:%02X\n",hdr_802_15_4_fcf->ack_req);
+        //printf("pan_id_comp:%02X\n",hdr_802_15_4_fcf->pan_id_comp);
+        //printf("reserved:%02X\n",hdr_802_15_4_fcf->reserved);
+        //printf("sns:%02X\n",hdr_802_15_4_fcf->sns);
+        //printf("iep:%02X\n",hdr_802_15_4_fcf->iep);
+//        printf("dest_addr_mode:%02X\n",hdr_802_15_4_fcf->dest_addr_mode);
+//        printf("frame_ver:%02X\n",hdr_802_15_4_fcf->frame_ver);
+//        printf("src_addr_mode:%02X\n",hdr_802_15_4_fcf->src_addr_mode);
 
         //we should be able to handle whichever correctly
         //0x01 - data,  0x03 - cmd, 0x04 - reserved
-        //fcf_h->type == 0x01 || fcf_h->type == 0x03 || fcf_h->type == 0x04
+        //hdr_802_15_4_fcf->type == 0x01 || hdr_802_15_4_fcf->type == 0x03 || hdr_802_15_4_fcf->type == 0x04
+        if(hdr_802_15_4_fcf->type == 0x05)
+        {
+            printf("type %02X currently not supported\n",hdr_802_15_4_fcf->type);
+            return 0;
+        }
         uint8_t seq;
-        if(!fcf_h->sns)
+        if(!hdr_802_15_4_fcf->sns)
         {
             seq = packdata->data[pkt_ctr];pkt_ctr++;
         }
 
-        if(fcf_h->dest_addr_mode == 0x01)
+        if(hdr_802_15_4_fcf->dest_addr_mode == 0x01)
         {
+            if(hdr_802_15_4_fcf->frame_ver == 0)//this address mode is not valid under this spec
+            {
+                printf("this address mode is not valid under this spec\n");
+                return 0;
+            }
+
             dest[1] = packdata->data[pkt_ctr];
             pkt_ctr++;
         }
-        else if(fcf_h->dest_addr_mode == 0x02)
+        else if(hdr_802_15_4_fcf->dest_addr_mode == 0x02)
         {
             dest[1] = packdata->data[pkt_ctr];pkt_ctr++;
             dest[0] = packdata->data[pkt_ctr];pkt_ctr++;
@@ -195,7 +202,7 @@ int kis_zigbee_phy::dissectorzigbee(CHAINCALL_PARMS) {
             dest_pan[1] = packdata->data[pkt_ctr];pkt_ctr++;
             dest_pan[0] = packdata->data[pkt_ctr];pkt_ctr++;
         }
-        else if(fcf_h->dest_addr_mode == 0x03)
+        else if(hdr_802_15_4_fcf->dest_addr_mode == 0x03)
         {
             //length means we actually have an extended dest
             dest[1] = packdata->data[pkt_ctr];pkt_ctr++;
@@ -209,16 +216,20 @@ int kis_zigbee_phy::dissectorzigbee(CHAINCALL_PARMS) {
             ext_dest[2] = packdata->data[pkt_ctr];pkt_ctr++;
             ext_dest[1] = packdata->data[pkt_ctr];pkt_ctr++;
             ext_dest[0] = packdata->data[pkt_ctr];pkt_ctr++;
-            have_ext_dest = true;
         }
 
-        if(fcf_h->src_addr_mode == 0x01)
+        if(hdr_802_15_4_fcf->src_addr_mode == 0x01)
         {
-            src[1] = packdata->data[pkt_ctr];
+            if(hdr_802_15_4_fcf->frame_ver == 0)//this address mode is not valid under this spec
+            {
+                printf("this address mode is not valid under this spec\n");
+                return 0;
+            }
+            src[1] = packdata->data[pkt_ctr];pkt_ctr++;
         }
-        else if(fcf_h->src_addr_mode == 0x02)
+        else if(hdr_802_15_4_fcf->src_addr_mode == 0x02)
         {
-            if(!fcf_h->pan_id_comp)
+            if(!hdr_802_15_4_fcf->pan_id_comp)
             {
                 //src pan
                 src_pan[1] = packdata->data[pkt_ctr];pkt_ctr++;
@@ -227,11 +238,11 @@ int kis_zigbee_phy::dissectorzigbee(CHAINCALL_PARMS) {
             src[1] = packdata->data[pkt_ctr];pkt_ctr++;
             src[0] = packdata->data[pkt_ctr];pkt_ctr++;
         }
-        else if(fcf_h->src_addr_mode == 0x03)
+        else if(hdr_802_15_4_fcf->src_addr_mode == 0x03)
         {
             //srcpan
             //extended source
-            if(!fcf_h->pan_id_comp)
+            if(!hdr_802_15_4_fcf->pan_id_comp)
             {
                 src_pan[1] = packdata->data[pkt_ctr];pkt_ctr++;
                 src_pan[0] = packdata->data[pkt_ctr];pkt_ctr++;
@@ -245,11 +256,10 @@ int kis_zigbee_phy::dissectorzigbee(CHAINCALL_PARMS) {
             ext_source[2] = packdata->data[pkt_ctr];pkt_ctr++;
             ext_source[1] = packdata->data[pkt_ctr];pkt_ctr++;
             ext_source[0] = packdata->data[pkt_ctr];pkt_ctr++;
-            have_ext_source = true;
         }
     
 /**
-        if(fcf_h->frame_ver == 0x00)
+        if(hdr_802_15_4_fcf->frame_ver == 0x00)
         {
             //assume zigbee?
             unsigned short fcf_zh = (((short)packdata->data[pkt_ctr+1]) << 8) | (0x00ff & packdata->data[pkt_ctr]);
@@ -289,7 +299,6 @@ int kis_zigbee_phy::dissectorzigbee(CHAINCALL_PARMS) {
                     ext_source[2] = packdata->data[pkt_ctr];pkt_ctr++;
                     ext_source[1] = packdata->data[pkt_ctr];pkt_ctr++;
                     ext_source[0] = packdata->data[pkt_ctr];pkt_ctr++;
-                    have_ext_source = true;
                 }
 
                 printf("zzh_dest:%04X\n",zzh_dest);
@@ -299,42 +308,30 @@ int kis_zigbee_phy::dissectorzigbee(CHAINCALL_PARMS) {
                 printf("ext_source ");
                 for(int xps=0;xps<8;xps++)
                     printf("%02X ",ext_source[xps]);
-                    printf("\n");
+                printf("\n");
             }
             else if(fcf_zzh->type == 0x00)//data
             {
                 printf("data packet\n");
             }
         }
-        else if(fcf_h->frame_ver == 0x01)
+        else if(hdr_802_15_4_fcf->frame_ver == 0x01)
         {
             //assume 6LowPAN
 
         }
 **/
     }
-    else if(packdata->dlt == KDLT_IEEE802_15_4_TAP)
-    {
-        printf("parse a zigbee packet of dlt KDLT_IEEE802_15_4_TAP\n");
-        printf("print the packet that we got\n");
-        for(int xp=0;xp<(int)packdata->length;xp++)
-        {
-            printf("%02X",packdata->data[xp]);
-        }
-        printf("\n");
 
-    }
-
-    //if(have_ext_source || have_ext_dest)
-    if(fcf_h->src_addr_mode >= 0x02 || fcf_h->dest_addr_mode >= 0x02)
+    if(hdr_802_15_4_fcf->src_addr_mode >= 0x02 || hdr_802_15_4_fcf->dest_addr_mode >= 0x02)// || fcf_zzh->ext_src == 1
     {
-        if(fcf_h->src_addr_mode == 0x03)
+        if(hdr_802_15_4_fcf->src_addr_mode == 0x03)
         {
             for(int xps=0;xps<8;xps++)
                 printf("%02X ",ext_source[xps]);
             printf("\n");
         }
-        if(fcf_h->src_addr_mode == 0x02)
+        if(hdr_802_15_4_fcf->src_addr_mode == 0x02)
         {
             for(int xps=0;xps<2;xps++)
                 printf("%02X ",src[xps]);
@@ -344,13 +341,13 @@ int kis_zigbee_phy::dissectorzigbee(CHAINCALL_PARMS) {
             printf("\n");
         }
 
-        if(fcf_h->dest_addr_mode == 0x03)
+        if(hdr_802_15_4_fcf->dest_addr_mode == 0x03)
         {
             for(int xps=0;xps<8;xps++)
                 printf("%02X ",ext_dest[xps]);
             printf("\n");
         }
-        if(fcf_h->dest_addr_mode == 0x02)
+        if(hdr_802_15_4_fcf->dest_addr_mode == 0x02)
         {
             for(int xps=0;xps<2;xps++)
                 printf("%02X ",dest[xps]);
@@ -370,70 +367,26 @@ int kis_zigbee_phy::dissectorzigbee(CHAINCALL_PARMS) {
         common->basic_crypt_set = crypt_none;
         common->type = packet_basic_data;
         //direction
-        if(fcf_h->src_addr_mode == 0x03)
+        if(hdr_802_15_4_fcf->src_addr_mode == 0x03)
             common->source = mac_addr(ext_source, 8);
-        else if(fcf_h->src_addr_mode == 0x02 && !fcf_h->pan_id_comp)
+        else if(hdr_802_15_4_fcf->src_addr_mode == 0x02 && !hdr_802_15_4_fcf->pan_id_comp)
             common->source = mac_addr(src_pan, 2);
-        else if(fcf_h->src_addr_mode == 0x02 && fcf_h->pan_id_comp)
+        else if(hdr_802_15_4_fcf->src_addr_mode == 0x02 && hdr_802_15_4_fcf->pan_id_comp)
             common->source = mac_addr(src, 2);
-        if(fcf_h->dest_addr_mode == 0x03)
+/**
+        if(fcf_zzh->ext_src == 1)
+            common->source = mac_addr(ext_source, 8);
+**/
+        if(hdr_802_15_4_fcf->dest_addr_mode == 0x03)
             common->dest = mac_addr(ext_dest, 8);
-        else if(fcf_h->dest_addr_mode == 0x02)
+        else if(hdr_802_15_4_fcf->dest_addr_mode == 0x02)
             common->dest = mac_addr(dest_pan, 2);
         //network
         //transmitter
+        printf("insert\n");
         in_pack->insert(mphy->pack_comp_common, common);
 
     }
-
-/*
-    if(have_ext_source)
-    {
-        printf("ext_source ");
-        for(int xps=0;xps<8;xps++)
-            printf("%02X ",ext_source[xps]);
-        printf("\n");
-        printf("insert device\n");
-        common = new kis_common_info;
-        common->phyid = mphy->fetch_phy_id();
-        common->basic_crypt_set = crypt_none;
-        common->type = packet_basic_data;
-        common->source = mac_addr(ext_source, 8);
-        in_pack->insert(mphy->pack_comp_common, common);
-    }
-    if(have_ext_dest)
-    {
-        printf("ext_dest ");
-        for(int xps=0;xps<8;xps++)
-            printf("%02X ",ext_dest[xps]);
-        printf("\n");
-        printf("insert device\n");
-        common = new kis_common_info;
-
-        common->phyid = mphy->fetch_phy_id();
-        common->basic_crypt_set = crypt_none;
-        common->type = packet_basic_data;
-        common->source = mac_addr(ext_dest, 8);
-        common
-        in_pack->insert(mphy->pack_comp_common, common);
-    }
-    if(!have_ext_dest && !have_ext_source)
-    {
-        //no extended source
-        printf("no extensions\n");
-        
-        if(fcf_h->dest_addr_mode == 2)
-        {
-            printf("but have a dest pan\n");
-            common->phyid = mphy->fetch_phy_id();
-            common->basic_crypt_set = crypt_none;
-            common->type = packet_basic_data;
-            common->source = mac_addr(dest_pan, 2);
-            in_pack->insert(mphy->pack_comp_common, common);
-        }
-        
-    }
-**/
 
     return 1;
 }
@@ -443,12 +396,12 @@ int kis_zigbee_phy::commonclassifierzigbee(CHAINCALL_PARMS) {
 
     auto packdata = in_pack->fetch<kis_datachunk>(mphy->pack_comp_linkframe);
 
-    //printf("in commonclassifierzigbee\n");
+    printf("in commonclassifierzigbee\n");
     if (packdata == nullptr)
         return 0;
 
     // Is it a packet we care about?
-    //printf("commonclassifierzigbee packdata->dlt:%d mphy->dlt:%d\n",packdata->dlt,mphy->dlt);
+    printf("commonclassifierzigbee packdata->dlt:%d mphy->dlt:%d\n",packdata->dlt,mphy->dlt);
     if (packdata->dlt != mphy->dlt)
         return 0;
 
@@ -458,7 +411,7 @@ int kis_zigbee_phy::commonclassifierzigbee(CHAINCALL_PARMS) {
     if (common == NULL)
         return 0;
 
-    //printf("auto device\n");
+    printf("auto device\n");
 
     // Update with all the options in case we can add signal and frequency
     // in the future

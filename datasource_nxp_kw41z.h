@@ -39,10 +39,6 @@ typedef std::shared_ptr<kis_datasource_nxpkw41z> shared_datasource_nxpkw41z;
 #define KDLT_BTLE_RADIO             256
 #endif
 
-#ifndef KDLT_IEEE802_15_4_TAP
-#define KDLT_IEEE802_15_4_TAP       283 
-#endif
-
 #ifndef KDLT_IEEE802_15_4_NOFCS
 #define KDLT_IEEE802_15_4_NOFCS     230
 #endif
