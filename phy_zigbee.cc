@@ -258,7 +258,7 @@ int kis_zigbee_phy::dissectorzigbee(CHAINCALL_PARMS) {
             ext_source[0] = packdata->data[pkt_ctr];pkt_ctr++;
         }
     
-/**
+
         if(hdr_802_15_4_fcf->frame_ver == 0x00)
         {
             //assume zigbee?
@@ -320,7 +320,7 @@ int kis_zigbee_phy::dissectorzigbee(CHAINCALL_PARMS) {
             //assume 6LowPAN
 
         }
-**/
+
     }
 
     if(hdr_802_15_4_fcf->src_addr_mode >= 0x02 || hdr_802_15_4_fcf->dest_addr_mode >= 0x02)// || fcf_zzh->ext_src == 1
@@ -373,10 +373,8 @@ int kis_zigbee_phy::dissectorzigbee(CHAINCALL_PARMS) {
             common->source = mac_addr(src_pan, 2);
         else if(hdr_802_15_4_fcf->src_addr_mode == 0x02 && hdr_802_15_4_fcf->pan_id_comp)
             common->source = mac_addr(src, 2);
-/**
         if(fcf_zzh->ext_src == 1)
             common->source = mac_addr(ext_source, 8);
-**/
         if(hdr_802_15_4_fcf->dest_addr_mode == 0x03)
             common->dest = mac_addr(ext_dest, 8);
         else if(hdr_802_15_4_fcf->dest_addr_mode == 0x02)

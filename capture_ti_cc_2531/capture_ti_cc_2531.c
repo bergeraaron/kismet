@@ -467,11 +467,38 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
                     break;
                 }
             } else {
+
+//we are just looking on their own
+    libusb_device_handle *temp_handle;
+    
+    /* Try to open it */
+    r = libusb_open(libusb_devs[i], &temp_handle);
+
+    if (libusb_kernel_driver_active(temp_handle, 0)) {
+        r = libusb_detach_kernel_driver(temp_handle, 0); 
+    }
+    /* config */
+    r = libusb_set_configuration(temp_handle, 1);
+
+    /* Try to claim it */
+    r = libusb_claim_interface(temp_handle, 0);
+    if (r >= 0) {
                 matched_device = 1;
                 busno = libusb_get_bus_number(libusb_devs[i]);
                 devno = libusb_get_device_address(libusb_devs[i]);
                 matched_dev = libusb_devs[i];
+                libusb_close(temp_handle);
                 break;
+
+    }
+    else
+    {
+        libusb_close(temp_handle);
+    }
+//drop the above or write better
+
+
+
             }
         }
     }
@@ -485,6 +512,8 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     pthread_mutex_unlock(&(localticc2531->usb_mutex));
 
     snprintf(cap_if, 32, "ticc2531-%u-%u", busno, devno);
+
+printf("cap_if:%s\n",cap_if);
 
     // try pulling the channel
     if ((placeholder_len = cf_find_flag(&placeholder, "channel", definition)) > 0) {
@@ -590,9 +619,10 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     pthread_mutex_unlock(&(localticc2531->usb_mutex));
 
     ticc2531_set_power(caph, 0x04, TICC2531_POWER_RETRIES);
+
     ticc2531_set_channel(caph, *localchan);
-    
     localticc2531->channel = *localchan;
+
     ticc2531_enter_promisc_mode(caph);
 
     localticc2531->ready = true;
