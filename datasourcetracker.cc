@@ -291,7 +291,9 @@ void datasource_tracker_source_list::list_sources(std::function<void (std::vecto
 
 
 datasource_tracker::datasource_tracker() :
-    kis_net_httpd_cppstream_handler() {
+    kis_net_httpd_cppstream_handler(),
+    remotecap_enabled{false},
+    remotecap_port{0} {
 
     dst_lock.set_name("datasourcetracker");
 
@@ -356,6 +358,9 @@ datasource_tracker::datasource_tracker() :
 
                     return iv;
                 });
+
+    auto_masked_types =
+        Globalreg::globalreg->kismet_config->fetch_opt_vec("mask_datasource_type");
 
     bind_httpd_server();
 }
@@ -466,22 +471,24 @@ void datasource_tracker::trigger_deferred_startup() {
         config_defaults->set_retry_on_error(true);
     }
 
-    std::string listen = Globalreg::globalreg->kismet_config->fetch_opt("remote_capture_listen");
-    uint32_t listenport = 
+    remotecap_listen = Globalreg::globalreg->kismet_config->fetch_opt("remote_capture_listen");
+    remotecap_port = 
         Globalreg::globalreg->kismet_config->fetch_opt_uint("remote_capture_port", 0);
 
-    if (listen.length() == 0) {
+    if (remotecap_listen.length() == 0) {
         _MSG("No remote_capture_listen= line found in kismet.conf; no remote "
                 "capture will be enabled.", MSGFLAG_INFO);
+        remotecap_enabled = false;
     }
 
-    if (listenport == 0) {
+    if (remotecap_port == 0) {
         _MSG("No remote_capture_port= line found in kismet.conf; no remote "
                 "capture will be enabled.", MSGFLAG_INFO);
+        remotecap_enabled = false;
     }
 
-    config_defaults->set_remote_cap_listen(listen);
-    config_defaults->set_remote_cap_port(listenport);
+    config_defaults->set_remote_cap_listen(remotecap_listen);
+    config_defaults->set_remote_cap_port(remotecap_port);
 
     config_defaults->set_remote_cap_timestamp(Globalreg::globalreg->kismet_config->fetch_opt_bool("override_remote_timestamp", true));
 
@@ -564,19 +571,16 @@ void datasource_tracker::trigger_deferred_startup() {
     optind = 0;
 
     // Activate remote capture
-    listen = config_defaults->get_remote_cap_listen();
-    listenport = config_defaults->get_remote_cap_port();
-
     if (config_defaults->get_remote_cap_listen().length() != 0 && 
             config_defaults->get_remote_cap_port() != 0) {
-        _MSG("Launching remote capture server on " + listen + ":" + 
-                uint_to_string(listenport), MSGFLAG_INFO);
+        _MSG_INFO("Launching remote capture server on {}:{}", remotecap_listen, remotecap_port);
         remote_tcp_server = std::make_shared<tcp_server_v2>();
-        if (remote_tcp_server->configure_server(listenport, 1024, listen, std::vector<std::string>()) < 0) {
+        if (remote_tcp_server->configure_server(remotecap_port, 1024, remotecap_listen, std::vector<std::string>()) < 0) {
             _MSG("Failed to launch remote capture TCP server, check your "
                     "remote_capture_listen= and remote_capture_port= lines in "
                     "kismet.conf", MSGFLAG_FATAL);
             Globalreg::globalreg->fatal_condition = 1;
+            remotecap_enabled = false;
         }
         remote_tcp_server->set_new_connection_cb([this](int fd) -> void {
                 new_remote_tcp_connection(fd);
@@ -585,6 +589,8 @@ void datasource_tracker::trigger_deferred_startup() {
         auto pollabletracker =
             Globalreg::fetch_mandatory_global_as<pollable_tracker>();
         pollabletracker->register_pollable(remote_tcp_server);
+
+        remotecap_enabled = true;
     }
 
     remote_complete_timer = -1;
@@ -867,7 +873,26 @@ void datasource_tracker::open_datasource(const std::string& in_source,
     _MSG_INFO("Probing interface '{}' to find datasource type", interface);
 
     // Create a DSTProber to handle the probing
-    shared_dst_source_probe dst_probe(new datasource_tracker_source_probe(in_source, proto_vec));
+    std::shared_ptr<tracker_element_vector> filtered_proto_vec =
+        std::make_shared<tracker_element_vector>();
+
+    for (auto p : *proto_vec) {
+        bool accept = true;
+
+        auto pt = std::static_pointer_cast<kis_datasource_builder>(p);
+
+        for (auto f : auto_masked_types) {
+            if (pt->get_source_type() == f) {
+                accept = false;
+                break;
+            }
+        }
+
+        if (accept)
+            filtered_proto_vec->push_back(p);
+    }
+
+    shared_dst_source_probe dst_probe(new datasource_tracker_source_probe(in_source, filtered_proto_vec));
     unsigned int probeid = ++next_probe_id;
 
     // Record and initiate it
@@ -989,7 +1014,27 @@ void datasource_tracker::list_interfaces(const std::function<void (std::vector<s
     local_locker lock(&dst_lock);
 
     // Create a DSTProber to handle the probing
-    auto dst_list = std::make_shared<datasource_tracker_source_list>(proto_vec);
+    std::shared_ptr<tracker_element_vector> filtered_proto_vec =
+        std::make_shared<tracker_element_vector>();
+
+    for (auto p : *proto_vec) {
+        bool accept = true;
+
+        auto pt = std::static_pointer_cast<kis_datasource_builder>(p);
+
+        for (auto f : auto_masked_types) {
+            if (pt->get_source_type() == f) {
+                accept = false;
+                break;
+            }
+        }
+
+        if (accept)
+            filtered_proto_vec->push_back(p);
+    }
+
+    // Create a DSTProber to handle the probing
+    auto dst_list = std::make_shared<datasource_tracker_source_list>(filtered_proto_vec);
     unsigned int listid = ++next_list_id;
 
     // Record it

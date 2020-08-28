@@ -51,6 +51,8 @@ packet_chain::packet_chain() {
     last_packet_queue_user_warning = 0;
     last_packet_drop_user_warning = 0;
 
+    packetchain_mutex.set_name("packet_chain");
+
     packet_queue_warning = 
         Globalreg::globalreg->kismet_config->fetch_opt_uint("packet_log_warning", 0);
     packet_queue_drop =
@@ -258,7 +260,7 @@ void packet_chain::packet_queue_processor() {
             packet_queue.pop();
 
             // Lock the chain mutexes until we're done processing this packet
-            local_locker chainl(&packetchain_mutex);
+            local_locker chainl(&packetchain_mutex, "packet_chain::packet_queue_processor");
 
             // Unlock the queue while we process that packet
             lock.unlock();
@@ -267,56 +269,54 @@ void packet_chain::packet_queue_processor() {
             // the worker thread is in the sync block above, so we shouldn't
             // need to worry about the integrity of these vectors while running
 
-            for (auto pcl : postcap_chain) {
+            for (const auto& pcl : postcap_chain) {
                 if (pcl->callback != NULL)
                     pcl->callback(Globalreg::globalreg, pcl->auxdata, packet);
                 else if (pcl->l_callback != NULL)
                     pcl->l_callback(packet);
             }
 
-            for (auto pcl : llcdissect_chain) {
+            for (const auto& pcl : llcdissect_chain) {
                 if (pcl->callback != NULL)
                     pcl->callback(Globalreg::globalreg, pcl->auxdata, packet);
                 else if (pcl->l_callback != NULL)
                     pcl->l_callback(packet);
             }
 
-            for (auto pcl : decrypt_chain) {
+            for (const auto& pcl : decrypt_chain) {
                 if (pcl->callback != NULL)
                     pcl->callback(Globalreg::globalreg, pcl->auxdata, packet);
                 else if (pcl->l_callback != NULL)
                     pcl->l_callback(packet);
             }
 
-            for (auto pcl : datadissect_chain) {
+            for (const auto& pcl : datadissect_chain) {
                 if (pcl->callback != NULL)
                     pcl->callback(Globalreg::globalreg, pcl->auxdata, packet);
                 else if (pcl->l_callback != NULL)
                     pcl->l_callback(packet);
             }
 
-            for (auto pcl : classifier_chain) {
+            for (const auto& pcl : classifier_chain) {
                 if (pcl->callback != NULL)
                     pcl->callback(Globalreg::globalreg, pcl->auxdata, packet);
                 else if (pcl->l_callback != NULL)
                     pcl->l_callback(packet);
             }
 
-            for (auto pcl : tracker_chain) {
+            for (const auto& pcl : tracker_chain) {
                 if (pcl->callback != NULL)
                     pcl->callback(Globalreg::globalreg, pcl->auxdata, packet);
                 else if (pcl->l_callback != NULL)
                     pcl->l_callback(packet);
             }
 
-            for (auto pcl : logging_chain) {
+            for (const auto& pcl : logging_chain) {
                 if (pcl->callback != NULL)
                     pcl->callback(Globalreg::globalreg, pcl->auxdata, packet);
                 else if (pcl->l_callback != NULL)
                     pcl->l_callback(packet);
             }
-
-            packet_rate_rrd->add_sample(1, time(0));
 
             if (packet->error)
                 packet_error_rrd->add_sample(1, time(0));
@@ -339,21 +339,8 @@ void packet_chain::packet_queue_processor() {
 int packet_chain::process_packet(kis_packet *in_pack) {
     std::unique_lock<std::mutex> lock(packetqueue_cv_mutex);
 
-    if (packet_queue.size() > packet_queue_warning &&
-            packet_queue_warning != 0) {
-        time_t offt = time(0) - last_packet_queue_user_warning;
-
-        if (offt > 30) {
-            last_packet_queue_user_warning = time(0);
-
-            auto alertracker = Globalreg::fetch_mandatory_global_as<alert_tracker>();
-            alertracker->raise_one_shot("PACKETQUEUE", 
-                    "The packet queue has a backlog of " + int_to_string(packet_queue.size()) + 
-                    " packets; if you have multiple data sources it's possible that your "
-                    "system is not fast enough.  Kismet will continue to process "
-                    "packets, this may be a momentary spike in packet load.", -1);
-        }
-    }
+    // Total packet rate always gets added, even when we drop, so we can compare
+    packet_rate_rrd->add_sample(1, time(0));
 
     if (packet_queue_drop != 0 && packet_queue.size() > packet_queue_drop) {
         time_t offt = time(0) - last_packet_drop_user_warning;
@@ -364,11 +351,14 @@ int packet_chain::process_packet(kis_packet *in_pack) {
             std::shared_ptr<alert_tracker> alertracker =
                 Globalreg::fetch_mandatory_global_as<alert_tracker>();
             alertracker->raise_one_shot("PACKETLOST", 
-                    "Kismet has started to drop packets; the packet queue has a backlog "
-                    "of " + int_to_string(packet_queue.size()) + " packets.  Your system "
-                    "may not be fast enough to process the number of packets being seen. "
-                    "You change this behavior in 'kismet_memory.conf'.", -1);
+                    fmt::format("The packet queue has exceeded the maximum size of {}; Kismet "
+                        "will start dropping packets.  Your system may not have enough CPU to keep "
+                        "up with the packet rate in your environment or other processes may be "
+                        "taking up the CPU.  You can increase the packet backlog with the "
+                        "packet_backlog_limit configuration parameter.", packet_queue_drop), -1);
         }
+
+        destroy_packet(in_pack);
 
         // Don't queue packets when we're over-full
         lock.unlock();
@@ -377,6 +367,24 @@ int packet_chain::process_packet(kis_packet *in_pack) {
 
         return 1;
     }
+
+    if (packet_queue.size() > packet_queue_warning &&
+            packet_queue_warning != 0) {
+        time_t offt = time(0) - last_packet_queue_user_warning;
+
+        if (offt > 30) {
+            last_packet_queue_user_warning = time(0);
+
+            auto alertracker = Globalreg::fetch_mandatory_global_as<alert_tracker>();
+            alertracker->raise_one_shot("PACKETQUEUE", 
+                    "The packet queue has a backlog of " + int_to_string(packet_queue.size()) + 
+                    " packets; your system may not have enough CPU to keep up with the packet rate "
+                    "in your environment or you may have other processes taking up CPU.  "
+                    "Kismet will continue to process packets, as this may be a momentary spike "
+                    "in packet load.", -1);
+        }
+    }
+
 
     // Queue the packet
     packet_queue.push(in_pack);

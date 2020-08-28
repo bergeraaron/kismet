@@ -425,56 +425,72 @@ AC_SUBST(BUILD_PYTHON_MODULES)
 HAVE_LIBDW=0
 HAVE_LIBBFD=0
 
-AC_CHECK_LIB([dw], [dwarf_begin], HAVE_LIBDW=1)
-AC_CHECK_LIB([bfd], [bfd_alloc], HAVE_LIBBFD=1)
+# Allow disabling mutex timeout, use with caution
+AC_ARG_ENABLE(debuglibs,
+    AS_HELP_STRING([--disable-debuglibs], [Disable libdw and bfd libs which aid in debugging]),
+	[case "${enableval}" in
+	  no) wantdebuglibs=0 ;;
+	   *) wantdebuglibs=1 ;;
+	 esac],
+	[wantdebuglibs=1]
+)
 
-if test "$HAVE_LIBDW" = 1; then
-    AC_CHECK_HEADERS([elfutils/libdw.h elfutils/libdwfl.h dwarf.h], DEF_BW_HAS_LIBDW=1)
-fi
 
-if test "$HAVE_LIBBFD" = 1; then
-    AC_CHECK_HEADERS([bfd.h], DEF_BW_HAS_BFD=1)
-fi
-
-DEF_BW_HAS_UNWIND=0
-DEF_BW_HAS_BACKTRACE=0
-
-BACKTRACE_OK=0
-
-AC_CHECK_HEADERS([unwind.h], DEF_BW_HAS_UNWIND=1)
-AC_CHECK_HEADERS([execinfo.h], DEF_BW_HAS_BACKTRACE=1)
-
-if test "$DEF_BW_HAS_UNWIND" = 1; then
-    BACKTRACE_WARNING="yes - Full debug info available on crash, using unwind"
-    AC_DEFINE(BACKWARD_HAS_UNWIND, 1, unwind stack support)
-    AC_DEFINE(BACKWARD_HAS_BACKTRACE, 0, no backtrace stack support)
-    BACKTRACE_OK=1
-elif test "$DEF_BW_HAS_BACKTRACE" = 1; then
-    BACKTRACE_WARNING="yes - Full debug info available on crash, using backtrace"
-    AC_DEFINE(BACKWARD_HAS_BACKTRACE, 1, backtrace stack support)
-    BACKTRACE_OK=1
-else
+if test "$wantdebuglibs" = 1; then
+    AC_CHECK_LIB([dw], [dwarf_begin], HAVE_LIBDW=1)
+    AC_CHECK_LIB([bfd], [bfd_alloc], HAVE_LIBBFD=1)
+    
+    if test "$HAVE_LIBDW" = 1; then
+        AC_CHECK_HEADERS([elfutils/libdw.h elfutils/libdwfl.h dwarf.h], DEF_BW_HAS_LIBDW=1)
+    fi
+    
+    if test "$HAVE_LIBBFD" = 1; then
+        AC_CHECK_HEADERS([bfd.h], DEF_BW_HAS_BFD=1)
+    fi
+    
+    DEF_BW_HAS_UNWIND=0
+    DEF_BW_HAS_BACKTRACE=0
+    
     BACKTRACE_OK=0
-    BACKTRACE_WARNING="no - Backtraces will not be available on crashes"
-    AC_DEFINE(DISABLE_BACKWARD, 1, cannot support backtrace dumping)
-fi
-
-if test "$BACKTRACE_OK" = 1; then
-    # Libdw is the best support
-    if test "$DEF_BW_HAS_LIBDW" = 1; then
-        AC_DEFINE(BACKWARD_HAS_DW, 1, libdl for stack printing)
-        LIBS="$LIBS -ldw"
-    elif test "$DEF_BW_HAS_BFD" = 1; then
-        AC_DEFINE(BACKWARD_HAS_BFD, 1, libbfd for stack printing)
-        LIBS="$LIBS -lbfd"
+    
+    AC_CHECK_HEADERS([unwind.h], DEF_BW_HAS_UNWIND=1)
+    AC_CHECK_HEADERS([execinfo.h], DEF_BW_HAS_BACKTRACE=1)
+    
+    if test "$DEF_BW_HAS_UNWIND" = 1; then
+        BACKTRACE_WARNING="yes - Full debug info available on crash, using unwind"
+        AC_DEFINE(BACKWARD_HAS_UNWIND, 1, unwind stack support)
+        AC_DEFINE(BACKWARD_HAS_BACKTRACE, 0, no backtrace stack support)
+        BACKTRACE_OK=1
     elif test "$DEF_BW_HAS_BACKTRACE" = 1; then
-        AC_DEFINE(BACKWARD_HAS_BACKTRACE_SYMBOL, 1, backtrace stack support)
-        BACKTRACE_WARNING="partial - Missing libdw or libbfd will not print full stacks on crash"
+        BACKTRACE_WARNING="yes - Full debug info available on crash, using backtrace"
+        AC_DEFINE(BACKWARD_HAS_BACKTRACE, 1, backtrace stack support)
+        BACKTRACE_OK=1
     else
         BACKTRACE_OK=0
         BACKTRACE_WARNING="no - Backtraces will not be available on crashes"
         AC_DEFINE(DISABLE_BACKWARD, 1, cannot support backtrace dumping)
     fi
+    
+    if test "$BACKTRACE_OK" = 1; then
+        # Libdw is the best support
+        if test "$DEF_BW_HAS_LIBDW" = 1; then
+            AC_DEFINE(BACKWARD_HAS_DW, 1, libdl for stack printing)
+            LIBS="$LIBS -ldw"
+        elif test "$DEF_BW_HAS_BFD" = 1; then
+            AC_DEFINE(BACKWARD_HAS_BFD, 1, libbfd for stack printing)
+            LIBS="$LIBS -lbfd"
+        elif test "$DEF_BW_HAS_BACKTRACE" = 1; then
+            AC_DEFINE(BACKWARD_HAS_BACKTRACE_SYMBOL, 1, backtrace stack support)
+            BACKTRACE_WARNING="partial - Missing libdw or libbfd will not print full stacks on crash"
+        else
+            BACKTRACE_OK=0
+            BACKTRACE_WARNING="no - Backtraces will not be available on crashes"
+            AC_DEFINE(DISABLE_BACKWARD, 1, cannot support backtrace dumping)
+        fi
+    fi
+else
+    BACKTRACE_WARNING="no - debug libraries disabled by configure"
+    AC_DEFINE(DISABLE_BACKWARD, 1, disabled by configure arguments)
 fi
 
 # Look for something to define standard int types
@@ -897,15 +913,26 @@ fi # want headers
 fi # linux
 
 # Look for capability support
-havecap="yes"
-AC_CHECK_LIB([cap], [cap_init],,havecap=no)
-AC_CHECK_HEADER([sys/prctl.h],, havecap=no)
-AC_CHECK_HEADER([sys/capability.h],, havecap=no)
+AC_ARG_ENABLE(libcap,
+    AS_HELP_STRING([--disable-libcap], [Disable libcap capabilities]),
+	[case "${enableval}" in
+	  no) wantlibcap=no ;;
+	   *) wantlibcap=yes ;;
+	 esac],
+	[wantlibcap=yes]
+)
 
-if test "$havecap" = "yes"; then
-AC_DEFINE(HAVE_CAPABILITY, 1, kernel capability support)
-caplibs="-lcap"
-AC_SUBST(caplibs)
+if test "$wantcap" = "yes"; then
+    havecap="yes"
+    AC_CHECK_LIB([cap], [cap_init],,havecap=no)
+    AC_CHECK_HEADER([sys/prctl.h],, havecap=no)
+    AC_CHECK_HEADER([sys/capability.h],, havecap=no)
+    
+    if test "$havecap" = "yes"; then
+    AC_DEFINE(HAVE_CAPABILITY, 1, kernel capability support)
+    caplibs="-lcap"
+    AC_SUBST(caplibs)
+    fi
 fi
 
 AC_ARG_WITH(pcreheaders,
