@@ -58,6 +58,25 @@ public:
         reserve_fields(e);
     }
 
+    dot11_tracked_ssid_group(const dot11_tracked_ssid_group *p) :
+        tracker_component{p} {
+
+        __ImportField(ssid_hash, p);
+        __ImportField(ssid, p);
+        __ImportField(ssid_len, p);
+        __ImportField(crypt_set, p);
+        __ImportField(advertising_device_map, p);
+        __ImportField(responding_device_map, p);
+        __ImportField(probing_device_map, p);
+        __ImportField(advertising_device_len, p);
+        __ImportField(responding_device_len, p);
+        __ImportField(probing_device_len, p);
+        __ImportField(first_time, p);
+        __ImportField(last_time, p);
+
+        reserve_fields(nullptr);
+    }
+
     dot11_tracked_ssid_group(int in_id, const std::string& in_ssid, unsigned int in_ssid_len,
             unsigned int in_crypt_set);
 
@@ -67,13 +86,7 @@ public:
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 

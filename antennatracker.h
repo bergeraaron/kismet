@@ -55,19 +55,25 @@ public:
         reserve_fields(e);
     }
 
+    tracked_antenna(const tracked_antenna *p) :
+        tracker_component{p} {
+
+        __ImportField(antenna_id, p);
+        __ImportField(antenna_uuid, p);
+        __ImportField(source_uuid, p);
+        __ImportField(power_adjust, p);
+        __ImportField(source_antnum, p);
+
+        reserve_fields(nullptr);
+    }
+
     virtual uint32_t get_signature() const override {
         return adler32_checksum("tracked_antenna");
     }
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 

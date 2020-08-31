@@ -66,6 +66,20 @@ public:
         initialize();
     }
 
+    kis_logfile_builder(const kis_logfile_builder *p) :
+        tracker_component{p} {
+
+        __ImportField(log_class, p);
+        __ImportField(log_name, p);
+        __ImportField(stream_log, p);
+        __ImportField(singleton, p);
+        __ImportField(description, p);
+
+        reserve_fields(nullptr);
+        set_local_name("kismet.log.type_driver");
+        initialize();
+    }
+
     virtual ~kis_logfile_builder() { };
 
     virtual uint32_t get_signature() const override {
@@ -74,13 +88,7 @@ public:
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -153,6 +161,9 @@ public:
         set_int_log_uuid(luuid);
     }
 
+    // We don't implement a field cloner because we always have to get created by
+    // injecting a builder
+
     virtual ~kis_logfile() { 
         local_locker l(&log_mutex);
 
@@ -166,18 +177,6 @@ public:
 
     virtual uint32_t get_signature() const override {
         return adler32_checksum("kis_logfile");
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type() override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
-        return std::move(dup);
     }
 
     virtual bool open_log(std::string in_path) { 

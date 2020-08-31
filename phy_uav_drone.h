@@ -63,6 +63,24 @@ public:
         reserve_fields(e);
     }
 
+    uav_tracked_telemetry(const uav_tracked_telemetry *p) :
+        tracker_component{p} {
+
+        __ImportField(location, p);
+        __ImportField(telem_ts, p);
+        __ImportField(yaw, p);
+        __ImportField(pitch, p);
+        __ImportField(roll, p);
+        __ImportField(height, p);
+        __ImportField(v_north, p);
+        __ImportField(v_east, p);
+        __ImportField(v_up, p);
+        __ImportField(motor_on, p);
+        __ImportField(airborne, p);
+
+        reserve_fields(nullptr);
+    }
+
     virtual uint32_t get_signature() const override {
         return adler32_checksum("uav_tracked_telemetry");
     }
@@ -71,13 +89,7 @@ public:
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -212,6 +224,12 @@ public:
         return adler32_checksum("uav_match");
     }
 
+    virtual std::unique_ptr<tracker_element> clone_type() override {
+        using this_t = std::remove_pointer<decltype(this)>::type;
+        auto dup = std::unique_ptr<this_t>(new this_t());
+        return std::move(dup);
+    }
+
     __Proxy(uav_match_name, std::string, std::string, std::string, uav_match_name);
 
     __Proxy(uav_manuf_name, std::string, std::string, std::string, uav_manuf_name);
@@ -276,10 +294,36 @@ public:
         reserve_fields(e);
     }
 
+    uav_tracked_device(const uav_tracked_device *p) :
+        tracker_component{p} {
+
+        __ImportField(uav_manufacturer, p);
+        __ImportField(uav_model, p);
+        __ImportField(uav_serialnumber, p);
+
+        __ImportId(last_telem_loc_id, p);
+
+        __ImportField(uav_telem_history, p);
+        __ImportId(telem_history_entry_id, p);
+
+        __ImportField(uav_match_type, p);
+
+        __ImportId(home_location_id, p);
+        __ImportId(matched_type_id, p);
+
+        reserve_fields(nullptr);
+    }
+
     virtual ~uav_tracked_device() { }
 
     virtual uint32_t get_signature() const override {
         return adler32_checksum("uav_tracked_device");
+    }
+
+    virtual std::unique_ptr<tracker_element> clone_type() override {
+        using this_t = std::remove_pointer<decltype(this)>::type;
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
+        return std::move(dup);
     }
 
     __Proxy(uav_manufacturer, std::string, std::string, std::string, uav_manufacturer);

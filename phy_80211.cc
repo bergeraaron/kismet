@@ -97,6 +97,9 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
         eventbus =
             Globalreg::fetch_mandatory_global_as<event_bus>();
 
+        entrytracker =
+            Globalreg::fetch_mandatory_global_as<entry_tracker>();
+
         // Initialize the crc tables
         crc32_init_table_80211(Globalreg::globalreg->crc32_table);
 
@@ -557,7 +560,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
         }
 
         auto ssida =
-            std::make_shared<dot11_tracked_ssid_alert>(ssid_regex_vec_element_id);
+            entrytracker->get_shared_instance_as<dot11_tracked_ssid_alert>(ssid_regex_vec_element_id);
 
         try {
             ssida->set_group_name(name);
@@ -1065,7 +1068,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                         bssid_dev->get_macaddr().mac_to_string());
 
                 bssid_dot11 =
-                    std::make_shared<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+                    d11phy->entrytracker->get_shared_instance_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
 
                 dot11_tracked_device::attach_base_parent(bssid_dot11, bssid_dev);
 
@@ -1206,7 +1209,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                         source_dev->get_macaddr().mac_to_string());
 
                 source_dot11 =
-                    std::make_shared<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+                    d11phy->entrytracker->get_shared_instance_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
 
                 dot11_tracked_device::attach_base_parent(source_dot11, source_dev);
 
@@ -1265,7 +1268,8 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                         dest_dev->get_macaddr().mac_to_string());
 
                 dest_dot11 =
-                    std::make_shared<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+                    d11phy->entrytracker->get_shared_instance_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+
                 dot11_tracked_device::attach_base_parent(dest_dot11, dest_dev);
                 
                 dot11info->new_device = true;
@@ -1437,7 +1441,8 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                         bssid_dev->get_macaddr().mac_to_string());
 
                 bssid_dot11 =
-                    std::make_shared<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+                    d11phy->entrytracker->get_shared_instance_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+
                 dot11_tracked_device::attach_base_parent(bssid_dot11, bssid_dev);
 
                 dot11info->new_device = true;
@@ -1508,7 +1513,8 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                         source_dev->get_macaddr().mac_to_string());
 
                 source_dot11 =
-                    std::make_shared<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+                    d11phy->entrytracker->get_shared_instance_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+
                 dot11_tracked_device::attach_base_parent(source_dot11, source_dev);
 
                 dot11info->new_device = true;
@@ -1615,7 +1621,8 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                         dest_dev->get_macaddr().mac_to_string());
 
                 dest_dot11 =
-                    std::make_shared<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+                    d11phy->entrytracker->get_shared_instance_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+
                 dot11_tracked_device::attach_base_parent(dest_dot11, dest_dev);
 
                 dot11info->new_device = true;
@@ -1676,7 +1683,8 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                         other_dev->get_macaddr().mac_to_string());
 
                 dest_dot11 =
-                    std::make_shared<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+                    d11phy->entrytracker->get_shared_instance_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+                
                 dot11_tracked_device::attach_base_parent(dest_dot11, other_dev);
 
                 dot11info->new_device = true;
@@ -1841,7 +1849,7 @@ int kis_80211_phy::packet_dot11_scan_json_classifier(CHAINCALL_PARMS) {
                     bssid_dev->get_macaddr().mac_to_string());
 
             bssid_dot11 =
-                std::make_shared<dot11_tracked_device>(d11phy->dot11_device_entry_id);
+                d11phy->entrytracker->get_shared_instance_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
 
             dot11_tracked_device::attach_base_parent(bssid_dot11, bssid_dev);
         }
@@ -2270,6 +2278,35 @@ void kis_80211_phy::handle_ssid(std::shared_ptr<kis_tracked_device_base> basedev
             ssid->set_owe_bssid(dot11info->owe_transition->bssid());
             ssid->set_owe_ssid_len(dot11info->owe_transition->ssid().length());
             ssid->set_owe_ssid(munge_to_printable(dot11info->owe_transition->ssid()));
+        }
+
+        // Look for 221 IE tags if we don't know the manuf
+        if (Globalreg::globalreg->manufdb->is_unknown_manuf(basedev->get_manuf())) {
+            auto taglist = PacketDot11IElist(in_pack, dot11info);
+            for (const auto& t : taglist) {
+                if (std::get<0>(t) == 221) {
+                    // Look for known AP manufs like ubnt, cisco, aruba
+                    bool matched = false;
+
+                    switch (std::get<1>(t)) {
+                        case 0x004096: // cisco
+                        case 0x00156d: // ubnt
+                        case 0x000b86: // aruba
+                        case 0x001d0f: // tplink
+                        case 0x00904c: // epigram
+                            matched = true;
+                            break;
+                        default:
+                            break;
+                    }
+
+                    if (matched) {
+                        basedev->set_manuf(Globalreg::globalreg->manufdb->lookup_oui(std::get<1>(t)));
+                        break;
+                    }
+                }
+            }
+
         }
 
         std::string ssidstr;
@@ -3737,8 +3774,8 @@ void kis_80211_phy::load_phy_storage(shared_tracker_element in_storage, shared_t
             return;
 
         auto d11dev =
-            std::make_shared<dot11_tracked_device>(dot11_device_entry_id,
-                    std::static_pointer_cast<tracker_element_map>(d11devi->second));
+            entrytracker->get_shared_instance_as<dot11_tracked_device>(dot11_device_entry_id);
+
         in_map->insert(d11dev);
     }
 }

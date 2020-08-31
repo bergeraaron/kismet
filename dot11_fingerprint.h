@@ -47,15 +47,19 @@ public:
         reserve_fields(e);
     }
 
-    virtual std::unique_ptr<tracker_element> clone_type() override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
+    tracked_dot11_fingerprint(const tracked_dot11_fingerprint *p) :
+        tracker_component{p} {
+
+        __ImportField(beacon_hash, p);
+        __ImportField(response_hash, p);
+        __ImportField(probe_hash, p);
+
+        reserve_fields(nullptr);
     }
 
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
+    virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
