@@ -36,6 +36,26 @@
 #include "manuf.h"
 
 #include "phy_802154.h"
+
+typedef struct {
+    uint16_t type; //type identifier
+    uint16_t length; // number of octets for type in value field (not including padding
+    uint32_t value; // data for type
+} tap_tlv;
+
+typedef struct {
+    uint8_t version; // currently zero
+    uint8_t reserved; // must be zero
+    uint16_t length; // total length of header and tlvs in octets, min 4 and must be multiple of 4
+    tap_tlv tlv[3];//tap tlvs 3 if we get channel later
+    uint8_t payload[0];	        
+    ////payload + fcs per fcs type
+} zigbee_tap;
+zigbee_tap * tap_header;
+
+uint8_t chan = 0;
+uint8_t sigstr = 0;
+
 //802.15.4 header
 struct _802_15_4_fcf{
     unsigned char type : 3;
@@ -79,6 +99,7 @@ kis_802154_phy::kis_802154_phy(global_registry *in_globalreg, int in_phyid) :
 
     pack_comp_common = packetchain->register_packet_component("COMMON");
 	pack_comp_linkframe = packetchain->register_packet_component("LINKFRAME");
+    pack_comp_l1info = packetchain->register_packet_component("RADIODATA");
 
     // Extract the dynamic DLT
     auto dltt = 
@@ -107,8 +128,11 @@ int kis_802154_phy::dissector802154(CHAINCALL_PARMS) {
         return 0;
 
     // Is it a packet we care about?
-    if (packdata == NULL || (packdata != NULL && packdata->dlt != KDLT_IEEE802_15_4_NOFCS))
+    if (packdata == NULL || (packdata != NULL && (packdata->dlt != KDLT_IEEE802_15_4_NOFCS && packdata->dlt != KDLT_IEEE802_15_4_TAP)))
+    {
+        printf("not a packet we care about\n");
         return 0;
+    }
 
     // Do we have enough data for an OUI?
     if (packdata->length < 6)
@@ -120,12 +144,39 @@ int kis_802154_phy::dissector802154(CHAINCALL_PARMS) {
     if (common != NULL)
         return 0;
 
-
     //process the packet
-    //printf("process a packet from within the phy_802154\n");
+    printf("process a packet from within the phy_802154\n");
     //hurray we make it here
 
     uint8_t pkt_ctr = 0;
+    if(packdata->dlt == KDLT_IEEE802_15_4_TAP)
+    {
+        printf("KDLT_IEEE802_15_4_TAP\n");
+        uint64_t tap_header_size = sizeof(zigbee_tap);
+        printf("tap_header_size:%d\n",tap_header_size);
+
+        uint8_t tmp_header[32];memset(tmp_header,0x00,32);
+        printf("copy over the tmp data\n");
+        memcpy(tmp_header, &packdata->data[pkt_ctr], tap_header_size);
+        printf("set the header\n");
+        tap_header = (zigbee_tap *)&tmp_header;
+
+        //realy we are going to want to iterate through them to pull them correctly.
+
+        printf("pull out the channel\n");
+        chan = tap_header->tlv[2].value;
+
+        printf("pull out the signal\n");
+        sigstr = tap_header->tlv[1].value;
+
+        printf("change the dtl\n");
+        packdata->dlt = KDLT_IEEE802_15_4_NOFCS;
+        printf("advance the pkt_ctr\n");
+        pkt_ctr += tap_header_size;
+    }
+
+    printf("pkt_ctr:%d\n",pkt_ctr);
+
     if(packdata->dlt == KDLT_IEEE802_15_4_NOFCS)
     {
         //printf("parse a 802154 packet of dlt KDLT_IEEE802_15_4_NOFCS\n");
@@ -250,12 +301,14 @@ int kis_802154_phy::dissector802154(CHAINCALL_PARMS) {
     {
         if(hdr_802_15_4_fcf->src_addr_mode == 0x03)
         {
+            printf("src_addr_mode == 0x03\n");
             for(int xps=0;xps<8;xps++)
                 printf("%02X ",ext_source[xps]);
             printf("\n");
         }
         if(hdr_802_15_4_fcf->src_addr_mode == 0x02)
         {
+            printf("src_addr_mode == 0x02\n");
             for(int xps=0;xps<2;xps++)
                 printf("%02X ",src[xps]);
             printf("\n");
@@ -266,12 +319,14 @@ int kis_802154_phy::dissector802154(CHAINCALL_PARMS) {
 
         if(hdr_802_15_4_fcf->dest_addr_mode == 0x03)
         {
+            printf("dest_addr_mode == 0x03\n");
             for(int xps=0;xps<8;xps++)
                 printf("%02X ",ext_dest[xps]);
             printf("\n");
         }
         if(hdr_802_15_4_fcf->dest_addr_mode == 0x02)
         {
+            printf("dest_addr_mode == 0x02\n");
             for(int xps=0;xps<2;xps++)
                 printf("%02X ",dest[xps]);
             printf("\n");
@@ -286,25 +341,96 @@ int kis_802154_phy::dissector802154(CHAINCALL_PARMS) {
         //error
         //datasize
         //channel
+        common->channel = std::to_string(chan);
         //freq_khz
         common->basic_crypt_set = crypt_none;
         common->type = packet_basic_data;
         //direction
+        //common->direction = packet_direction_to;
         if(hdr_802_15_4_fcf->src_addr_mode == 0x03)
+        {
+            printf("set source from ext\n");
             common->source = mac_addr(ext_source, 8);
-        else if(hdr_802_15_4_fcf->src_addr_mode == 0x02 && !hdr_802_15_4_fcf->pan_id_comp)
-            common->source = mac_addr(src_pan, 2);
+        }
+//        else if(hdr_802_15_4_fcf->src_addr_mode == 0x02 && !hdr_802_15_4_fcf->pan_id_comp)
+//        {
+//            printf("set source from pan\n");
+//            common->source = mac_addr(src_pan, 2);
+//        }
         else if(hdr_802_15_4_fcf->src_addr_mode == 0x02 && hdr_802_15_4_fcf->pan_id_comp)
+        {
+            printf("set source from src\n");
             common->source = mac_addr(src, 2);
+        }
+        else if(hdr_802_15_4_fcf->src_addr_mode == 0x02)
+        {
+            printf("set source from src\n");
+            common->source = mac_addr(src, 2);
+        }
+
         if(hdr_802_15_4_fcf->dest_addr_mode == 0x03)
+        {
+            printf("set dest from ext\n");
             common->dest = mac_addr(ext_dest, 8);
+        }
         else if(hdr_802_15_4_fcf->dest_addr_mode == 0x02)
-            common->dest = mac_addr(dest_pan, 2);
+        {
+            printf("set dest from dest\n");
+            common->dest = mac_addr(dest, 2);
+        }
+//        else if(hdr_802_15_4_fcf->dest_addr_mode == 0x02)
+//        {
+//            printf("set dest from pan\n");
+//            common->dest = mac_addr(dest_pan, 2);
+//        }
+
         //network
         //transmitter
-        printf("insert\n");
+        printf("insert src->dest\n");
         in_pack->insert(mphy->pack_comp_common, common);
 
+/**
+        auto dest_mphy = static_cast<kis_802154_phy *>(auxdata);
+        auto dest_packdata = in_pack->fetch<kis_datachunk>(dest_mphy->pack_comp_linkframe);
+        auto common_dest = in_pack->fetch<kis_common_info>(dest_mphy->pack_comp_common);
+        common_dest = new kis_common_info;
+        common_dest->phyid = dest_mphy->fetch_phy_id();
+        //error
+        //datasize
+        //channel
+        //freq_khz
+        common_dest->basic_crypt_set = crypt_none;
+        common_dest->type = packet_basic_data;
+        //direction
+        //common->direction = packet_direction_to;
+        if(hdr_802_15_4_fcf->src_addr_mode == 0x03)
+        {
+            printf("set source from ext\n");
+            common_dest->dest = mac_addr(ext_source, 8);
+        }
+        else if(hdr_802_15_4_fcf->src_addr_mode == 0x02 && !hdr_802_15_4_fcf->pan_id_comp)
+        {
+            printf("set source from pan\n");
+            common_dest->dest = mac_addr(src_pan, 2);
+        }
+        else if(hdr_802_15_4_fcf->src_addr_mode == 0x02 && hdr_802_15_4_fcf->pan_id_comp)
+        {
+            printf("set source from src\n");
+            common_dest->dest = mac_addr(src, 2);
+        }
+        if(hdr_802_15_4_fcf->dest_addr_mode == 0x03)
+        {
+            printf("set dest from ext\n");
+            common_dest->source = mac_addr(ext_dest, 8);
+        }
+        else if(hdr_802_15_4_fcf->dest_addr_mode == 0x02)
+        {
+            printf("set dest from pan\n");
+            common_dest->source = mac_addr(dest_pan, 2);
+        }
+        printf("insert dest->src\n");
+        in_pack->insert(dest_mphy->pack_comp_common, common_dest);
+**/
     }
 
     return 1;
@@ -330,11 +456,10 @@ int kis_802154_phy::commonclassifier802154(CHAINCALL_PARMS) {
     if (common == NULL)
         return 0;
 
-    printf("auto device\n");
-
+    printf("as source\n");
     // Update with all the options in case we can add signal and frequency
     // in the future
-    auto device = 
+    auto source_dev = 
         mphy->devicetracker->update_common_device(common,
                 common->source, mphy, in_pack,
                 (UCD_UPDATE_SIGNAL | UCD_UPDATE_FREQUENCIES |
@@ -342,14 +467,36 @@ int kis_802154_phy::commonclassifier802154(CHAINCALL_PARMS) {
                  UCD_UPDATE_SEENBY | UCD_UPDATE_ENCRYPTION),
                 "802.15.4");
 
-    auto kis_802154 =
-        device->get_sub_as<kis_802154_tracked_device>(mphy->kis_802154_device_entry_id);
+    auto source_kis_802154 =
+        source_dev->get_sub_as<kis_802154_tracked_device>(mphy->kis_802154_device_entry_id);
 
-    if (kis_802154 == NULL) {
+    if (source_kis_802154 == NULL) {
         _MSG_INFO("Detected new 802.15.4 device {}",
                 common->source.mac_to_string());
-        kis_802154 = std::make_shared<kis_802154_tracked_device>(mphy->kis_802154_device_entry_id);
-        device->insert(kis_802154);
+        source_kis_802154 = std::make_shared<kis_802154_tracked_device>(mphy->kis_802154_device_entry_id);
+        source_dev->insert(source_kis_802154);
+    }
+
+    printf("as dest\n");
+    //as destination
+    // Update with all the options in case we can add signal and frequency
+    // in the future
+    auto dest_dev = 
+        mphy->devicetracker->update_common_device(common,
+                common->dest, mphy, in_pack,
+                (UCD_UPDATE_SIGNAL | UCD_UPDATE_FREQUENCIES |
+                 UCD_UPDATE_PACKETS | UCD_UPDATE_LOCATION |
+                 UCD_UPDATE_SEENBY | UCD_UPDATE_ENCRYPTION),
+                "802.15.4");
+
+    auto dest_kis_802154 =
+        dest_dev->get_sub_as<kis_802154_tracked_device>(mphy->kis_802154_device_entry_id);
+
+    if (dest_kis_802154 == NULL) {
+        _MSG_INFO("Detected new 802.15.4 device {}",
+                common->dest.mac_to_string());
+        dest_kis_802154 = std::make_shared<kis_802154_tracked_device>(mphy->kis_802154_device_entry_id);
+        dest_dev->insert(dest_kis_802154);
     }
 
     return 1;

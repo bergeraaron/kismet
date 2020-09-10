@@ -83,13 +83,13 @@ public:
         auto dup = std::unique_ptr<this_t>(new this_t());
         return std::move(dup);
     }
-
+/**
     virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
         using this_t = std::remove_pointer<decltype(this)>::type;
         auto dup = std::unique_ptr<this_t>(new this_t(in_id));
         return std::move(dup);
     }
-
+**/
 protected:
 
     virtual void register_fields() override {
@@ -124,7 +124,7 @@ protected:
 
     int kis_802154_device_entry_id;
     int dev_comp_common;
-    int pack_comp_common, pack_comp_linkframe;
+    int pack_comp_common, pack_comp_l1info, pack_comp_linkframe;
 
     int dlt;
 

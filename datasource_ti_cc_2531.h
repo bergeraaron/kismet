@@ -29,6 +29,10 @@
 class kis_datasource_ticc2531;
 typedef std::shared_ptr<kis_datasource_ticc2531> shared_datasource_ticc2531;
 
+#ifndef KDLT_IEEE802_15_4_TAP
+#define KDLT_IEEE802_15_4_TAP             283 
+#endif
+
 #ifndef KDLT_IEEE802_15_4_NOFCS
 #define KDLT_IEEE802_15_4_NOFCS           230
 #endif
@@ -42,7 +46,8 @@ public:
         // Set the capture binary
         set_int_source_ipc_binary("kismet_cap_ti_cc_2531");
 
-        set_int_source_dlt(KDLT_IEEE802_15_4_NOFCS);
+        //set_int_source_dlt(KDLT_IEEE802_15_4_NOFCS);
+        set_int_source_dlt(KDLT_IEEE802_15_4_TAP);
 
         pack_comp_decap =
             packetchain->register_packet_component("DECAP");
