@@ -169,15 +169,15 @@ int kis_802154_phy::dissector802154(CHAINCALL_PARMS) {
         printf("pull out the signal\n");
         sigstr = tap_header->tlv[1].value;
 
-        printf("change the dtl\n");
-        packdata->dlt = KDLT_IEEE802_15_4_NOFCS;
+        //printf("change the dtl\n");
+        //packdata->dlt = KDLT_IEEE802_15_4_NOFCS;
         printf("advance the pkt_ctr\n");
         pkt_ctr += tap_header_size;
     }
 
     printf("pkt_ctr:%d\n",pkt_ctr);
 
-    if(packdata->dlt == KDLT_IEEE802_15_4_NOFCS)
+    if(packdata->dlt == KDLT_IEEE802_15_4_NOFCS || packdata->dlt == KDLT_IEEE802_15_4_TAP)
     {
         //printf("parse a 802154 packet of dlt KDLT_IEEE802_15_4_NOFCS\n");
         //printf("print the packet that we got\n");
@@ -389,48 +389,6 @@ int kis_802154_phy::dissector802154(CHAINCALL_PARMS) {
         printf("insert src->dest\n");
         in_pack->insert(mphy->pack_comp_common, common);
 
-/**
-        auto dest_mphy = static_cast<kis_802154_phy *>(auxdata);
-        auto dest_packdata = in_pack->fetch<kis_datachunk>(dest_mphy->pack_comp_linkframe);
-        auto common_dest = in_pack->fetch<kis_common_info>(dest_mphy->pack_comp_common);
-        common_dest = new kis_common_info;
-        common_dest->phyid = dest_mphy->fetch_phy_id();
-        //error
-        //datasize
-        //channel
-        //freq_khz
-        common_dest->basic_crypt_set = crypt_none;
-        common_dest->type = packet_basic_data;
-        //direction
-        //common->direction = packet_direction_to;
-        if(hdr_802_15_4_fcf->src_addr_mode == 0x03)
-        {
-            printf("set source from ext\n");
-            common_dest->dest = mac_addr(ext_source, 8);
-        }
-        else if(hdr_802_15_4_fcf->src_addr_mode == 0x02 && !hdr_802_15_4_fcf->pan_id_comp)
-        {
-            printf("set source from pan\n");
-            common_dest->dest = mac_addr(src_pan, 2);
-        }
-        else if(hdr_802_15_4_fcf->src_addr_mode == 0x02 && hdr_802_15_4_fcf->pan_id_comp)
-        {
-            printf("set source from src\n");
-            common_dest->dest = mac_addr(src, 2);
-        }
-        if(hdr_802_15_4_fcf->dest_addr_mode == 0x03)
-        {
-            printf("set dest from ext\n");
-            common_dest->source = mac_addr(ext_dest, 8);
-        }
-        else if(hdr_802_15_4_fcf->dest_addr_mode == 0x02)
-        {
-            printf("set dest from pan\n");
-            common_dest->source = mac_addr(dest_pan, 2);
-        }
-        printf("insert dest->src\n");
-        in_pack->insert(dest_mphy->pack_comp_common, common_dest);
-**/
     }
 
     return 1;
@@ -447,7 +405,7 @@ int kis_802154_phy::commonclassifier802154(CHAINCALL_PARMS) {
 
     // Is it a packet we care about?
     printf("commonclassifier802154 packdata->dlt:%d mphy->dlt:%d\n",packdata->dlt,mphy->dlt);
-    if (packdata->dlt != mphy->dlt)
+    if (packdata->dlt != mphy->dlt && (packdata->dlt != KDLT_IEEE802_15_4_NOFCS && packdata->dlt != KDLT_IEEE802_15_4_TAP))
         return 0;
 
     // Did we classify this?

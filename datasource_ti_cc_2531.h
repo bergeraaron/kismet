@@ -49,10 +49,10 @@ public:
         //set_int_source_dlt(KDLT_IEEE802_15_4_NOFCS);
         set_int_source_dlt(KDLT_IEEE802_15_4_TAP);
 
-        pack_comp_decap =
-            packetchain->register_packet_component("DECAP");
-        pack_comp_radiodata = 
-            packetchain->register_packet_component("RADIODATA");
+        pack_comp_decap = packetchain->register_packet_component("DECAP");
+        pack_comp_radiodata = packetchain->register_packet_component("RADIODATA");
+        pack_comp_l1info = packetchain->register_packet_component("RADIODATA");
+
     }
 
     virtual ~kis_datasource_ticc2531() { };

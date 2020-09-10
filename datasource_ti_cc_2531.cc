@@ -125,6 +125,13 @@ printf("\n");
         cc_chunk->dlt = KDLT_IEEE802_15_4_NOFCS;
         #endif
 
+        auto radioheader = new kis_layer1_packinfo();
+        radioheader->signal_type = kis_l1_signal_type_rssi;
+        radioheader->signal_rssi = rssi;
+        //radioheader->freq_khz = (2400 + (channel)) * 1000;
+        radioheader->channel = fmt::format("{}", (channel));
+        packet->insert(pack_comp_radiodata, radioheader);
+
         // Pass the packet on
         packetchain->process_packet(packet);
 
