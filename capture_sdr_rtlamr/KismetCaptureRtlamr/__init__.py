@@ -42,7 +42,7 @@ class KismetRtlamr(object):
     def __init__(self):
         self.opts = {}
 
-        self.opts['channel'] = "912.600MHz"
+        self.opts['channel'] = "912.380MHz" #912.600MHz
         self.opts['gain'] = -1
         self.opts['ppm'] = 0
         self.opts['device'] = None
@@ -51,7 +51,7 @@ class KismetRtlamr(object):
 
         self.kismet = None
 
-        self.frequency = 912600000
+        self.frequency = 912380000 #912600000
         self.rate = 2359000
         self.usb_buf_sz = 16 * 16384
 
