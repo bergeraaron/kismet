@@ -409,10 +409,13 @@ int kis_802154_phy::dissector802154(CHAINCALL_PARMS) {
     }
     else if(hdr_802_15_4_fcf->frame_ver == 0)//Frame Version: IEEE Std 802.15.4-2003 (0)
     {
+        uint8_t byte_remain = packdata->length - pkt_ctr;
+        printf("byte_remain:%d\n",byte_remain);
+
         //get the zigbee network layer header
         unsigned short zigbee_fcf = (((short)packdata->data[pkt_ctr+1]) << 8) | (0x00ff & packdata->data[pkt_ctr]);
         hdr_zigbee_fcf = (_zigbee_fcf* )&zigbee_fcf;
-/**
+/**/
         printf("hdr_802_15_4_fcf.type:%.02X hdr_zigbee_fcf.type:%.02X\n",hdr_802_15_4_fcf->type,hdr_zigbee_fcf->type);
 
         //trying to see what would be valid or having a valid zigbee header
@@ -434,8 +437,7 @@ int kis_802154_phy::dissector802154(CHAINCALL_PARMS) {
 //            printf("hdr_zigbee_fcf.end_dev_initator:%.02X\n",hdr_zigbee_fcf->end_dev_initator);
 //            printf("\n");
     
-            uint8_t byte_remain = packdata->length - pkt_ctr;
-            printf("byte_remain:%d\n",byte_remain);
+
             //next part of the packet
             //Destination 2 bytes reversed
             unsigned short zigbee_dest = (((short)packdata->data[pkt_ctr+1]) << 8) | (0x00ff & packdata->data[pkt_ctr]);
@@ -452,7 +454,6 @@ int kis_802154_phy::dissector802154(CHAINCALL_PARMS) {
             printf("ext_src byte_remain:%d\n",byte_remain);
             if(hdr_zigbee_fcf->ext_src && byte_remain > 7)
             {
-
                 //extended source which is what were are looking for
                 ext_source[7] = packdata->data[pkt_ctr];pkt_ctr++;
                 ext_source[6] = packdata->data[pkt_ctr];pkt_ctr++;
@@ -463,6 +464,33 @@ int kis_802154_phy::dissector802154(CHAINCALL_PARMS) {
                 ext_source[1] = packdata->data[pkt_ctr];pkt_ctr++;
                 ext_source[0] = packdata->data[pkt_ctr];pkt_ctr++;
                 hdr_802_15_4_fcf->src_addr_mode = 0x03;
+            }
+            //is there a security header?
+            if(hdr_zigbee_fcf->security)
+            {
+                //security control field
+                uint8_t scf = packdata->data[pkt_ctr];pkt_ctr++;
+                if((scf & (1 << 5)) > 0)//extended Nonce: True
+                {
+                    byte_remain = packdata->length - pkt_ctr;
+                    if(byte_remain > 12)
+                    {
+                        //frame counter 4 bytes
+                        pkt_ctr+=4;
+                        //extended source 8 bytes
+                        //extended source which is what were are looking for
+                        ext_source[7] = packdata->data[pkt_ctr];pkt_ctr++;
+                        ext_source[6] = packdata->data[pkt_ctr];pkt_ctr++;
+                        ext_source[5] = packdata->data[pkt_ctr];pkt_ctr++;
+                        ext_source[4] = packdata->data[pkt_ctr];pkt_ctr++;
+                        ext_source[3] = packdata->data[pkt_ctr];pkt_ctr++;
+                        ext_source[2] = packdata->data[pkt_ctr];pkt_ctr++;
+                        ext_source[1] = packdata->data[pkt_ctr];pkt_ctr++;
+                        ext_source[0] = packdata->data[pkt_ctr];pkt_ctr++;
+                        hdr_802_15_4_fcf->src_addr_mode = 0x03;
+                        //key sequence number 1 byte
+                    }
+                }
             }
         }
 /**/
