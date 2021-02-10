@@ -38,6 +38,7 @@ BUILD_CAPTURE_FREAKLABS_ZIGBEE=1
 BUILD_CAPTURE_NRF_MOUSEJACK=0
 BUILD_CAPTURE_TI_CC_2540=0
 BUILD_CAPTURE_TI_CC_2531=0
+BUILD_CAPTURE_HBLE=0
 BUILD_CAPTURE_UBERTOOTH_ONE=0
 BUILD_CAPTURE_NRF_51822=0
 BUILD_CAPTURE_NXP_KW41Z=0
@@ -1554,6 +1555,12 @@ if test "$have_usb" = "yes"; then
     DATASOURCE_BINS="$DATASOURCE_BINS \$(CAPTURE_TI_CC_2531)"
 fi
 
+BUILD_CAPTURE_HBLE=0
+if test "$have_usb" = "yes"; then
+    BUILD_CAPTURE_HBLE=1
+    DATASOURCE_BINS="$DATASOURCE_BINS \$(CAPTURE_HBLE)"
+fi
+
 BUILD_CAPTURE_LINUX_BLUETOOTH=0
 if test "$linux" = "yes"; then
     BUILD_CAPTURE_LINUX_BLUETOOTH=1
@@ -1699,6 +1706,7 @@ AC_SUBST(BUILD_CAPTURE_FREAKLABS_ZIGBEE)
 AC_SUBST(BUILD_CAPTURE_NRF_MOUSEJACK)
 AC_SUBST(BUILD_CAPTURE_TI_CC_2540)
 AC_SUBST(BUILD_CAPTURE_TI_CC_2531)
+AC_SUBST(BUILD_CAPTURE_HBLE)
 AC_SUBST(BUILD_CAPTURE_UBERTOOTH_ONE)
 AC_SUBST(BUILD_CAPTURE_NRF_51822)
 AC_SUBST(BUILD_CAPTURE_NXP_KW41Z)
@@ -1725,6 +1733,7 @@ AC_CONFIG_FILES([
     capture_nrf_mousejack/Makefile 
     capture_ti_cc_2540/Makefile 
     capture_ti_cc_2531/Makefile 
+    capture_hble/Makefile 
     capture_ubertooth_one/Makefile 
     capture_nrf_51822/Makefile 
     capture_nxp_kw41z/Makefile
@@ -1838,6 +1847,13 @@ if test "$BUILD_CAPTURE_TI_CC_2531" = 1; then
 	echo "yes";
 else
 	echo "no (libusb-1.0 not available)";
+fi
+
+printf "                 HBTLE: "
+if test "$BUILD_CAPTURE_HBLE" = 1; then
+        echo "yes";
+else
+        echo "no (libusb-1.0 not available)";
 fi
 
 printf "         Ubertooth One: "
