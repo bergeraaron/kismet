@@ -90,6 +90,7 @@ void kis_datasource_hble::handle_rx_packet(kis_packet *packet) {
     };
 
     unsigned int cc_payload_len = cc_chunk->length - 10 - 2;
+    printf("kis_datasource_hble cc_payload_len:%d\n",cc_payload_len);
     // We can make a valid payload from this much
     auto conv_buf_len = sizeof(btle_rf) + cc_payload_len;
     btle_rf *conv_header = reinterpret_cast<btle_rf *>(new uint8_t[conv_buf_len]);

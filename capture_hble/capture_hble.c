@@ -42,11 +42,11 @@ typedef struct {
     unsigned int channel;
 } local_channel_t;
 
-unsigned char key[42] = { 0xB2, 0xF9, 0x33, 0xD5, 0xD4, 0xB0, 0x66, 0xD7, 0x11, 0x70,
-                            0x56, 0x54, 0x01, 0x2C, 0xD6, 0xBE, 0x65, 0xE3, 0x8A, 0x29,
+unsigned char key[44] = { 0xB2, 0xF9, 0x33, 0xD5, 0xD4, 0xB0, 0x66, 0xD7, 0x11, 0x70,
+                            0x56, 0x54, 0xB1, 0x14, 0xD6, 0xBE, 0x65, 0xE3, 0x8A, 0x29,
                             0xD6, 0x14, 0xAE, 0xBA, 0x51, 0x94, 0x11, 0xE7, 0xB1, 0x14,
                             0xB2, 0xF9, 0x33, 0xD5, 0xFE, 0x66, 0x77, 0xFF, 0x62, 0x58,
-                            0xB8, 0x12};
+                            0x8A, 0x12, 0x45, 0x50};
 
 int hble_set_channel(kis_capture_handler_t *caph, uint8_t channel) {
     
@@ -128,7 +128,7 @@ int hble_exit_promisc_mode(kis_capture_handler_t *caph) {
 }
 
 int hble_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_t rx_max) {
-printf("hble hble_receive_payload\n");
+//printf("hble hble_receive_payload\n");
     local_hble_t *localhble = (local_hble_t *) caph->userdata;
     int actual_len, r;
     
@@ -136,7 +136,7 @@ printf("hble hble_receive_payload\n");
     r = libusb_bulk_transfer(localhble->hble_handle, HBLE_PKT_EP, rx_buf, rx_max, &actual_len, HBLE_TIMEOUT);
     pthread_mutex_unlock(&(localhble->usb_mutex));
 
-    printf("hble_receive_payload r:%d\n",r);
+    //printf("hble_receive_payload r:%d\n",r);
 
     if (r < 0) {
         localhble->error_ctr++;
@@ -166,6 +166,10 @@ printf("hble hble_receive_payload\n");
                 rx_buf[i] = rx_buf[i] ^ rx_buf[6] ^ key[i-10];
                 else if(i == 21)
                 rx_buf[i] = rx_buf[i] ^ rx_buf[7] ^ key[i-10];
+                else if(i == 22)
+                rx_buf[i] = rx_buf[i] ^ rx_buf[8] ^ key[i-10];
+                else if(i == 23)
+                rx_buf[i] = rx_buf[i] ^ rx_buf[9] ^ key[i-10];
                 else
                 rx_buf[i] = rx_buf[i] ^ key[i-10];
             }
@@ -182,7 +186,7 @@ int probe_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition
         cf_params_interface_t **ret_interface,
         cf_params_spectrum_t **ret_spectrum) {
  
-printf("hble probe_callback\n");
+//printf("hble probe_callback\n");
 
     char *placeholder = NULL;
     int placeholder_len;
@@ -290,7 +294,7 @@ int list_callback(kis_capture_handler_t *caph, uint32_t seqno, char *msg,
         struct hble_list *next;
     } hble_list_t;
 
-printf("hble list_callback\n");
+//printf("hble list_callback\n");
 
     hble_list_t *devs = NULL;
     size_t num_devs = 0;
@@ -367,7 +371,7 @@ void *chantranslate_callback(kis_capture_handler_t *caph, char *chanstr) {
     local_channel_t *ret_localchan;
     unsigned int parsechan;
     char errstr[STATUS_MAX];
-printf("hble chantranslate_callback\n");
+//printf("hble chantranslate_callback\n");
     if (sscanf(chanstr, "%u", &parsechan) != 1) {
         snprintf(errstr, STATUS_MAX, "1 unable to parse requested channel '%s'; hble channels "
                 "are from 37 to 39", chanstr);
@@ -393,7 +397,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         cf_params_spectrum_t **ret_spectrum) {
 
 
-printf("hble open_callback\n");
+//printf("hble open_callback\n");
 
     char *placeholder = NULL;
     int placeholder_len;
@@ -543,7 +547,7 @@ printf("hble open_callback\n");
     pthread_mutex_lock(&(localhble->usb_mutex));
 
     /* Try to open it */
-    printf("hble libusb_open\n");
+    //printf("hble libusb_open\n");
     r = libusb_open(matched_dev, &localhble->hble_handle);
 
     if (r < 0) {
@@ -552,7 +556,7 @@ printf("hble open_callback\n");
         pthread_mutex_unlock(&(localhble->usb_mutex));
         return -1;
     }
-printf("hble libusb_kernel_driver_active\n");
+//printf("hble libusb_kernel_driver_active\n");
     if (libusb_kernel_driver_active(localhble->hble_handle, 0)) {
         r = libusb_detach_kernel_driver(localhble->hble_handle, 0); 
 
@@ -564,7 +568,7 @@ printf("hble libusb_kernel_driver_active\n");
             return -1;
         }
     }
-printf("hble libusb_set_configuration\n");
+//printf("hble libusb_set_configuration\n");
     r = libusb_set_configuration(localhble->hble_handle, 1);
     if (r < 0) {
         snprintf(errstr, STATUS_MAX,
@@ -573,7 +577,7 @@ printf("hble libusb_set_configuration\n");
         pthread_mutex_unlock(&(localhble->usb_mutex));
         return -1;
     }
-printf("hble libusb_claim_interface\n");
+//printf("hble libusb_claim_interface\n");
     /* Try to claim it */
     r = libusb_claim_interface(localhble->hble_handle, 0);
     if (r < 0) {
@@ -596,13 +600,13 @@ printf("hble libusb_claim_interface\n");
     }
    
     pthread_mutex_unlock(&(localhble->usb_mutex));
-printf("hble hble_set_power\n");
+//printf("hble hble_set_power\n");
     hble_set_power(caph, 0x04, HBLE_POWER_RETRIES);
-printf("hble hble_set_channel\n");
+//printf("hble hble_set_channel\n");
     hble_set_channel(caph, *localchan);
     
     localhble->channel = *localchan;
-printf("hble hble_enter_promisc_mode\n");
+//printf("hble hble_enter_promisc_mode\n");
     hble_enter_promisc_mode(caph);
 
     localhble->ready = true;
@@ -611,7 +615,7 @@ printf("hble hble_enter_promisc_mode\n");
 }
 
 int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *privchan, char *msg) {
-printf("hble chancontrol_callback\n");
+//printf("hble chancontrol_callback\n");
     local_hble_t *localhble = (local_hble_t *) caph->userdata;
     local_channel_t *channel = (local_channel_t *) privchan;
     int r;
@@ -640,7 +644,7 @@ printf("hble chancontrol_callback\n");
 
 /* Run a standard glib mainloop inside the capture thread */
 void capture_thread(kis_capture_handler_t *caph) {
-printf("hble capture_thread\n");
+//printf("hble capture_thread\n");
     local_hble_t *localhble = (local_hble_t *) caph->userdata;
     char errstr[STATUS_MAX];
 
