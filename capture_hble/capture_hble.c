@@ -151,7 +151,7 @@ int hble_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_t rx
     localhble->error_ctr = 0; /*we got something valid so reset*/
 
     //convert
-    printf("hble_receive_payload actual_len:%d\n",actual_len);
+    //printf("hble_receive_payload actual_len:%d\n",actual_len);
     if(actual_len > 0)
     {
         for (int i = 0; i < actual_len; i++)
@@ -177,7 +177,7 @@ int hble_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_t rx
     }
     else
         actual_len = 1;
-    printf("hble_receive_payload actual_len:%d\n",actual_len);
+    //printf("hble_receive_payload actual_len:%d\n",actual_len);
     return actual_len;
 }
 
