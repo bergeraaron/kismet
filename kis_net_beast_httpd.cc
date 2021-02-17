@@ -111,6 +111,12 @@ void kis_net_beast_httpd::trigger_deferred_startup() {
     register_mime_type("txt", "text/plain");
     register_mime_type("pcap", "application/vnd.tcpdump.pcap");
     register_mime_type("pcapng", "application/vnd.tcpdump.pcap");
+    register_mime_type("ttf", "font/ttf");
+    register_mime_type("otf", "font/otf");
+    register_mime_type("eot", "application/vnd.ms-fontobject");
+    register_mime_type("woff", "font/woff");
+    register_mime_type("woff2", "font/woff2");
+
 
     for (const auto& m : Globalreg::globalreg->kismet_config->fetch_opt_vec("httpd_mime")) {
         auto comps = str_tokenize(m, ":");
@@ -966,10 +972,6 @@ bool kis_net_beast_httpd::serve_file(std::shared_ptr<kis_net_beast_httpd_connect
     else if (uri.back() == '/') 
         uri += "index.html";
 
-    auto qpos = uri.find_first_of('?');
-    if (qpos != std::string::npos)
-        uri = uri.substr(0, qpos);
-
     kis_lock_guard<kis_mutex> lk(static_mutex, "beast_httpd serve_file");
 
     for (auto sd : static_dir_vec) {
@@ -1435,13 +1437,15 @@ bool kis_net_beast_httpd_connection::start() {
     auto generator_launched = std::promise<void>();
     auto generator_ft = generator_launched.get_future();
 
-    std::thread tr([this, route, &generator_launched]() {
+    auto self_ref = shared_from_this();
+
+    std::thread tr([this, route, &generator_launched, self_ref]() {
         generator_launched.set_value();
 
         // _MSG_INFO("invoking stream");
         try {
             // _MSG_INFO("(DEBUG) {} {} invoking route {}", verb_, uri_, route->route());
-            route->invoke(shared_from_this());
+            route->invoke(self_ref);
         } catch (const std::exception& e) {
             try {
                 set_status(500);

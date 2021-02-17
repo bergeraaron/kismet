@@ -233,8 +233,8 @@ void datasource_tracker_source_list::cancel() {
         list_cb(listed_sources);
 }
 
-void datasource_tracker_source_list::complete_list(std::vector<shared_interface> in_list,
-        unsigned int in_transaction) {
+void datasource_tracker_source_list::complete_list(std::shared_ptr<kis_datasource> source,
+        std::vector<shared_interface> in_list, unsigned int in_transaction) {
 
     kis_lock_guard<kis_mutex> lk(list_lock, "dstlist complete_list");
 
@@ -251,6 +251,8 @@ void datasource_tracker_source_list::complete_list(std::vector<shared_interface>
         complete_vec.push_back(v->second);
         ipc_list_map.erase(v);
     }
+
+    source->close_source();
 
     // If we've emptied the vec, end
     if (ipc_list_map.size() == 0) {
@@ -289,8 +291,9 @@ void datasource_tracker_source_list::list_sources(std::shared_ptr<datasource_tra
         }
 
         pds->list_interfaces(transaction, 
-            [this, self_ref] (unsigned int transaction, std::vector<shared_interface> interfaces) {
-                complete_list(interfaces, transaction);
+            [this, self_ref] (std::shared_ptr<kis_datasource> src, unsigned int transaction, 
+                std::vector<shared_interface> interfaces) {
+                complete_list(src, interfaces, transaction);
             });
     }
 
@@ -303,7 +306,9 @@ void datasource_tracker_source_list::list_sources(std::shared_ptr<datasource_tra
             [this, self_ref] (int) -> int {
                 if (cancelled)
                     return 0;
+
                 cancel();
+
                 return 0;
             });
 }
@@ -1389,9 +1394,6 @@ void datasource_tracker::open_datasource(const std::string& in_source,
 
             auto probe_ref = i->second;
 
-            // Remove us from the active vec
-            probing_map.erase(i);
-
             if (builder == nullptr) {
                 // We couldn't find a type, return an error to our initial open CB
                 auto ss = fmt::format("Unable to find driver for '{}'.  Make sure that any required plugins "
@@ -1403,8 +1405,7 @@ void datasource_tracker::open_datasource(const std::string& in_source,
                 lock.lock();
             } else {
                 // We got a builder
-                auto ss = fmt::format("Found type '{}' for '{}'", builder->get_source_type(), i->second->get_definition());
-                _MSG(ss, MSGFLAG_INFO);
+                _MSG_INFO("Found type '{}' for '{}'", builder->get_source_type(), i->second->get_definition());
 
                 // Let go of the lock
                 lock.unlock();
@@ -1412,6 +1413,9 @@ void datasource_tracker::open_datasource(const std::string& in_source,
                 // Initiate an open w/ a known builder, associate the prototype definition with it
                 open_datasource(probe_ref->get_definition(), builder, in_cb);
             }
+
+            // Remove us from the active vec
+            probing_map.erase(i);
 
             // Schedule a cleanup 
             schedule_cleanup();
