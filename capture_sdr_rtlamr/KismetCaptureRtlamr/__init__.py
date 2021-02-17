@@ -52,7 +52,7 @@ class KismetRtlamr(object):
         self.kismet = None
 
         self.frequency = 912380000 #912600000
-        self.rate = 2359000
+        self.rate = 2359296 #2359000
         self.usb_buf_sz = 16 * 16384
 
         # At our given rate, we're 72 samples per symbol
