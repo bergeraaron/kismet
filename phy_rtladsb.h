@@ -7,7 +7,7 @@
     (at your option) any later version.
 
     Kismet is distributed in the hope that it will be useful,
-      but WITHOUT ANY WARRANTY; without even the implied warranty of
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
@@ -24,14 +24,27 @@
 
 
 #include "adsb_icao.h"
+#include "datasourcetracker.h"
 #include "devicetracker_component.h"
 #include "globalregistry.h"
-#include "kis_net_microhttpd.h"
+#include "kis_net_beast_httpd.h"
 #include "phyhandler.h"
 #include "trackedelement.h"
 
-// Thermometer type rtl data, derived from the rtl device.  This adds new
-// fields for adsb but uses the same base IDs
+/* ADSB BEAST binary frame
+ * https://wiki.jetvision.de/wiki/Mode-S_Beast:Data_Output_Formats
+ */
+typedef struct adsb_beast_frame {
+    char esc;
+    char frametype;
+    // We use the top 28 bits as the lower part of a unix timestamp, 
+    // and the bottom 20 bits as the uS.
+    char mlat_ts[6];
+    char signal;
+    char modes[0];
+} __attribute__((packed)) adsb_beast_frame_t;
+
+// ADSB plane data
 class rtladsb_tracked_adsb : public tracker_component {
 public:
     rtladsb_tracked_adsb() :
@@ -61,19 +74,33 @@ public:
         update_location = false;
     }
 
+    rtladsb_tracked_adsb(const rtladsb_tracked_adsb *p) :
+        tracker_component{p} {
+
+        __ImportField(icao, p);
+        __ImportField(icao_record, p);
+        __ImportField(callsign, p);
+        __ImportField(gsas, p);
+        
+        __ImportField(odd_raw_lat, p);
+        __ImportField(odd_raw_lon, p);
+        __ImportField(odd_ts, p);
+        __ImportField(even_raw_lat, p);
+        __ImportField(even_raw_lon, p);
+        __ImportField(even_ts, p);
+
+        reserve_fields(nullptr);
+        lat = lon = alt = heading = speed = 0;
+        update_location = false;
+    }
+
     virtual uint32_t get_signature() const override {
         return adler32_checksum("rtladsb_tracked_adsb");
     }
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -142,6 +169,8 @@ public:
     static int packet_handler(CHAINCALL_PARMS);
 
 protected:
+    std::shared_ptr<datasource_tracker> datasourcetracker;
+
     std::shared_ptr<kis_adsb_icao> icaodb;
 
     int pack_comp_gps;
@@ -172,13 +201,13 @@ protected:
 
     int rtladsb_adsb_id;
 
-    int pack_comp_common, pack_comp_json, pack_comp_meta;
+    int pack_comp_common, pack_comp_json, pack_comp_meta, pack_comp_datasource;
 
     std::shared_ptr<tracker_element_string> rtl_manuf;
 
-    std::shared_ptr<kis_net_httpd_simple_tracked_endpoint> adsb_map_endp;
-    std::shared_ptr<tracker_element> adsb_map_endp_handler();
+    std::shared_ptr<tracker_element> adsb_map_endp_handler(std::shared_ptr<kis_net_beast_httpd_connection> con);
 
+    int map_min_lat_id, map_max_lat_id, map_min_lon_id, map_max_lon_id, map_recent_devs_id;
 };
 
 #endif

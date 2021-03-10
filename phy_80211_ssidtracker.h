@@ -22,7 +22,6 @@
 #include "config.h"
 
 #include <functional>
-#include <unordered_map>
 
 #include "devicetracker.h"
 #include "devicetracker_component.h"
@@ -30,7 +29,9 @@
 #include "globalregistry.h"
 
 #include "kis_mutex.h"
-#include "kis_net_microhttpd.h"
+#include "kis_net_beast_httpd.h"
+
+#include "robin_hood.h"
 
 
 // Tracked SSID group; a ssid, who has beaconed, probed, and responded for it,
@@ -58,19 +59,27 @@ public:
         reserve_fields(e);
     }
 
-    dot11_tracked_ssid_group(int in_id, const std::string& in_ssid, unsigned int in_ssid_len,
-            unsigned int in_crypt_set) :
-        tracker_component(in_id) {
-        mutex.set_name("dot11_tracked_ssid_group internal");
+    dot11_tracked_ssid_group(const dot11_tracked_ssid_group *p) :
+        tracker_component{p} {
 
-        register_fields();
+        __ImportField(ssid_hash, p);
+        __ImportField(ssid, p);
+        __ImportField(ssid_len, p);
+        __ImportField(crypt_set, p);
+        __ImportField(advertising_device_map, p);
+        __ImportField(responding_device_map, p);
+        __ImportField(probing_device_map, p);
+        __ImportField(advertising_device_len, p);
+        __ImportField(responding_device_len, p);
+        __ImportField(probing_device_len, p);
+        __ImportField(first_time, p);
+        __ImportField(last_time, p);
+
         reserve_fields(nullptr);
-
-        set_ssid(in_ssid);
-        set_ssid_len(in_ssid_len);
-        set_crypt_set(in_crypt_set);
-        set_ssid_hash(generate_hash(in_ssid, in_ssid_len, in_crypt_set));
     }
+
+    dot11_tracked_ssid_group(int in_id, const std::string& in_ssid, unsigned int in_ssid_len,
+            unsigned int in_crypt_set);
 
     virtual uint32_t get_signature() const override {
         return adler32_checksum("dot11_tracked_ssid_group");
@@ -78,13 +87,7 @@ public:
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -100,15 +103,13 @@ public:
     __Proxy(probing_device_len, uint64_t, uint64_t, uint64_t, probing_device_len);
     __Proxy(responding_device_len, uint64_t, uint64_t, uint64_t, responding_device_len);
 
-    static uint64_t generate_hash(const std::string& ssid, unsigned int ssid_len, uint64_t crypt_set);
-
     void add_advertising_device(std::shared_ptr<kis_tracked_device_base> device);
     void add_probing_device(std::shared_ptr<kis_tracked_device_base> device);
     void add_responding_device(std::shared_ptr<kis_tracked_device_base> device);
 
     virtual void pre_serialize() override {
         // We have to protect our maps so we lock around them
-        local_eol_locker el(&mutex);
+        mutex.lock();
 
         set_advertising_device_len(advertising_device_map->size());
         set_probing_device_len(probing_device_map->size());
@@ -116,11 +117,11 @@ public:
     }
 
     virtual void post_serialize() override {
-        local_unlocker ul(&mutex);
+        mutex.unlock();
     }
 
 protected:
-    kis_recursive_timed_mutex mutex;
+    kis_mutex mutex;
 
     virtual void register_fields() override;
     virtual void reserve_fields(std::shared_ptr<tracker_element_map> e) override;
@@ -172,17 +173,15 @@ public:
             std::shared_ptr<kis_tracked_device_base> device);
 
 protected:
-    kis_recursive_timed_mutex mutex;
+    kis_mutex mutex;
 
-    std::unordered_map<size_t, std::shared_ptr<dot11_tracked_ssid_group>> ssid_map;
+    robin_hood::unordered_node_map<size_t, std::shared_ptr<dot11_tracked_ssid_group>> ssid_map;
     std::shared_ptr<tracker_element_vector> ssid_vector;
 
     int tracked_ssid_id;
 
-    std::shared_ptr<kis_net_httpd_simple_post_endpoint> ssid_endp;
-
-    unsigned int ssid_endpoint_handler(std::ostream& stream, const std::string& uri,
-            const Json::Value& json, kis_net_httpd_connection::variable_cache_map& postvars);
+    void ssid_endpoint_handler(std::shared_ptr<kis_net_beast_httpd_connection> con);
+    std::shared_ptr<tracker_element> detail_endpoint_handler(std::shared_ptr<kis_net_beast_httpd_connection> con);
 
     int cleanup_timer_id;
 

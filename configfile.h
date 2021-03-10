@@ -68,6 +68,9 @@ public:
 	// equal to true, or missing.)
 	int fetch_opt_bool(std::string in_key, int dvalue);
 
+    // Fetch an opt as a simple path
+    std::string fetch_opt_path(const std::string& in_key, const std::string& in_dfl);
+
     // Older API
     int fetch_opt_int(const std::string& in_key, int dvalue);
     unsigned int fetch_opt_uint(const std::string& in_key, unsigned int dvalue);
@@ -78,7 +81,7 @@ public:
     // default value is used.
     template<typename T>
     T fetch_opt_as(const std::string& in_key, const T& dvalue) {
-        local_locker l(&config_locker);
+        kis_lock_guard<kis_mutex> lk(config_locker);
 
         auto ki = config_map.find(str_lower(in_key));
 
@@ -101,7 +104,7 @@ public:
     // Set a value, converting the arbitrary input into a string
     template<typename T>
     void set_opt(const std::string& in_key, const T in_value, int in_dirty) {
-        local_locker l(&config_locker); 
+        kis_lock_guard<kis_mutex> lg(config_locker);
         std::vector<config_entity> v;
         config_entity e(fmt::format("{}", in_value), "::dynamic::");
         v.push_back(e);
@@ -151,6 +154,9 @@ protected:
             std::map<std::string, std::vector<config_entity> > &target_map,
             std::map<std::string, int> &target_map_dirty);
 
+    std::string process_log_template(const std::string& path, const std::string& logname,
+            const std::string& type, unsigned int iteration);
+
     std::string filename;
 
     std::map<std::string, std::vector<config_entity> > config_map;
@@ -163,7 +169,7 @@ protected:
 
     std::string final_override;
 
-    kis_recursive_timed_mutex config_locker;
+    kis_mutex config_locker;
 };
 
 // Representation of 'complex' kismet config file values of the type:
@@ -200,7 +206,7 @@ public:
     // If the key is not present, return the default value
     template<typename T>
     T get_value_as(const std::string& in_key, const T& dvalue) {
-        local_locker l(&mutex);
+        kis_lock_guard<kis_mutex> lk(mutex);
 
         auto ki = content_map.find(str_lower(in_key));
 
@@ -220,7 +226,7 @@ public:
     // Set a value, converting the arbitrary input into a string
     template<typename T>
     void set_value(const std::string& in_key, T in_value) {
-        local_locker l(&mutex); 
+        kis_lock_guard<kis_mutex> lk(mutex);
         content_map[in_key] = fmt::format("{}", in_value);
     }
 
@@ -233,7 +239,7 @@ public:
     friend std::istream& operator>>(std::istream& is, header_value_config& c);
 
 protected:
-    kis_recursive_timed_mutex mutex;
+    kis_mutex mutex;
 
     std::string header;
     std::map<std::string, std::string> content_map;

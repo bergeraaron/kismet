@@ -26,7 +26,6 @@
 #include "globalregistry.h"
 #include "kis_mutex.h"
 #include "trackedelement.h"
-#include "kis_net_microhttpd.h"
 #include "devicetracker_component.h"
 #include "streamtracker.h"
 
@@ -46,7 +45,6 @@ public:
         tracker_component() {
         register_fields();
         reserve_fields(NULL);
-        set_local_name("kismet.log.type_driver");
         initialize();
     }
 
@@ -54,7 +52,6 @@ public:
         tracker_component(in_id) {
         register_fields();
         reserve_fields(NULL);
-        set_local_name("kismet.log.type_driver");
         initialize();
     }
 
@@ -62,7 +59,19 @@ public:
         tracker_component(in_id) {
         register_fields();
         reserve_fields(e);
-        set_local_name("kismet.log.type_driver");
+        initialize();
+    }
+
+    kis_logfile_builder(const kis_logfile_builder *p) :
+        tracker_component{p} {
+
+        __ImportField(log_class, p);
+        __ImportField(log_name, p);
+        __ImportField(stream_log, p);
+        __ImportField(singleton, p);
+        __ImportField(description, p);
+
+        reserve_fields(nullptr);
         initialize();
     }
 
@@ -74,13 +83,7 @@ public:
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -102,6 +105,10 @@ protected:
     virtual void register_fields() override {
         tracker_component::register_fields();
 
+        Globalreg::globalreg->entrytracker->register_field("kismet.log.type_driver",
+                tracker_element_factory<tracker_element_map>(),
+                "logfile driver");
+
         register_field("kismet.logfile.type.class", "class/type", &log_class);
         register_field("kismet.logfile.type.name", "base type name", &log_name);
         register_field("kismet.logfile.type.stream", "continual streaming", &stream_log);
@@ -119,7 +126,8 @@ protected:
 
 // Logfiles written to disk can be 'block' logs (like the device log), or they can be
 // streaming logs (like gps or pcapng streams); 
-class kis_logfile : public tracker_component, public streaming_agent {
+class kis_logfile : public tracker_component, public streaming_agent, 
+    public std::enable_shared_from_this<kis_logfile> {
 public:
     kis_logfile() :
         tracker_component() {
@@ -153,8 +161,11 @@ public:
         set_int_log_uuid(luuid);
     }
 
+    // We don't implement a field cloner because we always have to get created by
+    // injecting a builder
+
     virtual ~kis_logfile() { 
-        local_locker l(&log_mutex);
+        kis_lock_guard<kis_mutex> lk(log_mutex, "~kis_logfile");
 
         if (builder != NULL && builder->get_stream()) {
             std::shared_ptr<stream_tracker> streamtracker = 
@@ -168,20 +179,8 @@ public:
         return adler32_checksum("kis_logfile");
     }
 
-    virtual std::unique_ptr<tracker_element> clone_type() override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
-        return std::move(dup);
-    }
-
     virtual bool open_log(std::string in_path) { 
-        local_locker lock(&log_mutex);
+        kis_lock_guard<kis_mutex> lk(log_mutex, "logfile open_log");
 
         set_int_log_path(in_path);
         set_int_log_open(false);
@@ -190,7 +189,7 @@ public:
     }
 
     virtual void close_log() { 
-        local_locker lock(&log_mutex);
+        kis_lock_guard<kis_mutex> lk(log_mutex, "logfile close_log");
 
         set_int_log_open(false);
     }
@@ -215,7 +214,7 @@ protected:
     // Builder/prototype that made us
     shared_log_builder builder;
 
-    kis_recursive_timed_mutex log_mutex;
+    kis_mutex log_mutex;
 
     std::shared_ptr<tracker_element_uuid> log_uuid;
     std::shared_ptr<tracker_element_string> log_description;
@@ -223,8 +222,8 @@ protected:
     std::shared_ptr<tracker_element_uint8> log_open;
 };
 
-class log_tracker : public tracker_component, public kis_net_httpd_cppstream_handler, 
-    public lifetime_global, public deferred_startup {
+class log_tracker : public tracker_component, public lifetime_global, public deferred_startup, 
+    public std::enable_shared_from_this<log_tracker> {
 public:
     static std::string global_name() { return "LOGTRACKER"; }
 
@@ -235,15 +234,6 @@ public:
         Globalreg::globalreg->insert_global(global_name(), mon);
         return mon;
     }
-
-    // HTTP API
-    virtual bool httpd_verify_path(const char *path, const char *method) override;
-
-    virtual void httpd_create_stream_response(kis_net_httpd *httpd,
-            kis_net_httpd_connection *connection,
-            const char *url, const char *method, const char *upload_data,
-            size_t *upload_data_size, std::stringstream &stream) override;
-    virtual KIS_MHD_RETURN httpd_post_complete(kis_net_httpd_connection *concls) override;
 
     virtual void trigger_deferred_startup() override;
     virtual void trigger_deferred_shutdown() override;
@@ -276,7 +266,7 @@ protected:
     virtual void register_fields() override;
     virtual void reserve_fields(std::shared_ptr<tracker_element_map> e) override;
 
-    kis_recursive_timed_mutex tracker_mutex;
+    kis_mutex tracker_mutex;
 
     std::shared_ptr<stream_tracker> streamtracker;
 

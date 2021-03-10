@@ -83,11 +83,8 @@ class KismetRtl433(object):
 
         parser = argparse.ArgumentParser(description='RTL433 to Kismet bridge - Creates a rtl433 data source on a Kismet server and passes JSON-based records from the rtl_433 binary',
                 epilog='Requires the rtl_433 tool (install your distributions package or compile from https://github.com/merbanan/rtl_433)')
-        
-        parser.add_argument('--in-fd', action="store", type=int, dest="infd")
-        parser.add_argument('--out-fd', action="store", type=int, dest="outfd")
-        parser.add_argument('--connect', action="store", dest="connect")
-        parser.add_argument("--source", action="store", dest="source")
+
+        parser = kismetexternal.ExternalInterface.common_getopt(parser)
         
         self.config = parser.parse_args()
 
@@ -105,7 +102,7 @@ class KismetRtl433(object):
             self.proberet = self.datasource_probesource(source, options)
 
             if self.proberet == None:
-                print("Could not configure local source {}, check your source options and config.")
+                print(f"Could not configure local source {self.config.source}, check your source options and config.")
                 sys.exit(0)
 
             if not "success" in self.proberet:
@@ -124,7 +121,7 @@ class KismetRtl433(object):
 
 
     def run(self):
-        self.kismet = kismetexternal.Datasource(self.config.infd, self.config.outfd, remote = self.config.connect)
+        self.kismet = kismetexternal.Datasource(self.config)
 
         # self.kismet.debug = True
 
@@ -274,7 +271,8 @@ class KismetRtl433(object):
                     dev_index = serial
 
                 intf = kismetexternal.datasource_pb2.SubInterface()
-                intf.interface = "rtl433-{}".format(dev_index)
+                intf.interface = f"rtl433-{dev_index}"
+                intf.capinterface = f"rtl-{dev_index}"
                 intf.flags = ""
                 intf.hardware = self.rtl_get_device_name(i)
                 interfaces.append(intf)
@@ -348,7 +346,7 @@ class KismetRtl433(object):
         ret = {}
 
         # Does the source look like 'rtl433-XYZ'?
-        if not source[:7] == "rtl433-":
+        if not source[:7] == "rtl433-" and not source[:4] == "rtl-":
             ret['success'] = False
             ret['message'] = "Could not parse which rtlsdr device to use"
             return ret
@@ -409,6 +407,8 @@ class KismetRtl433(object):
             ret['uuid'] = options['uuid']
         else:
             ret['uuid'] = self.__get_rtlsdr_uuid(intnum)
+
+        ret['capture_interface'] = f"rtl-{devselector}"
 
         self.opts['device'] = intnum
 

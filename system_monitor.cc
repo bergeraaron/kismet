@@ -45,6 +45,7 @@ Systemmonitor::Systemmonitor() :
 
     devicetracker = Globalreg::fetch_mandatory_global_as<device_tracker>();
     eventbus = Globalreg::fetch_mandatory_global_as<event_bus>();
+    timetracker = Globalreg::fetch_mandatory_global_as<time_tracker>();
 
     status = std::make_shared<tracked_system_status>();
 
@@ -57,9 +58,7 @@ Systemmonitor::Systemmonitor() :
     trigger_tm.tv_sec = time(0) + 1;
     trigger_tm.tv_usec = 0;
 
-    auto timetracker = Globalreg::fetch_mandatory_global_as<time_tracker>();
-    timer_id = 
-        timetracker->register_timer(0, &trigger_tm, 0, this);
+    timer_id = timetracker->register_timer(0, &trigger_tm, 0, this);
 
     // Link the RRD out of the devicetracker
     status->insert(devicetracker->get_packets_rrd());
@@ -90,7 +89,7 @@ Systemmonitor::Systemmonitor() :
 
     status->set_username(uidstr.str());
 
-    status->set_server_uuid(Globalreg::globalreg->server_uuid);
+    status->insert(Globalreg::globalreg->server_uuid);
 
     status->set_server_version(fmt::format("{}-{}-{}", VERSION_MAJOR, VERSION_MINOR, VERSION_TINY));
     status->set_server_git(VERSION_GIT_COMMIT);
@@ -104,21 +103,23 @@ Systemmonitor::Systemmonitor() :
     sensors_init(NULL);
 #endif
 
-    monitor_endp = 
-        std::make_shared<kis_net_httpd_simple_tracked_endpoint>("/system/status", 
-                status, &monitor_mutex);
-    user_monitor_endp =
-        std::make_shared<kis_net_httpd_simple_unauth_tracked_endpoint>("/system/user_status", 
-            [this](void) -> std::shared_ptr<tracker_element> {
+    auto httpd = 
+        Globalreg::fetch_mandatory_global_as<kis_net_beast_httpd>();
+
+    monitor_endp = std::make_shared<kis_net_web_tracked_endpoint>(status, monitor_mutex);
+    httpd->register_route("/system/status", {"GET", "POST"}, httpd->RO_ROLE, {}, monitor_endp);
+
+    user_monitor_endp = std::make_shared<kis_net_web_tracked_endpoint>(
+            [this](std::shared_ptr<kis_net_beast_httpd_connection>) -> std::shared_ptr<tracker_element> {
                 auto use = std::make_shared<tracker_element_map>();
-
                 use->insert(status->get_tracker_username());
-
                 return use;
-            });
+                });
+    httpd->register_unauth_route("/system/user_status", {"GET", "POST"}, {}, user_monitor_endp);
+
     timestamp_endp = 
-        std::make_shared<kis_net_httpd_simple_tracked_endpoint>("/system/timestamp", 
-            [this](void) -> std::shared_ptr<tracker_element> {
+        std::make_shared<kis_net_web_tracked_endpoint>(
+            [this](std::shared_ptr<kis_net_beast_httpd_connection>) -> std::shared_ptr<tracker_element> {
                 auto tse = std::make_shared<tracker_element_map>();
 
                 tse->insert(status->get_tracker_timestamp_sec());
@@ -132,6 +133,7 @@ Systemmonitor::Systemmonitor() :
 
                 return tse;
             });
+    httpd->register_route("/system/timestamp", {"GET", "POST"}, httpd->RO_ROLE, {}, timestamp_endp);
 
     if (Globalreg::globalreg->kismet_config->fetch_opt_bool("kis_log_system_status", true)) {
         auto snap_time_s = 
@@ -151,7 +153,7 @@ Systemmonitor::Systemmonitor() :
                         std::stringstream js;
 
                         {
-                            local_locker l(&monitor_mutex);
+                            kis_lock_guard<kis_mutex> lk(monitor_mutex);
                             Globalreg::globalreg->entrytracker->serialize("json", js, status, NULL);
                         }
 
@@ -178,25 +180,74 @@ Systemmonitor::Systemmonitor() :
                 std::stringstream js;
 
                 {
-                    local_locker l(&monitor_mutex);
+                    kis_lock_guard<kis_mutex> lk(monitor_mutex);
                     Globalreg::globalreg->entrytracker->serialize("json", js, status, NULL);
                 }
 
                 kismetdb->log_snapshot(nullptr, tv, "SYSTEM", js.str());
             });
 
+    event_timer_id = 
+        timetracker->register_timer(std::chrono::seconds(1), true, 
+                [this](int) -> int {
+
+                status->pre_serialize();
+
+                auto tse = std::make_shared<tracker_element_map>();
+
+                tse->insert(status->get_tracker_timestamp_sec());
+                tse->insert(status->get_tracker_timestamp_usec());
+
+                /*
+                struct timeval now;
+                gettimeofday(&now, NULL);
+
+                status->set_timestamp_sec(now.tv_sec);
+                status->set_timestamp_usec(now.tv_usec);
+                */
+
+                auto evt = eventbus->get_eventbus_event(event_timestamp());
+                evt->get_event_content()->insert(event_timestamp(), tse);
+                eventbus->publish(evt);
+
+                auto bate = std::make_shared<tracker_element_map>();
+                bate->insert(status->get_tracker_battery_ac());
+                bate->insert(status->get_tracker_battery_perc());
+                bate->insert(status->get_tracker_battery_charging());
+                bate->insert(status->get_tracker_battery_remaining());
+
+                auto bevt = eventbus->get_eventbus_event(event_battery());
+                bevt->get_event_content()->insert(event_battery(), bate);
+                eventbus->publish(bevt);
+
+                auto sevt = eventbus->get_eventbus_event(event_stats());
+                auto sate = std::make_shared<tracker_element_map>();
+
+                sate->insert(status->get_tracker_num_fields());
+                sate->insert(status->get_tracker_num_components());
+                sate->insert(status->get_tracker_num_http_connections());
+                sate->insert(status->get_tracker_memory());
+                sate->insert(status->get_tracker_devices());
+
+                sevt->get_event_content()->insert(event_stats(), sate);
+                eventbus->publish(sevt);
+
+
+                status->post_serialize();
+
+                return 1;
+                });
+
 }
 
 Systemmonitor::~Systemmonitor() {
-    local_locker lock(&monitor_mutex);
+    kis_lock_guard<kis_mutex> lk(monitor_mutex);
 
     Globalreg::globalreg->remove_global("SYSTEMMONITOR");
 
-    auto timetracker = Globalreg::fetch_global_as<time_tracker>("TIMETRACKER");
-    if (timetracker != nullptr) {
-        timetracker->remove_timer(timer_id);
-        timetracker->remove_timer(kismetdb_log_timer);
-    }
+    timetracker->remove_timer(timer_id);
+    timetracker->remove_timer(kismetdb_log_timer);
+    timetracker->remove_timer(event_timer_id);
 
     eventbus->remove_listener(logopen_evt_id);
 }
@@ -217,7 +268,6 @@ void tracked_system_status::register_fields() {
     register_field("kismet.system.version", "Kismet version string", &server_version);
     register_field("kismet.system.git", "Git commit string", &server_git);
     register_field("kismet.system.build_time", "Server build time", &build_time);
-    register_field("kismet.system.server_uuid", "UUID of kismet server", &server_uuid);
     register_field("kismet.system.server_name", "Arbitrary name of server instance", &server_name);
     register_field("kismet.system.server_description", "Arbitrary server description", &server_description);
     register_field("kismet.system.server_location", "Arbitrary server location string", &server_location);
@@ -230,10 +280,11 @@ void tracked_system_status::register_fields() {
 
     register_field("kismet.system.num_fields", "number of allocated tracked element fields", &num_fields);
     register_field("kismet.system.num_components", "number of allocated tracked element components", &num_components);
+    register_field("kismet.system.num_http_connections", "number of concurrent http connections", &num_http_connections);
 }
 
 int Systemmonitor::timetracker_event(int eventid) {
-    local_locker lock(&monitor_mutex);
+    kis_lock_guard<kis_mutex> lk(monitor_mutex);
 
     int num_devices = devicetracker->fetch_num_devices();
 
@@ -361,7 +412,7 @@ int Systemmonitor::timetracker_event(int eventid) {
 }
 
 void tracked_system_status::pre_serialize() {
-    local_locker lock(&monitor_mutex);
+    kis_lock_guard<kis_mutex> lk(monitor_mutex);
 
     kis_battery_info batinfo;
     fetch_battery_info(&batinfo);
@@ -386,5 +437,6 @@ void tracked_system_status::pre_serialize() {
 
     set_num_fields(Globalreg::n_tracked_fields);
     set_num_components(Globalreg::n_tracked_components);
+    set_num_http_connections(Globalreg::n_tracked_http_connections);
 } 
 

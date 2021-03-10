@@ -27,7 +27,7 @@ kis_gps_fake::kis_gps_fake(shared_gps_builder in_builder) :
 kis_gps_fake::~kis_gps_fake() { }
 
 bool kis_gps_fake::open_gps(std::string in_opts) {
-    local_locker lock(gps_mutex);
+    kis_lock_guard<kis_mutex> lk(gps_mutex, "kis_gps_fake open_gps");
 
     if (!kis_gps::open_gps(in_opts)) {
         return false;
@@ -84,19 +84,19 @@ bool kis_gps_fake::open_gps(std::string in_opts) {
     return true;
 }
 
-kis_gps_packinfo *kis_gps_fake::get_location() {
-    local_locker lock(gps_mutex);
+std::shared_ptr<kis_gps_packinfo> kis_gps_fake::get_location() {
+    kis_lock_guard<kis_mutex> lk(gps_mutex, "gps_fake get_location");
 
     gettimeofday(&(gps_location->tv), NULL);
 
-    return gps_location;
+    return std::make_shared<kis_gps_packinfo>(new kis_gps_packinfo(gps_location)); 
 }
 
-kis_gps_packinfo *kis_gps_fake::get_last_location() {
-    local_locker lock(gps_mutex);
+std::shared_ptr<kis_gps_packinfo> kis_gps_fake::get_last_location() {
+    kis_lock_guard<kis_mutex> lk(gps_mutex, "gps_fake get_last_location");
 
     gettimeofday(&(gps_last_location->tv), NULL);
 
-    return gps_last_location;
+    return std::make_shared<kis_gps_packinfo>(new kis_gps_packinfo(gps_last_location)); 
 }
 

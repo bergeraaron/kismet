@@ -17,8 +17,12 @@
 */
 
 #include "eventbus.h"
+#include "kis_net_beast_httpd.h"
 
-event_bus::event_bus() {
+event_bus::event_bus() :
+    lifetime_global(),
+    deferred_startup() {
+
     mutex.set_name("event_bus");
     handler_mutex.set_name("event_bus_handler");
 
@@ -48,51 +52,142 @@ event_bus::~event_bus() {
     event_dispatch_t.join();
 }
 
+void event_bus::trigger_deferred_startup() {
+    auto httpd = Globalreg::fetch_mandatory_global_as<kis_net_beast_httpd>();
+
+    httpd->register_websocket_route("/eventbus/events", httpd->RO_ROLE, {"ws"},
+            std::make_shared<kis_net_web_function_endpoint>(
+                [this](std::shared_ptr<kis_net_beast_httpd_connection> con) {
+
+                std::unordered_map<std::string, unsigned long> reg_map;
+
+                auto ws = 
+                    std::make_shared<kis_net_web_websocket_endpoint>(con, 
+                        [this, &reg_map](std::shared_ptr<kis_net_web_websocket_endpoint> ws,
+                            boost::beast::flat_buffer& buf, bool text) {
+
+                            if (!text) {
+                                ws->close();
+                                return;
+                            }
+
+                            std::stringstream ss(boost::beast::buffers_to_string(buf.data()));
+                            Json::Value json;
+
+                            try {
+                                ss >> json;
+                            } catch (const std::exception& e) {
+                                _MSG_ERROR("Invalid websocket request (could not parse JSON message) on "
+                                        "/eventbus/events.ws");
+                                return;
+                            }
+
+                            if (!json["SUBSCRIBE"].isNull()) {
+                                auto e_k = reg_map.find(json["SUBSCRIBE"].asString());
+                                if (e_k != reg_map.end()) {
+                                    remove_listener(e_k->second);
+                                    reg_map.erase(e_k);
+                                }
+
+                                auto id = 
+                                    register_listener(json["SUBSCRIBE"].asString(), 
+                                            [ws, json](std::shared_ptr<eventbus_event> evt) {
+                                            
+                                            boost::asio::streambuf stream;
+                                            std::ostream os(&stream);
+
+                                            Globalreg::globalreg->entrytracker->serialize_with_json_summary("json", os, 
+                                                    evt->get_event_content(), json);
+
+                                            ws->write(stream.data(), true);
+
+                                            });
+                                
+                                reg_map[json["SUBSCRIBE"].asString()] = id;
+                            } 
+
+                            if (!json["UNSUBSCRIBE"].isNull()) {
+                                auto e_k = reg_map.find(json["UNSUBSCRIBE"].asString());
+                                if (e_k != reg_map.end()) {
+                                    remove_listener(e_k->second);
+                                    reg_map.erase(e_k);
+                                }
+
+                            }
+                        });
+
+                // Blind-catch all errors b/c we must release our listeners at the end
+                try {
+                    ws->handle_request(con);
+                } catch (const std::exception& e) {
+                    ;
+                }
+
+                for (auto s : reg_map)
+                    remove_listener(s.second);
+
+                }));
+
+}
+
 std::shared_ptr<eventbus_event> event_bus::get_eventbus_event(const std::string& event_type) {
     return std::make_shared<eventbus_event>(eventbus_event_id, event_type);
 }
 
 void event_bus::event_queue_dispatcher() {
-    local_demand_locker l(&mutex);
+    kis_unique_lock<kis_mutex> lock(mutex, std::defer_lock, "event_bus event_queue_dispatcher");
 
     while (!shutdown && 
             !Globalreg::globalreg->spindown && 
             !Globalreg::globalreg->fatal_condition &&
             !Globalreg::globalreg->complete) {
-        // Lock while we examine the queue
-        l.lock();
 
+        // Lock while we examine the queue
+        lock.lock();
+        std::shared_ptr<eventbus_event> e;
         if (event_queue.size() > 0) {
-            auto e = event_queue.front();
+            e = event_queue.front();
             event_queue.pop();
+        }
+        lock.unlock();
+
+        if (e != nullptr) {
+            // Lock the handler mutex while we're processing an event
+            kis_unique_lock<kis_mutex> rl(handler_mutex, std::defer_lock, "event_bus dispatch");
+
+            rl.lock();
 
             auto ch_listeners = callback_table.find(e->get_event_id());
-			auto ch_all_listeners = callback_table.find("*");
+            auto ch_all_listeners = callback_table.find("*");
 
             if (ch_listeners == callback_table.end() && ch_all_listeners == callback_table.end()) {
-                l.unlock();
                 continue;
             }
 
-            // Lock the handler mutex while we're processing an event
-            {
-                local_locker rl(&handler_mutex);
+            // Copy into a workvec in case one of the event handlers removes itself from the events
+            // in the future
+            std::vector<std::shared_ptr<callback_listener>> workvec;
 
-                // Unlock the rest of the eventbus
-                l.unlock();
-
-                if (ch_listeners != callback_table.end()) {
-                    for (const auto& cbl : ch_listeners->second) {
-                        cbl->cb(e);
-                    }
+            if (ch_listeners != callback_table.end()) {
+                for (const auto& cbl : ch_listeners->second)  {
+                    workvec.push_back(cbl);
                 }
+            }
 
-                if (ch_all_listeners != callback_table.end()) {
-                    for (const auto& cbl : ch_all_listeners->second) {
-                        cbl->cb(e);
-                    }
+            if (ch_all_listeners != callback_table.end()) {
+                for (const auto& cbl : ch_all_listeners->second) {
+                    workvec.push_back(cbl);
                 }
+            }
 
+            rl.unlock();
+
+            for (const auto& cbl : workvec) {
+                try {
+                    cbl->cb(e);
+                } catch (const std::exception& e) {
+                    _MSG_ERROR("Error in eventbus handler: {}", e.what());
+                }
             }
 
             // Loop for more events
@@ -101,9 +196,6 @@ void event_bus::event_queue_dispatcher() {
 
         // Reset the lock
         event_cl.lock();
-      
-        // Unlock our hold on the system
-        l.unlock();
 
         // Wait until new events
         event_cl.block_until();
@@ -111,18 +203,20 @@ void event_bus::event_queue_dispatcher() {
 }
 
 unsigned long event_bus::register_listener(const std::string& channel, cb_func cb) {
-    local_locker l(&handler_mutex);
+    kis_lock_guard<kis_mutex> lk(handler_mutex, "event_bus register_listener");
 
+    /*
     auto cbl = std::make_shared<callback_listener>(std::list<std::string>{channel}, cb, next_cbl_id++);
 
     callback_table[channel].push_back(cbl);
     callback_id_table[cbl->id] = cbl;
+    */
 
-    return cbl->id;
+    return register_listener(std::list<std::string>{channel}, cb);
 }
 
 unsigned long event_bus::register_listener(const std::list<std::string>& channels, cb_func cb) {
-    local_locker l(&handler_mutex);
+    kis_lock_guard<kis_mutex> lk(handler_mutex, "event_bus register_listener (vector)");
 
     auto cbl = std::make_shared<callback_listener>(channels, cb, next_cbl_id++);
 
@@ -136,7 +230,7 @@ unsigned long event_bus::register_listener(const std::list<std::string>& channel
 }
 
 void event_bus::remove_listener(unsigned long id) {
-    local_locker l(&handler_mutex);
+    kis_lock_guard<kis_mutex> lk(handler_mutex, "event_bus remove_listener");
 
     // Find matching cbl
     auto cbl = callback_id_table.find(id);
@@ -145,12 +239,11 @@ void event_bus::remove_listener(unsigned long id) {
 
     // Match all channels this cbl is subscribed to
     for (auto c : cbl->second->channels) {
-        auto cb_list = callback_table[c];
 
         // remove from each channel
-        for (auto cbi = cb_list.begin(); cbi != cb_list.end(); ++cbi) {
+        for (auto cbi = callback_table[c].begin(); cbi != callback_table[c].end(); ++cbi) {
             if ((*cbi)->id == id) {
-                cb_list.erase(cbi);
+                callback_table[c].erase(cbi);
                 break;
             }
         }

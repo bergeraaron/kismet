@@ -36,6 +36,7 @@
 #include "trackedelement.h"
 #include "entrytracker.h"
 #include "kis_mutex.h"
+#include "json/json.h"
 
 
 // Complex trackable unit based on trackertype dataunion.
@@ -76,36 +77,19 @@ class tracker_component : public tracker_element_map {
     }
 
 // Ugly macro for standard proxy access but with an additional mutex; this should
-// be a kis_recursive_timed_mutex and is used with local_locker(...)
+// be a kis_mutex 
 #define __ProxyM(name, ptype, itype, rtype, cvar, mvar) \
-    virtual shared_tracker_element get_tracker_##name() const { \
-        local_shared_locker l((kis_recursive_timed_mutex *) &mvar); \
+    virtual shared_tracker_element get_tracker_##name() { \
+        kis_lock_guard<kis_mutex> lk(mvar, __func__); \
         return (std::shared_ptr<tracker_element>) cvar; \
     } \
     virtual rtype get_##name() { \
-        local_shared_locker l((kis_recursive_timed_mutex *) &mvar); \
+        kis_lock_guard<kis_mutex> lk(mvar, __func__); \
         auto r = get_tracker_value<ptype>(cvar); \
         return (rtype) r; \
     } \
     virtual void set_##name(const itype& in) { \
-        local_locker l((kis_recursive_timed_mutex *) &mvar); \
-        set_tracker_value<ptype>(cvar, static_cast<ptype>(in)); \
-    }
-
-// Ugly macro for standard proxy access but with an additional mutex; this should
-// be a std::shared_ptr<kis_recursive_timed_mutex> and is used with local_locker(...)
-#define __ProxyMS(name, ptype, itype, rtype, cvar, mvar) \
-    virtual shared_tracker_element get_tracker_##name() const { \
-        local_shared_locker l(mvar); \
-        return (std::shared_ptr<tracker_element>) cvar; \
-    } \
-    virtual rtype get_##name() { \
-        local_shared_locker l(mvar); \
-        auto r = get_tracker_value<ptype>(cvar); \
-        return (rtype) r; \
-    } \
-    virtual void set_##name(const itype& in) { \
-        local_locker l(mvar); \
+        kis_lock_guard<kis_mutex> lk(mvar, __func__); \
         set_tracker_value<ptype>(cvar, static_cast<ptype>(in)); \
     }
 
@@ -179,7 +163,7 @@ class tracker_component : public tracker_element_map {
 // Proxydynamic, but protected with a mutex
 #define __ProxyDynamicM(name, ptype, itype, rtype, cvar, id, mutex) \
     virtual shared_tracker_element get_tracker_##name() { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         if (cvar == nullptr) { \
             using ttype = std::remove_pointer<decltype(cvar.get())>::type; \
             cvar = Globalreg::globalreg->entrytracker->get_shared_instance_as<ttype>(id); \
@@ -189,7 +173,7 @@ class tracker_component : public tracker_element_map {
         return cvar; \
     } \
     virtual rtype get_##name() { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         if (cvar == nullptr) { \
             using ttype = std::remove_pointer<decltype(cvar.get())>::type; \
             cvar = Globalreg::globalreg->entrytracker->get_shared_instance_as<ttype>(id); \
@@ -199,7 +183,7 @@ class tracker_component : public tracker_element_map {
         return (rtype) get_tracker_value<ptype>(cvar); \
     } \
     virtual void set_##name(const itype& in) { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         if (cvar == nullptr) { \
             using ttype = std::remove_pointer<decltype(cvar.get())>::type; \
             cvar = Globalreg::globalreg->entrytracker->get_shared_instance_as<ttype>(id); \
@@ -209,7 +193,7 @@ class tracker_component : public tracker_element_map {
         cvar->set((ptype) in); \
     } \
     virtual void set_only_##name(const itype& in) { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         if (cvar == nullptr) { \
             using ttype = std::remove_pointer<decltype(cvar.get())>::type; \
             cvar = Globalreg::globalreg->entrytracker->get_shared_instance_as<ttype>(id); \
@@ -218,8 +202,8 @@ class tracker_component : public tracker_element_map {
         } \
         cvar->set((ptype) in); \
     } \
-    virtual bool has_##name() const { \
-        local_shared_locker l((kis_recursive_timed_mutex *) &mutex); \
+    virtual bool has_##name() { \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return cvar != nullptr; \
     }
 
@@ -284,24 +268,24 @@ class tracker_component : public tracker_element_map {
 // Get and set only, protected with mutex
 #define __ProxyGetM(name, ptype, rtype, cvar, mutex) \
     virtual rtype get_##name() { \
-        local_shared_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return (rtype) get_tracker_value<ptype>(cvar); \
     } 
 #define __ProxySetM(name, ptype, stype, cvar, mutex) \
     virtual void set_##name(const stype& in) { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         set_tracker_value<ptype>(cvar, in); \
     } 
 
 // Get and set only, protected with a std::shared_ptr<mutex>
 #define __ProxyGetMS(name, ptype, rtype, cvar, mutex) \
     virtual rtype get_##name() { \
-        local_shared_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return (rtype) get_tracker_value<ptype>(cvar); \
     } 
 #define __ProxySetMS(name, ptype, stype, cvar, mutex) \
     virtual void set_##name(const stype& in) { \
-        local_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         set_tracker_value<ptype>(cvar, in); \
     } 
 
@@ -324,12 +308,12 @@ class tracker_component : public tracker_element_map {
 #define __ProxyPrivSplitM(name, ptype, itype, rtype, cvar, mutex) \
     public: \
     virtual rtype get_##name() { \
-        local_shared_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return (rtype) get_tracker_value<ptype>(cvar); \
     } \
     protected: \
     virtual void set_int_##name(const itype& in) { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         cvar->set((ptype) in); \
     } \
     public:
@@ -340,12 +324,12 @@ class tracker_component : public tracker_element_map {
 #define __ProxyPrivSplitMS(name, ptype, itype, rtype, cvar, mutex) \
     public: \
     virtual rtype get_##name() { \
-        local_shared_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return (rtype) get_tracker_value<ptype>(cvar); \
     } \
     protected: \
     virtual void set_int_##name(const itype& in) { \
-        local_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         cvar->set((ptype) in); \
     } \
     public:
@@ -368,38 +352,38 @@ class tracker_component : public tracker_element_map {
 // Proxy increment and decrement functions, with mutex
 #define __ProxyIncDecM(name, ptype, rtype, cvar, mutex) \
     virtual void inc_##name() { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         (*cvar) += 1; \
     } \
     virtual void inc_##name(rtype i) { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         (*cvar) += (ptype) i; \
     } \
     virtual void dec_##name() { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         (*cvar) -= 1; \
     } \
     virtual void dec_##name(rtype i) { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         (*cvar) -= (ptype) i; \
     }
 
 // Proxy increment and decrement functions, with shared mutex
 #define __ProxyIncDecMS(name, ptype, rtype, cvar, mutex) \
     virtual void inc_##name() { \
-        local_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         (*cvar) += 1; \
     } \
     virtual void inc_##name(rtype i) { \
-        local_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         (*cvar) += (ptype) i; \
     } \
     virtual void dec_##name() { \
-        local_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         (*cvar) -= 1; \
     } \
     virtual void dec_##name(rtype i) { \
-        local_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         (*cvar) -= (ptype) i; \
     }
 
@@ -415,22 +399,22 @@ class tracker_component : public tracker_element_map {
 // Proxy add/subtract, with mutex
 #define __ProxyAddSubM(name, ptype, itype, cvar, mutex) \
     virtual void add_##name(itype i) { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         (*cvar) += (ptype) i; \
     } \
     virtual void sub_##name(itype i) { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         (*cvar) -= (ptype) i; \
     }
 
 // Proxy add/subtract, with shared mutex
 #define __ProxyAddSubMS(name, ptype, itype, cvar, mutex) \
     virtual void add_##name(itype i) { \
-        local_locker l(&mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         (*cvar) += (ptype) i; \
     } \
     virtual void sub_##name(itype i) { \
-        local_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         (*cvar) -= (ptype) i; \
     }
 
@@ -453,11 +437,11 @@ class tracker_component : public tracker_element_map {
 // Proxy sub-trackable (name, trackable type, class variable), with mutex
 #define __ProxyTrackableM(name, ttype, cvar, mutex) \
     virtual std::shared_ptr<ttype> get_##name() { \
-        local_shared_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return cvar; \
     } \
     virtual void set_##name(std::shared_ptr<ttype> in) { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         if (cvar != NULL) \
             erase(cvar); \
         cvar = in; \
@@ -465,18 +449,18 @@ class tracker_component : public tracker_element_map {
             insert(cvar); \
     }  \
     virtual shared_tracker_element get_tracker_##name() { \
-        local_shared_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return std::static_pointer_cast<tracker_element>(cvar); \
     } 
 
 // Proxy sub-trackable (name, trackable type, class variable), with mutex
 #define __ProxyTrackableMS(name, ttype, cvar, mutex) \
     virtual std::shared_ptr<ttype> get_##name() { \
-        local_shared_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return cvar; \
     } \
     virtual void set_##name(std::shared_ptr<ttype> in) { \
-        local_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         if (cvar != NULL) \
             erase(cvar); \
         cvar = in; \
@@ -484,7 +468,7 @@ class tracker_component : public tracker_element_map {
             insert(cvar); \
     }  \
     virtual shared_tracker_element get_tracker_##name() { \
-        local_shared_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return std::static_pointer_cast<tracker_element>(cvar); \
     } 
 
@@ -585,7 +569,7 @@ class tracker_component : public tracker_element_map {
 // built), with mutex
 #define __ProxyDynamicTrackableM(name, ttype, cvar, id, mutex) \
     virtual std::shared_ptr<ttype> get_##name() { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         if (cvar == NULL) { \
             cvar = Globalreg::globalreg->entrytracker->get_shared_instance_as<ttype>(id); \
             if (cvar != NULL) \
@@ -594,7 +578,7 @@ class tracker_component : public tracker_element_map {
         return cvar; \
     } \
     virtual void set_tracker_##name(std::shared_ptr<ttype> in) { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         if (cvar != nullptr) \
             erase(cvar); \
         cvar = in; \
@@ -604,11 +588,11 @@ class tracker_component : public tracker_element_map {
         } \
     } \
     virtual std::shared_ptr<ttype> get_tracker_##name() { \
-        local_shared_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return cvar; \
     } \
-    virtual bool has_##name() const { \
-        local_shared_locker l((kis_recursive_timed_mutex *) &mutex); \
+    virtual bool has_##name() { \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return cvar != NULL; \
     } \
     virtual void clear_##name() { \
@@ -620,7 +604,7 @@ class tracker_component : public tracker_element_map {
 // built), with mutex
 #define __ProxyDynamicTrackableMS(name, ttype, cvar, id, mutex) \
     virtual std::shared_ptr<ttype> get_##name() { \
-        local_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         if (cvar == NULL) { \
             cvar = Globalreg::globalreg->entrytracker->get_shared_instance_as<ttype>(id); \
             if (cvar != NULL) \
@@ -629,7 +613,7 @@ class tracker_component : public tracker_element_map {
         return cvar; \
     } \
     virtual void set_tracker_##name(std::shared_ptr<ttype> in) { \
-        local_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         if (cvar != nullptr) \
             erase(cvar); \
         cvar = in; \
@@ -639,11 +623,11 @@ class tracker_component : public tracker_element_map {
         } \
     } \
     virtual shared_tracker_element get_tracker_##name() { \
-        local_shared_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return std::static_pointer_cast<tracker_element>(cvar); \
     } \
-    virtual bool has_##name() const { \
-        local_shared_locker l(mutex); \
+    virtual bool has_##name() { \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return cvar != NULL; \
     }
 
@@ -676,32 +660,40 @@ class tracker_component : public tracker_element_map {
 // Proxy bitset functions (name, trackable type, data type, class var), with mutex
 #define __ProxyBitsetM(name, dtype, cvar, mutex) \
     virtual void bitset_##name(dtype bs) { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         (*cvar) |= bs; \
     } \
     virtual void bitclear_##name(dtype bs) { \
-        local_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex, __func__); \
         (*cvar) &= ~(bs); \
     } \
     virtual dtype bitcheck_##name(dtype bs) { \
-        local_shared_locker l((kis_recursive_timed_mutex *) &mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return (dtype) (get_tracker_value<dtype>(cvar) & bs); \
     }
 
 // Proxy bitset functions (name, trackable type, data type, class var), with mutex
 #define __ProxyBitsetMS(name, dtype, cvar, mutex) \
     virtual void bitset_##name(dtype bs) { \
-        local_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         (*cvar) |= bs; \
     } \
     virtual void bitclear_##name(dtype bs) { \
-        local_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         (*cvar) &= ~(bs); \
     } \
     virtual dtype bitcheck_##name(dtype bs) { \
-        local_shared_locker l(mutex); \
+        kis_lock_guard<kis_mutex> lk(mutex); \
         return (dtype) (get_tracker_value<dtype>(cvar) & bs); \
     }
+
+// Import from a builder instance and insert into our map
+#define __ImportField(f, b) \
+    f = tracker_element_clone_adaptor(b->f); \
+    insert(f)
+
+#define __ImportId(f, b) \
+    f = b->f
 
     class registered_field {
         // We use negative IDs to indicate dynamic assignment, since this exists for every field
@@ -753,6 +745,12 @@ public:
             Globalreg::n_tracked_components++;
         }
 
+    tracker_component(const tracker_component *p) :
+        tracker_element_map(p),
+        registered_fields{nullptr} {
+            Globalreg::n_tracked_components++;
+        }
+
 	virtual ~tracker_component() {
         Globalreg::n_tracked_components--;
 
@@ -762,19 +760,11 @@ public:
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
     tracker_component(tracker_component&&) = default;
-    tracker_component& operator=(tracker_component&&) = default;
-
     tracker_component(tracker_component&) = delete;
     tracker_component& operator=(tracker_component&) = delete;
 

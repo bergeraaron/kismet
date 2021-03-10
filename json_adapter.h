@@ -72,7 +72,7 @@ public:
 
     virtual int serialize(shared_tracker_element in_elem, std::ostream &stream,
             std::shared_ptr<rename_map> name_map = nullptr) override {
-        local_locker lock(&mutex);
+        kis_lock_guard<kis_mutex> lk(mutex, "ek_json serialize");
 
         if (in_elem->get_type() == tracker_type::tracker_vector) {
             for (auto i : *(std::static_pointer_cast<tracker_element_vector>(in_elem))) {
@@ -86,9 +86,11 @@ public:
                 stream << "\n";
             }
         } else {
-            // No longer accept invalid data for ekjson, it MUST be a vector as the top-level object
-            stream << "{\"error\": \"Invalid data supplied for ekjson.  Ekjson endpoints can only be serialized from vectors.\"}\n";
-            return -1;
+            json_adapter::pack(stream, in_elem, name_map, false, 0,
+                    [](const std::string& s) { 
+                    return multi_replace_all(s, ".", "_");
+                    });
+            stream << "\n";
         }
 
         return 0;
@@ -108,7 +110,7 @@ public:
 
     virtual int serialize(shared_tracker_element in_elem, std::ostream &stream,
             std::shared_ptr<rename_map> name_map = nullptr) override {
-        local_locker lock(&mutex);
+        kis_lock_guard<kis_mutex> lk(mutex, "it_json serialize");
 
         if (in_elem->get_type() == tracker_type::tracker_vector) {
             for (auto i : *(std::static_pointer_cast<tracker_element_vector>(in_elem))) {
@@ -116,9 +118,8 @@ public:
                 stream << "\n";
             }
         } else {
-            stream << "<h1>Invalid format for itjson</h1>itjson endpoints can only be used with array or list results\n";
-            return -1;
-            // json_adapter::pack(stream, in_elem, name_map);
+            json_adapter::pack(stream, in_elem, name_map);
+            stream << "\n";
         }
 
         return 1;
@@ -147,54 +148,5 @@ public:
 };
 
 }
-
-// "Storage" JSON adapter.  This adapter is intended to create JSON data suitable for
-// re-importing into Kismet (like for storing state data into a database for future
-// instances).
-//
-// Every record is split into an object containing multiple metadata fields; these
-// fields define the base field name and base field type; for instance a device
-// top-level record would be represented as:
-// {
-//    "objname": "kismet.device.base",
-//    "objtype": "tracker_map",
-//    "objdata": {
-//       ... device fields
-//     }
-// }
-//
-// Sub-objects inside a map will be represented as:
-// {
-// ...
-//    "kismet.device.base.key": {
-//        "objname": "kismet.device.base.key",
-//        "objtype": "tracker_uint64",
-//        "objdata": 31777509604288
-//     }
-// ...
-// }
-
-namespace storage_json_adapter {
-
-void pack(std::ostream &stream, shared_tracker_element e,
-        std::shared_ptr<tracker_element_serializer::rename_map> name_map = nullptr);
-
-class serializer : public tracker_element_serializer {
-public:
-    serializer() :
-        tracker_element_serializer() { }
-
-    virtual int serialize(shared_tracker_element in_elem, std::ostream &stream,
-            std::shared_ptr<rename_map> name_map = nullptr) override {
-        // Call the packer in pretty mode
-        pack(stream, in_elem, name_map);
-
-        return 1;
-    }
-
-};
-
-}
-
 
 #endif

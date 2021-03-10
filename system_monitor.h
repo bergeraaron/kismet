@@ -28,7 +28,7 @@
 #include "timetracker.h"
 #include "devicetracker_component.h"
 #include "devicetracker.h"
-#include "kis_net_microhttpd.h"
+#include "kis_net_beast_httpd.h"
 
 class event_bus;
 
@@ -58,12 +58,6 @@ public:
         return std::move(dup);
     }
 
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
-        return std::move(dup);
-    }
-
     virtual ~tracked_system_status() { }
 
     __Proxy(battery_perc, int32_t, int32_t, int32_t, battery_perc);
@@ -86,7 +80,6 @@ public:
     __Proxy(server_git, std::string, std::string, std::string, server_git);
     __Proxy(build_time, std::string, std::string, std::string, build_time);
 
-    __Proxy(server_uuid, uuid, uuid, uuid, server_uuid);
     __Proxy(server_name, std::string, std::string, std::string, server_name);
     __Proxy(server_description, std::string, std::string, std::string, server_description);
     __Proxy(server_location, std::string, std::string, std::string, server_location);
@@ -99,11 +92,12 @@ public:
 
     __Proxy(num_fields, uint64_t, uint64_t, uint64_t, num_fields);
     __Proxy(num_components, uint64_t, uint64_t, uint64_t, num_components);
+    __Proxy(num_http_connections, uint64_t, uint64_t, uint64_t, num_http_connections);
 
     virtual void pre_serialize() override;
 
 protected:
-    kis_recursive_timed_mutex monitor_mutex;
+    kis_mutex monitor_mutex;
 
     virtual void register_fields() override;
 
@@ -118,7 +112,6 @@ protected:
     std::shared_ptr<tracker_element_uint64> timestamp_start_sec;
     std::shared_ptr<tracker_element_uint64> memory;
     std::shared_ptr<tracker_element_string> username;
-    std::shared_ptr<tracker_element_uuid> server_uuid;
     std::shared_ptr<tracker_element_string> server_name;
     std::shared_ptr<tracker_element_string> server_description;
     std::shared_ptr<tracker_element_string> server_location;
@@ -135,6 +128,7 @@ protected:
 
     std::shared_ptr<tracker_element_uint64> num_fields;
     std::shared_ptr<tracker_element_uint64> num_components;
+    std::shared_ptr<tracker_element_uint64> num_http_connections;
 };
 
 class Systemmonitor : public lifetime_global, public time_tracker_event {
@@ -157,15 +151,19 @@ public:
     // time_tracker callback
     virtual int timetracker_event(int eventid) override;
 
+    static std::string event_timestamp() { return "TIMESTAMP"; }
+    static std::string event_battery() { return "BATTERY"; }
+    static std::string event_stats() { return "STATISTICS"; }
+
 protected:
-    kis_recursive_timed_mutex monitor_mutex;
+    kis_mutex monitor_mutex;
 
     std::shared_ptr<event_bus> eventbus;
     int logopen_evt_id;
 
-    std::shared_ptr<kis_net_httpd_simple_tracked_endpoint> monitor_endp;
-    std::shared_ptr<kis_net_httpd_simple_unauth_tracked_endpoint> user_monitor_endp;
-    std::shared_ptr<kis_net_httpd_simple_tracked_endpoint> timestamp_endp;
+    std::shared_ptr<kis_net_web_tracked_endpoint> monitor_endp;
+    std::shared_ptr<kis_net_web_tracked_endpoint> user_monitor_endp;
+    std::shared_ptr<kis_net_web_tracked_endpoint> timestamp_endp;
 
     std::shared_ptr<device_tracker> devicetracker;
 
@@ -173,7 +171,10 @@ protected:
 
     long mem_per_page;
 
+    std::shared_ptr<time_tracker> timetracker;
+    int event_timer_id;
     int kismetdb_log_timer;
+
 };
 
 #endif

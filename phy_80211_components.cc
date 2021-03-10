@@ -53,7 +53,7 @@ void dot11_tracked_ssid_alert::register_fields() {
 
 void dot11_tracked_ssid_alert::set_regex(std::string s) {
 #ifdef HAVE_LIBPCRE
-    local_locker lock(&ssid_mutex);
+    kis_lock_guard<kis_mutex> lk(ssid_mutex);
 
     const char *compile_error, *study_error;
     int erroroffset;
@@ -84,7 +84,7 @@ void dot11_tracked_ssid_alert::set_regex(std::string s) {
 }
 
 void dot11_tracked_ssid_alert::set_allowed_macs(std::vector<mac_addr> mvec) {
-    local_locker lock(&ssid_mutex);
+    kis_lock_guard<kis_mutex> lk(ssid_mutex);
 
     allowed_macs_vec->clear();
 
@@ -95,8 +95,8 @@ void dot11_tracked_ssid_alert::set_allowed_macs(std::vector<mac_addr> mvec) {
     }
 }
 
-bool dot11_tracked_ssid_alert::compare_ssid(std::string ssid, mac_addr mac) {
-    local_locker lock(&ssid_mutex);
+bool dot11_tracked_ssid_alert::compare_ssid(const std::string& ssid, mac_addr mac) {
+    kis_lock_guard<kis_mutex> lk(ssid_mutex);
 
 #ifdef HAVE_LIBPCRE
     int rc;
@@ -105,10 +105,17 @@ bool dot11_tracked_ssid_alert::compare_ssid(std::string ssid, mac_addr mac) {
     rc = pcre_exec(ssid_re, ssid_study, ssid.c_str(), ssid.length(), 0, 0, ovector, 128);
 
     if (rc > 0) {
-        for (auto m : *allowed_macs_vec) {
-            if (get_tracker_value<mac_addr>(m) != mac)
-                return true;
+        bool valid = false;
+
+        for (const auto& m : *allowed_macs_vec) {
+            if (get_tracker_value<mac_addr>(m) == mac) {
+                valid = true;
+                break;
+            }
         }
+
+        if (!valid)
+            return true;
     }
 #endif
 
@@ -167,8 +174,13 @@ void dot11_probed_ssid::register_fields() {
         register_dynamic_field("dot11.probedssid.ie_tag_list",
                 "802.11 IE tag list in beacon", &ie_tag_list);
 
+    wps_version_id =
+        register_dynamic_field("dot11.probedssid.wps_version", "WPS version", &wps_version);
     wps_state_id =
         register_dynamic_field("dot11.probedssid.wps_state", "WPS state bitfield", &wps_state);
+    wps_config_methods_id =
+        register_dynamic_field("dot11.probedssid.wps_config_methods", "WPS config methods bitfield",
+            &wps_config_methods);
     wps_manuf_id =
         register_dynamic_field("dot11.probedssid.wps_manuf", "WPS manufacturer", &wps_manuf);
     wps_device_name_id =
@@ -187,6 +199,8 @@ void dot11_advertised_ssid::register_fields() {
     register_field("dot11.advertisedssid.ssid", "beaconed ssid string (sanitized)", &ssid);
     register_field("dot11.advertisedssid.ssidlen", 
             "beaconed ssid string length (original bytes)", &ssid_len);
+
+    register_field("dot11.advertisedssid.ssid_hash", "hashed key of the SSID+Length", &ssid_hash);
 
     owe_ssid_id =
         register_dynamic_field("dot11.advertisedssid.owe_ssid",
@@ -240,8 +254,13 @@ void dot11_advertised_ssid::register_fields() {
                 tracker_element_factory<dot11_11d_tracked_range_info>(0),
                 "dot11d entry");
 
+    wps_version_id =
+        register_dynamic_field("dot11.advertisedssid.wps_version", "WPS version", &wps_version);
     wps_state_id =
         register_dynamic_field("dot11.advertisedssid.wps_state", "bitfield wps state", &wps_state);
+    wps_config_methods_id =
+        register_dynamic_field("dot11.advertisedssid.wps_config_methods",
+                "bitfield wps config methods", &wps_config_methods);
     wps_manuf_id =
         register_dynamic_field("dot11.advertisedssid.wps_manuf", "WPS manufacturer", &wps_manuf);
     wps_device_name_id =
@@ -304,7 +323,8 @@ void dot11_advertised_ssid::set_ietag_content_from_packet(std::shared_ptr<dot11_
         return;
 
     for (auto t : *(tags->tags())) {
-        auto tag = std::make_shared<dot11_tracked_ietag>(ie_tag_content_element_id);
+        auto tag =
+            Globalreg::globalreg->entrytracker->get_shared_instance_as<dot11_tracked_ietag>(ie_tag_content_element_id);
         tag->set_from_tag(t);
         tagmap->insert(tag->get_unique_tag_id(), tag);
     }
@@ -315,7 +335,8 @@ void dot11_advertised_ssid::set_dot11d_vec(std::vector<dot11_packinfo_dot11d_ent
     d11dvec->clear();
 
     for (auto x : vec) {
-        auto ri = std::make_shared<dot11_11d_tracked_range_info>(dot11d_country_entry_id);
+        auto ri =
+            Globalreg::globalreg->entrytracker->get_shared_instance_as<dot11_11d_tracked_range_info>(dot11d_country_entry_id);
         ri->set_startchan(x.startchan);
         ri->set_numchan(x.numchan);
         ri->set_txpower(x.txpower);

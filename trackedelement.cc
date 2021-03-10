@@ -244,11 +244,17 @@ std::string tracker_element::type_to_string(tracker_type t) {
         case tracker_type::tracker_vector_string:
             return "vector[string]";
         case tracker_type::tracker_hashkey_map:
-            return "vector[size_t]";
+            return "map[size_t, x]";
         case tracker_type::tracker_alias:
             return "alias";
         case tracker_type::tracker_ipv4_addr:
             return "ipv4";
+        case tracker_type::tracker_pair_double:
+            return "pair[double, double]";
+        case tracker_type::tracker_uuid_map:
+            return "map[uuid, x]";
+        case tracker_type::tracker_placeholder_missing:
+            return "placeholder";
     }
 
     return "unknown";
@@ -312,6 +318,12 @@ std::string tracker_element::type_to_typestring(tracker_type t) {
             return "tracker_alias";
         case tracker_type::tracker_ipv4_addr:
             return "tracker_ipv4_addr";
+        case tracker_type::tracker_pair_double:
+            return "tracker_pair_double";
+        case tracker_type::tracker_placeholder_missing:
+            return "tracker_placeholder_missing";
+        case tracker_type::tracker_uuid_map:
+            return "tracker_uuid_map";
     }
 
     return "TrackerUnknown";
@@ -374,6 +386,12 @@ tracker_type tracker_element::typestring_to_type(const std::string& s) {
         return tracker_type::tracker_alias;
     if (s == "tracker_ipv4_addr")
         return tracker_type::tracker_ipv4_addr;
+    if (s == "tracker_pair_double")
+        return tracker_type::tracker_pair_double;
+    if (s == "tracker_placeholder_missing")
+        return tracker_type::tracker_placeholder_missing;
+    if (s == "tracker_uuid_map")
+        return tracker_type::tracker_uuid_map;
 
     throw std::runtime_error("Unable to interpret tracker type " + s);
 }
@@ -613,7 +631,7 @@ void tracker_element_serializer::pre_serialize_path(const SharedElementSummary& 
         inter = std::static_pointer_cast<tracker_element_alias>(inter)->get();
 
     try {
-        for (auto p : in_summary->resolved_path) {
+        for (const auto& p : in_summary->resolved_path) {
 #if TE_TYPE_SAFETY == 1
             inter->enforce_type(tracker_type::tracker_map);
 #endif
@@ -650,7 +668,7 @@ void tracker_element_serializer::post_serialize_path(const SharedElementSummary&
         inter = std::static_pointer_cast<tracker_element_alias>(inter)->get();
 
     try {
-        for (auto p : in_summary->resolved_path) {
+        for (const auto& p : in_summary->resolved_path) {
 #if TE_TYPE_SAFETY == 1
             inter->enforce_type(tracker_type::tracker_map);
 #endif
@@ -715,7 +733,7 @@ void tracker_element_summary::parse_path(const std::vector<std::string>& in_path
 
     bool path_full = true;
 
-    for (auto pe : in_path) {
+    for (const auto& pe : in_path) {
         if (pe.length() == 0)
             continue;
 
@@ -750,7 +768,7 @@ shared_tracker_element get_tracker_element_path(const std::vector<std::string>& 
 
     shared_tracker_element next_elem;
 
-    for (auto pe : in_path) {
+    for (const auto& pe : in_path) {
         // Skip empty
         if (pe.length() == 0)
             continue;
@@ -791,7 +809,7 @@ shared_tracker_element get_tracker_element_path(const std::vector<int>& in_path,
 
     shared_tracker_element next_elem;
 
-    for (auto pe : in_path) {
+    for (const auto& pe : in_path) {
         if (pe < 0)
             return nullptr;
 
@@ -882,10 +900,8 @@ std::vector<shared_tracker_element> get_tracker_element_multi_path(const std::ve
 
                 auto cn = std::static_pointer_cast<tracker_element_vector>(next_elem);
 
-                for (auto i : *cn) {
-                    std::vector<shared_tracker_element> subret =
-                        get_tracker_element_multi_path(sub_path, i);
-
+                for (const auto& i : *cn) {
+                    std::vector<shared_tracker_element> subret = get_tracker_element_multi_path(sub_path, i);
                     ret.insert(ret.end(), subret.begin(), subret.end());
                 }
 
@@ -896,10 +912,8 @@ std::vector<shared_tracker_element> get_tracker_element_multi_path(const std::ve
 
                 auto cn = std::static_pointer_cast<tracker_element_int_map>(next_elem);
 
-                for (auto i : *cn) {
-                    std::vector<shared_tracker_element> subret =
-                        get_tracker_element_multi_path(sub_path, i.second);
-
+                for (const auto& i : *cn) {
+                    std::vector<shared_tracker_element> subret = get_tracker_element_multi_path(sub_path, i.second);
                     ret.insert(ret.end(), subret.begin(), subret.end());
                 }
 
@@ -910,10 +924,8 @@ std::vector<shared_tracker_element> get_tracker_element_multi_path(const std::ve
 
                 auto cn = std::static_pointer_cast<tracker_element_string_map>(next_elem);
 
-                for (auto i : *cn) {
-                    std::vector<shared_tracker_element> subret =
-                        get_tracker_element_multi_path(sub_path, i.second);
-
+                for (const auto& i : *cn) {
+                    std::vector<shared_tracker_element> subret = get_tracker_element_multi_path(sub_path, i.second);
                     ret.insert(ret.end(), subret.begin(), subret.end());
                 }
 
@@ -924,10 +936,8 @@ std::vector<shared_tracker_element> get_tracker_element_multi_path(const std::ve
 
                 auto cn = std::static_pointer_cast<tracker_element_mac_map>(next_elem);
 
-                for (auto i : *cn) {
-                    std::vector<shared_tracker_element> subret =
-                        get_tracker_element_multi_path(sub_path, i.second);
-
+                for (const auto& i : *cn) {
+                    std::vector<shared_tracker_element> subret = get_tracker_element_multi_path(sub_path, i.second);
                     ret.insert(ret.end(), subret.begin(), subret.end());
                 }
 
@@ -938,10 +948,8 @@ std::vector<shared_tracker_element> get_tracker_element_multi_path(const std::ve
 
                 auto cn = std::static_pointer_cast<tracker_element_double_map>(next_elem);
 
-                for (auto i : *cn) {
-                    std::vector<shared_tracker_element> subret =
-                        get_tracker_element_multi_path(sub_path, i.second);
-
+                for (const auto& i : *cn) {
+                    std::vector<shared_tracker_element> subret = get_tracker_element_multi_path(sub_path, i.second);
                     ret.insert(ret.end(), subret.begin(), subret.end());
                 }
 
@@ -1010,10 +1018,8 @@ std::vector<shared_tracker_element> get_tracker_element_multi_path(const std::ve
 
                 auto cn = std::static_pointer_cast<tracker_element_vector>(next_elem);
 
-                for (auto i : *cn) {
-                    std::vector<shared_tracker_element> subret =
-                        get_tracker_element_multi_path(sub_path, i);
-
+                for (const auto& i : *cn) {
+                    std::vector<shared_tracker_element> subret = get_tracker_element_multi_path(sub_path, i);
                     ret.insert(ret.end(), subret.begin(), subret.end());
                 }
 
@@ -1024,10 +1030,8 @@ std::vector<shared_tracker_element> get_tracker_element_multi_path(const std::ve
 
                 auto cn = std::static_pointer_cast<tracker_element_int_map>(next_elem);
 
-                for (auto i : *cn) {
-                    std::vector<shared_tracker_element> subret =
-                        get_tracker_element_multi_path(sub_path, i.second);
-
+                for (const auto &i : *cn) {
+                    std::vector<shared_tracker_element> subret = get_tracker_element_multi_path(sub_path, i.second);
                     ret.insert(ret.end(), subret.begin(), subret.end());
                 }
 
@@ -1038,10 +1042,8 @@ std::vector<shared_tracker_element> get_tracker_element_multi_path(const std::ve
 
                 auto cn = std::static_pointer_cast<tracker_element_string_map>(next_elem);
 
-                for (auto i : *cn) {
-                    std::vector<shared_tracker_element> subret =
-                        get_tracker_element_multi_path(sub_path, i.second);
-
+                for (const auto& i : *cn) {
+                    std::vector<shared_tracker_element> subret = get_tracker_element_multi_path(sub_path, i.second);
                     ret.insert(ret.end(), subret.begin(), subret.end());
                 }
 
@@ -1052,10 +1054,8 @@ std::vector<shared_tracker_element> get_tracker_element_multi_path(const std::ve
 
                 auto cn = std::static_pointer_cast<tracker_element_mac_map>(next_elem);
 
-                for (auto i : *cn) {
-                    std::vector<shared_tracker_element> subret =
-                        get_tracker_element_multi_path(sub_path, i.second);
-
+                for (const auto& i : *cn) {
+                    std::vector<shared_tracker_element> subret = get_tracker_element_multi_path(sub_path, i.second);
                     ret.insert(ret.end(), subret.begin(), subret.end());
                 }
 
@@ -1066,10 +1066,8 @@ std::vector<shared_tracker_element> get_tracker_element_multi_path(const std::ve
 
                 auto cn = std::static_pointer_cast<tracker_element_double_map>(next_elem);
 
-                for (auto i : *cn) {
-                    std::vector<shared_tracker_element> subret =
-                        get_tracker_element_multi_path(sub_path, i.second);
-
+                for (const auto& i : *cn) {
+                    std::vector<shared_tracker_element> subret = get_tracker_element_multi_path(sub_path, i.second);
                     ret.insert(ret.end(), subret.begin(), subret.end());
                 }
 
@@ -1085,31 +1083,141 @@ std::vector<shared_tracker_element> get_tracker_element_multi_path(const std::ve
     return ret;
 }
 
-std::shared_ptr<tracker_element> summarize_tracker_element(shared_tracker_element in, 
-        const std::vector<SharedElementSummary>& in_summarization, 
+std::shared_ptr<tracker_element> summarize_tracker_element(std::shared_ptr<tracker_element_vector> elem,
+        const std::vector<std::shared_ptr<tracker_element_summary>>& summary,
         std::shared_ptr<tracker_element_serializer::rename_map> rename_map) {
 
-    if (in->get_type() == tracker_type::tracker_vector) {
-        auto ret = std::make_shared<tracker_element_vector>();
-        auto inv = std::static_pointer_cast<tracker_element_vector>(in);
+    auto ret = std::make_shared<tracker_element_vector>();
 
-        for (auto i : *inv) 
-            ret->push_back(summarize_single_tracker_element(i, in_summarization, rename_map));
+    for (const auto& i : *elem)
+        ret->push_back(summarize_tracker_element(i, summary, rename_map));
 
-        return ret;
-    }
-
-    return summarize_single_tracker_element(in, in_summarization, rename_map);
+    return ret;
 }
 
-std::shared_ptr<tracker_element> summarize_single_tracker_element(shared_tracker_element in, 
-        const std::vector<SharedElementSummary>& in_summarization, 
+std::shared_ptr<tracker_element> summarize_tracker_element(std::shared_ptr<tracker_element_int_map> elem,
+        const std::vector<std::shared_ptr<tracker_element_summary>>& summary,
         std::shared_ptr<tracker_element_serializer::rename_map> rename_map) {
 
+    auto ret = std::make_shared<tracker_element_int_map>();
+
+    for (const auto& i : *elem)
+        ret->insert(i.first, summarize_tracker_element(i.second, summary, rename_map));
+
+    return ret;
+}
+
+std::shared_ptr<tracker_element> summarize_tracker_element(std::shared_ptr<tracker_element_double_map> elem,
+        const std::vector<std::shared_ptr<tracker_element_summary>>& summary,
+        std::shared_ptr<tracker_element_serializer::rename_map> rename_map) {
+
+    auto ret = std::make_shared<tracker_element_double_map>();
+
+    for (const auto& i : *elem)
+        ret->insert(i.first, summarize_tracker_element(i.second, summary, rename_map));
+
+    return ret;
+}
+
+std::shared_ptr<tracker_element> summarize_tracker_element(std::shared_ptr<tracker_element_string_map> elem,
+        const std::vector<std::shared_ptr<tracker_element_summary>>& summary,
+        std::shared_ptr<tracker_element_serializer::rename_map> rename_map) {
+
+    auto ret = std::make_shared<tracker_element_string_map>();
+
+    for (const auto& i : *elem)
+        ret->insert(i.first, summarize_tracker_element(i.second, summary, rename_map));
+
+    return ret;
+}
+
+std::shared_ptr<tracker_element> summarize_tracker_element(std::shared_ptr<tracker_element_mac_map> elem,
+        const std::vector<std::shared_ptr<tracker_element_summary>>& summary,
+        std::shared_ptr<tracker_element_serializer::rename_map> rename_map) {
+
+    auto ret = std::make_shared<tracker_element_mac_map>();
+
+    for (const auto& i : *elem)
+        ret->insert(i.first, summarize_tracker_element(i.second, summary, rename_map));
+
+    return ret;
+}
+
+std::shared_ptr<tracker_element> summarize_tracker_element(std::shared_ptr<tracker_element_device_key_map> elem,
+        const std::vector<std::shared_ptr<tracker_element_summary>>& summary,
+        std::shared_ptr<tracker_element_serializer::rename_map> rename_map) {
+
+    auto ret = std::make_shared<tracker_element_device_key_map>();
+
+    for (const auto& i : *elem)
+        ret->insert(i.first, summarize_tracker_element(i.second, summary, rename_map));
+
+    return ret;
+}
+
+std::shared_ptr<tracker_element> summarize_tracker_element(std::shared_ptr<tracker_element_uuid_map> elem,
+        const std::vector<std::shared_ptr<tracker_element_summary>>& summary,
+        std::shared_ptr<tracker_element_serializer::rename_map> rename_map) {
+
+    auto ret = std::make_shared<tracker_element_uuid_map>();
+
+    for (const auto& i : *elem) 
+        ret->insert(i.first, summarize_tracker_element(i.second, summary, rename_map));
+
+    return ret;
+}
+
+std::shared_ptr<tracker_element> summarize_tracker_element(std::shared_ptr<tracker_element_hashkey_map> elem,
+        const std::vector<std::shared_ptr<tracker_element_summary>>& summary,
+        std::shared_ptr<tracker_element_serializer::rename_map> rename_map) {
+
+    auto ret = std::make_shared<tracker_element_hashkey_map>();
+
+    for (const auto& i : *elem)
+        ret->insert(i.first, summarize_tracker_element(i.second, summary, rename_map));
+
+    return ret;
+}
+
+std::shared_ptr<tracker_element> summarize_tracker_element(std::shared_ptr<tracker_element> in,
+        const std::vector<std::shared_ptr<tracker_element_summary>>& in_summarization, 
+        std::shared_ptr<tracker_element_serializer::rename_map> rename_map) {
+
+    // Always return a map
     auto ret_elem = std::make_shared<tracker_element_map>();
 
     if (in == nullptr)
         return ret_elem;
+
+    // Dispatch any generics which made it this far
+    switch (in->get_type()) {
+        case tracker_type::tracker_vector:
+            return summarize_tracker_element(std::static_pointer_cast<tracker_element_vector>(in),
+                    in_summarization, rename_map);
+        case tracker_type::tracker_double_map:
+            return summarize_tracker_element(std::static_pointer_cast<tracker_element_double_map>(in),
+                    in_summarization, rename_map);
+        case tracker_type::tracker_int_map:
+            return summarize_tracker_element(std::static_pointer_cast<tracker_element_int_map>(in),
+                    in_summarization, rename_map);
+        case tracker_type::tracker_string_map:
+            return summarize_tracker_element(std::static_pointer_cast<tracker_element_string_map>(in),
+                    in_summarization, rename_map);
+        case tracker_type::tracker_mac_map:
+            return summarize_tracker_element(std::static_pointer_cast<tracker_element_mac_map>(in),
+                    in_summarization, rename_map);
+        case tracker_type::tracker_key_map:
+            return summarize_tracker_element(std::static_pointer_cast<tracker_element_device_key_map>(in),
+                    in_summarization, rename_map);
+        case tracker_type::tracker_uuid_map:
+            return summarize_tracker_element(std::static_pointer_cast<tracker_element_uuid_map>(in),
+                    in_summarization, rename_map);
+        case tracker_type::tracker_hashkey_map:
+            return summarize_tracker_element(std::static_pointer_cast<tracker_element_hashkey_map>(in),
+                    in_summarization, rename_map);
+        default:
+            break;
+    }
 
     // Poke the pre-serialization function to update anything that needs updating before
     // we create the new meta-object
@@ -1122,32 +1230,32 @@ std::shared_ptr<tracker_element> summarize_single_tracker_element(shared_tracker
 
     unsigned int fn = 0;
 
-    for (auto si : in_summarization) {
+    for (const auto& si : in_summarization) {
         fn++;
 
         if (si->resolved_path.size() == 0)
             continue;
 
-        shared_tracker_element f =
-            get_tracker_element_path(si->resolved_path, in);
+        shared_tracker_element f = get_tracker_element_path(si->resolved_path, in);
 
-        if (f == NULL) {
-            f = Globalreg::globalreg->entrytracker->register_and_get_field("unknown" + int_to_string(fn),
-                    tracker_element_factory<tracker_element_int8>(),
+        if (f == nullptr) {
+            f = Globalreg::globalreg->entrytracker->register_and_get_field(fmt::format("unknown{}", fn),
+                    tracker_element_factory<tracker_element_placeholder>(),
                     "unallocated field");
 
-            std::static_pointer_cast<tracker_element_int8>(f)->set(0);
+            std::static_pointer_cast<tracker_element_placeholder>(f)->set(0);
         
             if (si->rename.length() != 0) {
-                f->set_local_name(si->rename);
+                // fmt::print("debug - setting summary rename on missing field {} {}\n", fn, si->rename);
+                std::static_pointer_cast<tracker_element_placeholder>(f)->set_name(si->rename);
             } else {
                 // Get the last name of the field in the path, if we can...
                 int lastid = si->resolved_path[si->resolved_path.size() - 1];
 
-                if (lastid < 0)
-                    f->set_local_name("unknown" + int_to_string(fn));
-                else
-                    f->set_local_name(Globalreg::globalreg->entrytracker->get_field_name(lastid));
+                if (lastid >= 0) {
+                    std::static_pointer_cast<tracker_element_placeholder>(f)->set_name(Globalreg::globalreg->entrytracker->get_field_name(lastid));
+                    // fmt::print("debug - setting last id rename on missing field {} {}\n", fn, Globalreg::globalreg->entrytracker->get_field_name(lastid));
+                }
             }
         } 
 
@@ -1168,6 +1276,28 @@ std::shared_ptr<tracker_element> summarize_single_tracker_element(shared_tracker
     in->post_serialize();
 
     return ret_elem;
+}
+
+std::shared_ptr<tracker_element> summarize_tracker_element_with_json(std::shared_ptr<tracker_element> data, 
+        const Json::Value& json, std::shared_ptr<tracker_element_serializer::rename_map> rename_map) {
+
+    auto summary_vec = std::vector<SharedElementSummary>{};
+    auto fields = json.get("fields", Json::Value(Json::arrayValue));
+
+    for (const auto& i : fields) {
+        if (i.isString()) {
+            summary_vec.push_back(std::make_shared<tracker_element_summary>(i.asString()));
+        } else if (i.isArray()) {
+            if (i.size() != 2)
+                throw std::runtime_error("Invalid field mapping, expected [field, name]");
+            summary_vec.push_back(std::make_shared<tracker_element_summary>(i[0].asString(), i[1].asString()));
+        } else {
+            throw std::runtime_error("Invalid field mapping, expected field or [field,rename]");
+        }
+    }
+
+    return summarize_tracker_element(data, summary_vec, rename_map);
+
 }
 
 bool sort_tracker_element_less(const std::shared_ptr<tracker_element> lhs, 
@@ -1221,7 +1351,10 @@ bool sort_tracker_element_less(const std::shared_ptr<tracker_element> lhs,
         case tracker_type::tracker_double_map_double:
         case tracker_type::tracker_vector_string:
         case tracker_type::tracker_hashkey_map:
+        case tracker_type::tracker_uuid_map:
         case tracker_type::tracker_alias:
+        case tracker_type::tracker_pair_double:
+        case tracker_type::tracker_placeholder_missing:
             throw std::runtime_error(fmt::format("Attempted to compare a complex field type, {}",
                         lhs->get_type_as_string()));
     }
@@ -1275,7 +1408,10 @@ bool fast_sort_tracker_element_less(const std::shared_ptr<tracker_element> lhs,
         case tracker_type::tracker_double_map_double:
         case tracker_type::tracker_vector_string:
         case tracker_type::tracker_hashkey_map:
+        case tracker_type::tracker_uuid_map:
         case tracker_type::tracker_alias:
+        case tracker_type::tracker_pair_double:
+        case tracker_type::tracker_placeholder_missing:
             return false;
     }
 

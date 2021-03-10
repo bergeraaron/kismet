@@ -18,7 +18,7 @@
 <script src="js/jquery.dataTables.min.js"></script>
 <script src="js/dataTables.scroller.min.js"></script>
 <script src="js/dataTables.scrollResize.js"></script>
-<script src="js/dataTables.pageResize.min.js"></script>
+<!-- <script src="js/dataTables.pageResize.min.js"></script> -->
 <script src="js/dataTables.colReorder.min.js"></script>
 <script src="js/dataTables.responsive.min.js"></script>
 
@@ -36,6 +36,8 @@
 <script src="js/js.storage.min.js"></script>
 
 <script src="js/tooltipster.bundle.min.js"></script>
+
+<script src="js/clipboard.min.js"></script>
 
 <script src="js/kismet.utils.js"></script>
 
@@ -56,7 +58,6 @@
 <script src="js/kismet.ui.iconbar.js"></script>
 <script src="js/jquery.kismet.battery.js"></script>
 <script src="js/jquery.kismet.alert.js"></script>
-<script src="js/jquery.kismet.auth.js"></script>
 <script src="js/jquery.kismet.gps.js"></script>
 <script src="js/jquery.kismet.packetrate.js"></script>
 
@@ -105,6 +106,9 @@ div.autosize {
 </style>
 
 <script>
+const queryString = window.location.search;
+const urlParams = new URLSearchParams(queryString);
+window['censor_macs'] = urlParams.get('censor_macs')
 
 var orig_title = "";
 
@@ -177,19 +181,13 @@ function load_main_ui() {
         },
     });
 
+    kismet_ui_base.OpenEventbusWs();
+
     // Dynamic load of our plugin js, then continue.  is this the only way to do
     // this?  sure is annoying.
     kismet.LoadDynamicIncludes(function() {
 
     // kismet_ui.CreateDeviceTable($('#devices'));
-
-    kismet_ui_iconbar.AddIconbarItem({
-        id: 'login',
-        priority: 100,
-        createCallback: function(div) {
-            div.loginwatcher();
-        }
-    });
 
     kismet_ui_iconbar.AddIconbarItem({
         id: 'gps',
@@ -224,12 +222,6 @@ function load_main_ui() {
     });
 
     kismet_ui_iconbar.makeIconbar($('#iconbar'));
-
-    /*
-    $('#topbar_alert').alert();
-    $('#topbar_login').loginwatcher();
-    $('#topbar_battery').battery();
-    */
 
     kismet_ui.HealthCheck();
 

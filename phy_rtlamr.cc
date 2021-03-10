@@ -25,6 +25,7 @@
 #include "macaddr.h"
 #include "kis_httpd_registry.h"
 #include "manuf.h"
+#include "messagebus.h"
 
 kis_rtlamr_phy::kis_rtlamr_phy(global_registry *in_globalreg, int in_phyid) :
     kis_phy_handler(in_globalreg, in_phyid) {
@@ -144,7 +145,10 @@ bool kis_rtlamr_phy::json_to_rtl(Json::Value json, kis_packet *packet) {
                 (UCD_UPDATE_FREQUENCIES | UCD_UPDATE_PACKETS | UCD_UPDATE_LOCATION |
                  UCD_UPDATE_SEENBY), "AMR Meter");
 
-    local_locker bssidlock(&(basedev->device_mutex));
+    kis_unique_lock<kis_mutex> lk_list(devicetracker->get_devicelist_mutex(), 
+            std::defer_lock, "rtlamr json_to_rtl");
+    kis_unique_lock<kis_mutex> lk_device(basedev->device_mutex, std::defer_lock, "rtlamr json_to_rtl");
+    std::lock(lk_list, lk_device);
 
     auto meterdev = 
         basedev->get_sub_as<rtlamr_tracked_meter>(rtlamr_meter_id);

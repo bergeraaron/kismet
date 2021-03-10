@@ -21,12 +21,13 @@
 
 #include "config.h"
 
-
+#include "eventbus.h"
 #include "globalregistry.h"
 #include "kis_mutex.h"
-#include "kis_net_microhttpd.h"
+#include "kis_net_beast_httpd.h"
 #include "packet.h"
 #include "packetchain.h"
+#include "timetracker.h"
 #include "trackedlocation.h"
 
 class kis_gps_builder;
@@ -83,20 +84,19 @@ public:
         }
     }
 
-    std::shared_ptr<kis_tracked_location_triplet> as_tracked_triplet() {
-        std::shared_ptr<kis_tracked_location_triplet> r =
-            std::make_shared<kis_tracked_location_triplet>();
+    std::shared_ptr<kis_tracked_location_full> as_tracked_full() {
+        auto r = std::make_shared<kis_tracked_location_full>();
 
-        r->set_lat(lat);
-        r->set_lon(lon);
+        r->set_location(lat, lon);
         r->set_alt(alt);
         r->set_speed(speed);
         r->set_heading(heading);
         r->set_fix(fix);
-        r->set_valid(fix >= 2);
+        /*
         r->set_error_x(error_x);
         r->set_error_y(error_y);
         r->set_error_v(error_v);
+        */
         r->set_time_sec(tv.tv_sec);
         r->set_time_usec(tv.tv_usec);
 
@@ -144,7 +144,7 @@ public:
 
 /* GPS manager which handles configuring GPS sources and deciding which one
  * is going to be used */
-class gps_tracker : public kis_net_httpd_cppstream_handler, public lifetime_global {
+class gps_tracker : public lifetime_global {
 public:
     static std::string global_name() { return "GPSTRACKER"; }
 
@@ -161,13 +161,6 @@ private:
 public:
     virtual ~gps_tracker();
 
-    virtual bool httpd_verify_path(const char *path, const char *method);
-
-    virtual void httpd_create_stream_response(kis_net_httpd *httpd,
-            kis_net_httpd_connection *connection,
-            const char *url, const char *method, const char *upload_data,
-            size_t *upload_data_size, std::stringstream &stream);
-
     // Register a gps builer prototype
     void register_gps_builder(shared_gps_builder in_builder);
 
@@ -176,6 +169,8 @@ public:
 
     // Remove a GPS by UUID
     bool remove_gps(uuid in_uuid);
+
+    std::shared_ptr<kis_gps> find_gps(uuid in_uuid);
 
     // Set a primary GPS
     bool set_primary_gps(uuid in_uuid);
@@ -187,8 +182,10 @@ public:
     // Populate packets that don't have a GPS location
     static int kis_gpspack_hook(CHAINCALL_PARMS);
 
+    static std::string event_gps_location() { return "GPS_LOCATION"; }
+
 protected:
-    kis_recursive_timed_mutex gpsmanager_mutex;
+    kis_mutex gpsmanager_mutex;
 
     std::shared_ptr<tracker_element_vector> gps_prototypes_vec;
 
@@ -196,7 +193,7 @@ protected:
     // linear search because we'll typically have very few GPS devices
     std::shared_ptr<tracker_element_vector> gps_instances_vec;
 
-    // Extra field we insert into a location triplet
+    // Extra field we insert into a location record
     int tracked_uuid_addition_id;
 
     // Logging function
@@ -208,6 +205,10 @@ protected:
     int log_snapshot_timer;
 
     int pack_comp_gps, pack_comp_no_gps;
+
+    std::shared_ptr<time_tracker> timetracker;
+    int event_timer_id;
+    std::shared_ptr<event_bus> eventbus;
 };
 
 #endif

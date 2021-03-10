@@ -30,6 +30,7 @@
 #include "trackedcomponent.h"
 #include "devicetracker_component.h"
 #include "devicetracker_view_workers.h"
+#include "kis_net_beast_httpd.h"
 
 // Common view holder mechanism which handles view endpoints, view filtering, and so on.
 //
@@ -77,9 +78,7 @@ public:
             const std::vector<std::string>& in_aux_path, 
             new_device_cb in_new_cb, updated_device_cb in_upd_cb);
 
-    virtual ~device_tracker_view() {
-        local_locker l(&mutex);
-    }
+    virtual ~device_tracker_view() { }
 
     // Protect proxies w/ mutex
     __ProxyGet(view_id, std::string, std::string, view_id);
@@ -87,11 +86,11 @@ public:
     __ProxyGet(list_sz, uint64_t, uint64_t, list_sz);
 
     virtual void pre_serialize() override {
-        local_eol_shared_locker lock(&mutex);
+        kis_lock_guard<kis_mutex> lk(mutex, kismet::retain_lock, "devicetracker_view serialize");
     }
 
     virtual void post_serialize() override {
-       local_shared_unlocker lock(&mutex);
+        kis_lock_guard<kis_mutex> lk(mutex, std::adopt_lock);
     }
 
     // Do work on the base list of all devices in this view; this makes an immutable copy
@@ -119,7 +118,12 @@ public:
     virtual void add_device_direct(std::shared_ptr<kis_tracked_device_base> device);
     virtual void remove_device_direct(std::shared_ptr<kis_tracked_device_base> device);
 
+	// Look for an existing device record under read-only shared lock
+    std::shared_ptr<kis_tracked_device_base> fetch_device(device_key in_key);
+
 protected:
+    std::shared_ptr<device_tracker> devicetracker;
+
     virtual void register_fields() override {
         tracker_component::register_fields();
 
@@ -131,7 +135,7 @@ protected:
         // un-processed; use the view APIs for managing that
     }
 
-    kis_recursive_timed_mutex mutex;
+    kis_mutex mutex;
 
     std::shared_ptr<tracker_element_string> view_id;
     std::shared_ptr<tracker_element_uuid> view_uuid;
@@ -146,26 +150,8 @@ protected:
     // Map of device presence in our list for fast reference during updates
     std::unordered_map<device_key, bool> device_presence_map;
 
-    // Complex endpoint and optional extended URI endpoint
-    std::shared_ptr<kis_net_httpd_simple_post_endpoint> device_endp;
-    std::shared_ptr<kis_net_httpd_simple_post_endpoint> device_uri_endp;
-
-    // Simpler time-based endpoints
-    std::shared_ptr<kis_net_httpd_path_tracked_endpoint> time_endp;
-    std::shared_ptr<kis_net_httpd_path_tracked_endpoint> time_uri_endp;
-
-    // Complex post endp handler
-    unsigned int device_endpoint_handler(std::ostream& stream, const std::string& uri, 
-            const Json::Value& json, 
-            kis_net_httpd_connection::variable_cache_map& postvars);
-
-    // Time endp handler
-    bool device_time_endpoint_path(const std::vector<std::string>& path);
-    std::shared_ptr<tracker_element> device_time_endpoint(const std::vector<std::string>& path);
-
-    std::vector<std::string> uri_extras;
-    bool device_time_uri_endpoint_path(const std::vector<std::string>& path);
-    std::shared_ptr<tracker_element> device_time_uri_endpoint(const std::vector<std::string>& path);
+    void device_endpoint_handler(std::shared_ptr<kis_net_beast_httpd_connection> con);
+    std::shared_ptr<tracker_element> device_time_endpoint(std::shared_ptr<kis_net_beast_httpd_connection> con);
 
     // device_tracker has direct access to protected methods for new devices and purging devices,
     // nobody else should be calling those

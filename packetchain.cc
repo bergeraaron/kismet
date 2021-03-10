@@ -7,7 +7,7 @@
     (at your option) any later version.
 
     Kismet is distributed in the hope that it will be useful,
-      but WITHOUT ANY WARRANTY; without even the implied warranty of
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
@@ -45,6 +45,9 @@ public:
 };
 
 packet_chain::packet_chain() {
+    packetcomp_mutex.set_name("packetchain packet_comp");
+    packetchain_mutex.set_name("packetchain packetchain");
+
     next_componentid = 1;
 	next_handlerid = 1;
 
@@ -58,6 +61,17 @@ packet_chain::packet_chain() {
 
     auto entrytracker = 
         Globalreg::fetch_mandatory_global_as<entry_tracker>();
+
+    packet_peak_rrd_id = 
+        entrytracker->register_field("kismet.packetchain.peak_packets_rrd",
+                tracker_element_factory<kis_tracked_rrd<kis_tracked_rrd_default_aggregator,
+                    kis_tracked_rrd_prev_pos_extreme_aggregator, 
+                    kis_tracked_rrd_prev_pos_extreme_aggregator>>(),
+                "incoming packets peak rrd");
+    packet_peak_rrd = 
+        std::make_shared<kis_tracked_rrd<kis_tracked_rrd_default_aggregator,
+            kis_tracked_rrd_prev_pos_extreme_aggregator, 
+            kis_tracked_rrd_prev_pos_extreme_aggregator>>(packet_peak_rrd_id);
 
     packet_rate_rrd_id = 
         entrytracker->register_field("kismet.packetchain.packets_rrd",
@@ -94,53 +108,91 @@ packet_chain::packet_chain() {
     packet_drop_rrd =
         std::make_shared<kis_tracked_rrd<>>(packet_drop_rrd_id);
 
+    packet_processed_rrd_id =
+        entrytracker->register_field("kismet.packetchain.processed_packets_rrd",
+                tracker_element_factory<kis_tracked_rrd<>>(),
+                "processed packet rrd");
+    packet_processed_rrd =
+        std::make_shared<kis_tracked_rrd<>>(packet_processed_rrd_id);
+
     packet_stats_map = 
         std::make_shared<tracker_element_map>();
+    packet_stats_map->insert(packet_peak_rrd);
     packet_stats_map->insert(packet_rate_rrd);
     packet_stats_map->insert(packet_error_rrd);
     packet_stats_map->insert(packet_dupe_rrd);
     packet_stats_map->insert(packet_queue_rrd);
     packet_stats_map->insert(packet_drop_rrd);
+    packet_stats_map->insert(packet_processed_rrd);
+
+    auto httpd = Globalreg::fetch_mandatory_global_as<kis_net_beast_httpd>();
 
     // We now protect RRDs from complex ops w/ internal mutexes, so we can just share these out directly without
     // protecting them behind our own mutex; required, because we're mixing RRDs from different data sources,
     // like chain-level packet processing and worker mutex locked buffer queuing.
-    packet_stat_endpoint =
-        std::make_shared<kis_net_httpd_simple_tracked_endpoint>("/packetchain/packet_stats", 
-                packet_stats_map, nullptr);
-    packet_rate_endpoint =
-        std::make_shared<kis_net_httpd_simple_tracked_endpoint>("/packetchain/packet_rate", 
-                packet_rate_rrd, nullptr);
-    packet_error_endpoint =
-        std::make_shared<kis_net_httpd_simple_tracked_endpoint>("/packetchain/packet_error", 
-                packet_error_rrd, nullptr);
-    packet_dupe_endpoint =
-        std::make_shared<kis_net_httpd_simple_tracked_endpoint>("/packetchain/packet_dupe", 
-                packet_dupe_rrd, nullptr);
-    packet_drop_endpoint =
-        std::make_shared<kis_net_httpd_simple_tracked_endpoint>("/packetchain/packet_drop", 
-                packet_drop_rrd, nullptr);
+    httpd->register_route("/packetchain/packet_stats", {"GET", "POST"}, httpd->RO_ROLE, {},
+            std::make_shared<kis_net_web_tracked_endpoint>(packet_stats_map));
+    httpd->register_route("/packetchain/packet_peak", {"GET", "POST"}, httpd->RO_ROLE, {},
+            std::make_shared<kis_net_web_tracked_endpoint>(packet_peak_rrd));
+    httpd->register_route("/packetchain/packet_rate", {"GET", "POST"}, httpd->RO_ROLE, {},
+            std::make_shared<kis_net_web_tracked_endpoint>(packet_rate_rrd));
+    httpd->register_route("/packetchain/packet_error", {"GET", "POST"}, httpd->RO_ROLE, {},
+            std::make_shared<kis_net_web_tracked_endpoint>(packet_error_rrd));
+    httpd->register_route("/packetchain/packet_dupe", {"GET", "POST"}, httpd->RO_ROLE, {},
+            std::make_shared<kis_net_web_tracked_endpoint>(packet_dupe_rrd));
+    httpd->register_route("/packetchain/packet_drop", {"GET", "POST"}, httpd->RO_ROLE, {},
+            std::make_shared<kis_net_web_tracked_endpoint>(packet_drop_rrd));
+    httpd->register_route("/packetchain/packet_processed", {"GET", "POST"}, httpd->RO_ROLE, {},
+            std::make_shared<kis_net_web_tracked_endpoint>(packet_processed_rrd));
 
     packetchain_shutdown = false;
 
-    packet_thread = std::thread([this]() {
-            thread_set_process_name("packethandler");
-            packet_queue_processor();
-            });
+#if 1
+    auto nt = static_cast<int>(std::thread::hardware_concurrency());
+#else
+    auto nt = int(1);
+#endif
+
+    for (int n = 0; n < nt; n++) {
+        packet_threads.emplace_back(std::thread([this, nt, n]() {
+                thread_set_process_name(fmt::format("packethandler {}/{}", n, nt));
+                packet_queue_processor();
+                }));
+    }
+
+    timetracker = Globalreg::fetch_mandatory_global_as<time_tracker>();
+    eventbus = Globalreg::fetch_mandatory_global_as<event_bus>();
+
+    event_timer_id = 
+        timetracker->register_timer(std::chrono::seconds(1), true, 
+                [this](int) -> int {
+
+                auto evt = eventbus->get_eventbus_event(event_packetstats());
+                evt->get_event_content()->insert(event_packetstats(), packet_stats_map);
+                eventbus->publish(evt);
+
+                return 1;
+                });
 }
 
 packet_chain::~packet_chain() {
+    timetracker->remove_timer(event_timer_id);
+
     {
         // Tell the packet thread we're dying and unlock it
         packetchain_shutdown = true;
-        packetqueue_cv.notify_all();
+        packet_queue.enqueue(nullptr);
 
-        packet_thread.join();
+        for (auto& t: packet_threads) {
+            if (t.joinable())
+                t.join();
+        }
+
+        // packet_thread.join();
     }
 
     {
-        // Stall until a sync is done
-        local_eol_locker syncl(&packetchain_mutex);
+        kis_lock_guard<kis_shared_mutex> lk(packetchain_mutex, "~packet_chain");
 
         Globalreg::globalreg->remove_global("PACKETCHAIN");
         Globalreg::globalreg->packetchain = NULL;
@@ -178,7 +230,7 @@ packet_chain::~packet_chain() {
 }
 
 int packet_chain::register_packet_component(std::string in_component) {
-    local_locker lock(&packetcomp_mutex);
+    kis_lock_guard<kis_mutex> lk(packetcomp_mutex);
 
     if (next_componentid >= MAX_PACKET_COMPONENTS) {
         _MSG("Attempted to register more than the maximum defined number of "
@@ -201,7 +253,7 @@ int packet_chain::register_packet_component(std::string in_component) {
 }
 
 int packet_chain::remove_packet_component(int in_id) {
-    local_locker lock(&packetcomp_mutex);
+    kis_lock_guard<kis_mutex> lk(packetcomp_mutex);
 
     std::string str;
 
@@ -217,7 +269,7 @@ int packet_chain::remove_packet_component(int in_id) {
 }
 
 std::string packet_chain::fetch_packet_component_name(int in_id) {
-    local_shared_locker lock(&packetcomp_mutex);
+    kis_lock_guard<kis_mutex> lk(packetcomp_mutex);
 
     if (component_id_map.find(in_id) == component_id_map.end()) {
 		return "<UNKNOWN>";
@@ -227,14 +279,12 @@ std::string packet_chain::fetch_packet_component_name(int in_id) {
 }
 
 kis_packet *packet_chain::generate_packet() {
-    kis_packet *newpack = new kis_packet(Globalreg::globalreg);
+    kis_packet *newpack = new kis_packet();
 
     return newpack;
 }
 
 void packet_chain::packet_queue_processor() {
-    std::unique_lock<std::mutex> lock(packetqueue_cv_mutex);
-
     kis_packet *packet = NULL;
 
     while (!packetchain_shutdown && 
@@ -242,120 +292,90 @@ void packet_chain::packet_queue_processor() {
             !Globalreg::globalreg->fatal_condition &&
             !Globalreg::globalreg->complete) {
 
-        packetqueue_cv.wait(lock, [this] {
-            return (packet_queue.size() ||
-                    packetchain_shutdown || 
-                    Globalreg::globalreg->spindown || 
-                    Globalreg::globalreg->fatal_condition ||
-                    Globalreg::globalreg->complete);
-            });
+        packet_queue.wait_dequeue(packet);
 
-        // At this point we own lock, and it is locked, we need to re-lock it before we leave the loop
+        if (packet == nullptr)
+            break;
 
-        if (packet_queue.size() != 0) {
-            // Get the next packet
-            packet = packet_queue.front();
-            packet_queue.pop();
-
+        {
             // Lock the chain mutexes until we're done processing this packet
-            local_locker chainl(&packetchain_mutex);
-
-            // Unlock the queue while we process that packet
-            lock.unlock();
+            kis_lock_guard<kis_shared_mutex> lk(packetchain_mutex, kismet::shared_lock,
+                    "packet_queue_processor");
 
             // These can only be perturbed inside a sync, which can only occur when
             // the worker thread is in the sync block above, so we shouldn't
             // need to worry about the integrity of these vectors while running
 
-            for (auto pcl : postcap_chain) {
-                if (pcl->callback != NULL)
+            for (const auto& pcl : postcap_chain) {
+                if (pcl->callback != nullptr)
                     pcl->callback(Globalreg::globalreg, pcl->auxdata, packet);
-                else if (pcl->l_callback != NULL)
+                else if (pcl->l_callback != nullptr)
                     pcl->l_callback(packet);
             }
 
-            for (auto pcl : llcdissect_chain) {
-                if (pcl->callback != NULL)
+            for (const auto& pcl : llcdissect_chain) {
+                if (pcl->callback != nullptr)
                     pcl->callback(Globalreg::globalreg, pcl->auxdata, packet);
-                else if (pcl->l_callback != NULL)
+                else if (pcl->l_callback != nullptr)
                     pcl->l_callback(packet);
             }
 
-            for (auto pcl : decrypt_chain) {
-                if (pcl->callback != NULL)
+            for (const auto& pcl : decrypt_chain) {
+                if (pcl->callback != nullptr)
                     pcl->callback(Globalreg::globalreg, pcl->auxdata, packet);
-                else if (pcl->l_callback != NULL)
+                else if (pcl->l_callback != nullptr)
                     pcl->l_callback(packet);
             }
 
-            for (auto pcl : datadissect_chain) {
-                if (pcl->callback != NULL)
+            for (const auto& pcl : datadissect_chain) {
+                if (pcl->callback != nullptr)
                     pcl->callback(Globalreg::globalreg, pcl->auxdata, packet);
-                else if (pcl->l_callback != NULL)
+                else if (pcl->l_callback != nullptr)
                     pcl->l_callback(packet);
             }
 
-            for (auto pcl : classifier_chain) {
-                if (pcl->callback != NULL)
+            for (const auto& pcl : classifier_chain) {
+                if (pcl->callback != nullptr)
                     pcl->callback(Globalreg::globalreg, pcl->auxdata, packet);
-                else if (pcl->l_callback != NULL)
+                else if (pcl->l_callback != nullptr)
                     pcl->l_callback(packet);
             }
 
-            for (auto pcl : tracker_chain) {
-                if (pcl->callback != NULL)
+            for (const auto& pcl : tracker_chain) {
+                if (pcl->callback != nullptr)
                     pcl->callback(Globalreg::globalreg, pcl->auxdata, packet);
-                else if (pcl->l_callback != NULL)
+                else if (pcl->l_callback != nullptr)
                     pcl->l_callback(packet);
             }
 
-            for (auto pcl : logging_chain) {
-                if (pcl->callback != NULL)
+            for (const auto& pcl : logging_chain) {
+                if (pcl->callback != nullptr)
                     pcl->callback(Globalreg::globalreg, pcl->auxdata, packet);
-                else if (pcl->l_callback != NULL)
+                else if (pcl->l_callback != nullptr)
                     pcl->l_callback(packet);
             }
-
-            packet_rate_rrd->add_sample(1, time(0));
-
-            if (packet->error)
-                packet_error_rrd->add_sample(1, time(0));
-
-            if (packet->duplicate)
-                packet_dupe_rrd->add_sample(1, time(0));
-
-            destroy_packet(packet);
-
-            lock.lock();
-
-            continue;
         }
 
-        // No packets; fall through to blocking until we have them
-        lock.lock();
+        if (packet->error)
+            packet_error_rrd->add_sample(1, time(0));
+
+        if (packet->duplicate)
+            packet_dupe_rrd->add_sample(1, time(0));
+
+        packet_processed_rrd->add_sample(1, time(0));
+
+        destroy_packet(packet);
+
+        continue;
     }
 }
 
 int packet_chain::process_packet(kis_packet *in_pack) {
-    std::unique_lock<std::mutex> lock(packetqueue_cv_mutex);
+    // Total packet rate always gets added, even when we drop, so we can compare
+    packet_rate_rrd->add_sample(1, time(0));
+    packet_peak_rrd->add_sample(1, time(0));
 
-    if (packet_queue.size() > packet_queue_warning &&
-            packet_queue_warning != 0) {
-        time_t offt = time(0) - last_packet_queue_user_warning;
-
-        if (offt > 30) {
-            last_packet_queue_user_warning = time(0);
-
-            auto alertracker = Globalreg::fetch_mandatory_global_as<alert_tracker>();
-            alertracker->raise_one_shot("PACKETQUEUE", 
-                    "The packet queue has a backlog of " + int_to_string(packet_queue.size()) + 
-                    " packets; if you have multiple data sources it's possible that your "
-                    "system is not fast enough.  Kismet will continue to process "
-                    "packets, this may be a momentary spike in packet load.", -1);
-        }
-    }
-
-    if (packet_queue_drop != 0 && packet_queue.size() > packet_queue_drop) {
+    if (packet_queue_drop != 0 && packet_queue.size_approx() > packet_queue_drop) {
         time_t offt = time(0) - last_packet_drop_user_warning;
 
         if (offt > 30) {
@@ -364,29 +384,41 @@ int packet_chain::process_packet(kis_packet *in_pack) {
             std::shared_ptr<alert_tracker> alertracker =
                 Globalreg::fetch_mandatory_global_as<alert_tracker>();
             alertracker->raise_one_shot("PACKETLOST", 
-                    "Kismet has started to drop packets; the packet queue has a backlog "
-                    "of " + int_to_string(packet_queue.size()) + " packets.  Your system "
-                    "may not be fast enough to process the number of packets being seen. "
-                    "You change this behavior in 'kismet_memory.conf'.", -1);
+                    fmt::format("The packet queue has exceeded the maximum size of {}; Kismet "
+                        "will start dropping packets.  Your system may not have enough CPU to keep "
+                        "up with the packet rate in your environment or other processes may be "
+                        "taking up the CPU.  You can increase the packet backlog with the "
+                        "packet_backlog_limit configuration parameter.", packet_queue_drop), -1);
         }
 
-        // Don't queue packets when we're over-full
-        lock.unlock();
+        destroy_packet(in_pack);
 
         packet_drop_rrd->add_sample(1, time(0));
 
         return 1;
     }
 
+    if (packet_queue.size_approx() > packet_queue_warning && packet_queue_warning != 0) {
+        time_t offt = time(0) - last_packet_queue_user_warning;
+
+        if (offt > 30) {
+            last_packet_queue_user_warning = time(0);
+
+            auto alertracker = Globalreg::fetch_mandatory_global_as<alert_tracker>();
+            alertracker->raise_one_shot("PACKETQUEUE", 
+                    fmt::format("The packet queue has a backlog of {} packets; "
+                    "your system may not have enough CPU to keep up with the packet rate "
+                    "in your environment or you may have other processes taking up CPU.  "
+                    "Kismet will continue to process packets, as this may be a momentary spike "
+                    "in packet load.", packet_queue_warning), -1);
+        }
+    }
+
+
     // Queue the packet
-    packet_queue.push(in_pack);
+    packet_queue.enqueue(in_pack);
 
-    packet_queue_rrd->add_sample(packet_queue.size(), time(0));
-
-    // Unlock and notify all workers
-    lock.unlock();
-
-    packetqueue_cv.notify_all();
+    packet_queue_rrd->add_sample(packet_queue.size_approx(), time(0));
 
     return 1;
 }
@@ -400,7 +432,7 @@ int packet_chain::register_int_handler(pc_callback in_cb, void *in_aux,
         std::function<int (kis_packet *)> in_l_cb, 
         int in_chain, int in_prio) {
 
-    local_locker l(&packetchain_mutex);
+    kis_lock_guard<kis_shared_mutex> lk(packetchain_mutex, "register_int_handler");
 
     pc_link *link = NULL;
 
@@ -473,7 +505,7 @@ int packet_chain::register_handler(std::function<int (kis_packet *)> in_cb, int 
 }
 
 int packet_chain::remove_handler(int in_id, int in_chain) {
-    local_locker l(&packetchain_mutex);
+    kis_lock_guard<kis_shared_mutex> lk(packetchain_mutex, "remove_handler");
 
     unsigned int x;
 
@@ -544,7 +576,7 @@ int packet_chain::remove_handler(int in_id, int in_chain) {
 }
 
 int packet_chain::remove_handler(pc_callback in_cb, int in_chain) {
-    local_locker l(&packetchain_mutex);
+    kis_lock_guard<kis_shared_mutex> lk(packetchain_mutex, "remove_handler");
 
     unsigned int x;
 

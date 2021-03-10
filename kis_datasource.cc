@@ -25,19 +25,20 @@
 #include "entrytracker.h"
 #include "alertracker.h"
 #include "packetchain.h"
+#include "timetracker.h"
 
 // We never instantiate from a generic tracker component or from a stored
 // record so we always re-allocate ourselves
-kis_datasource::kis_datasource(shared_datasource_builder in_builder, std::shared_ptr<kis_recursive_timed_mutex> mutex) :
+kis_datasource::kis_datasource(shared_datasource_builder in_builder) :
     tracker_component(),
-    kis_external_interface(mutex) {
+    kis_external_interface() {
 
-    if (mutex == nullptr) {
-        if (in_builder != nullptr)
-            ext_mutex->set_name(fmt::format("kis_datasource({})", in_builder->get_source_type()));
-        else
-            ext_mutex->set_name("kis_datasource");
-    }
+    next_transaction = 1;
+
+    if (in_builder != nullptr)
+        ext_mutex.set_name(fmt::format("kis_datasource({})", in_builder->get_source_type()));
+    else
+        ext_mutex.set_name(fmt::format("kis_datasource(base)"));
     
     register_fields();
     reserve_fields(nullptr);
@@ -53,6 +54,7 @@ kis_datasource::kis_datasource(shared_datasource_builder in_builder, std::shared
     packetchain =
         Globalreg::fetch_mandatory_global_as<packet_chain>("PACKETCHAIN");
 
+    pack_comp_report = packetchain->register_packet_component("PACKETREPORT");
 	pack_comp_linkframe = packetchain->register_packet_component("LINKFRAME");
     pack_comp_l1info = packetchain->register_packet_component("RADIODATA");
     pack_comp_gps = packetchain->register_packet_component("GPS");
@@ -95,19 +97,25 @@ kis_datasource::~kis_datasource() {
     // be completed!
 }
 
-void kis_datasource::list_interfaces(unsigned int in_transaction, 
-        list_callback_t in_cb) {
-    local_demand_locker lock(ext_mutex);
+void kis_datasource::list_interfaces(unsigned int in_transaction, list_callback_t in_cb) {
+    kis_unique_lock<kis_mutex> lock(ext_mutex, std::defer_lock, "datasource list_interfaces");
     lock.lock();
 
+    if (in_transaction == 0)
+        in_transaction = next_transaction++;
+
     mode_listing = true;
+
+    if (in_transaction == 0)
+        in_transaction = next_transaction++;
 
     // If we can't list interfaces according to our prototype, die 
     // and call the cb instantly
     if (!get_source_builder()->get_list_capable()) {
         if (in_cb != NULL) {
             lock.unlock();
-            in_cb(in_transaction, std::vector<shared_interface>());
+            in_cb(std::static_pointer_cast<kis_datasource>(shared_from_this()), in_transaction, 
+                    std::vector<shared_interface>());
         }
 
         return;
@@ -117,7 +125,8 @@ void kis_datasource::list_interfaces(unsigned int in_transaction,
     if (!kis_external_interface::check_ipc(get_source_ipc_binary())) {
         if (in_cb != NULL) {
             lock.unlock();
-            in_cb(in_transaction, std::vector<shared_interface>());
+            in_cb(std::static_pointer_cast<kis_datasource>(shared_from_this()), in_transaction, 
+                    std::vector<shared_interface>());
         }
         return;
     }
@@ -129,23 +138,28 @@ void kis_datasource::list_interfaces(unsigned int in_transaction,
     if (!launch_ipc()) {
         if (in_cb != NULL) {
             lock.unlock();
-            in_cb(in_transaction, std::vector<shared_interface>());
+            in_cb(std::static_pointer_cast<kis_datasource>(shared_from_this()),
+                    in_transaction, std::vector<shared_interface>());
         }
 
         return;
     }
 
-
-    // Otherwise create and send a list command
     send_list_interfaces(in_transaction, in_cb);
 }
 
 void kis_datasource::probe_interface(std::string in_definition, unsigned int in_transaction,
         probe_callback_t in_cb) {
-    local_demand_locker lock(ext_mutex);
+    kis_unique_lock<kis_mutex> lock(ext_mutex, std::defer_lock, "datasource probe_interface");
     lock.lock();
 
+    if (in_transaction == 0)
+        in_transaction = next_transaction++;
+
     mode_probing = true;
+
+    if (in_transaction == 0)
+        in_transaction = next_transaction++;
 
     set_int_source_definition(in_definition);
 
@@ -184,23 +198,26 @@ void kis_datasource::probe_interface(std::string in_definition, unsigned int in_
     // Squelch errors from probe because they're not useful
     quiet_errors = true;
 
+    lock.unlock();
+
     // Launch the IPC
     if (launch_ipc()) {
         // Create and send probe command
         send_probe_source(in_definition, in_transaction, in_cb);
     } else {
         if (in_cb != NULL) {
-            lock.unlock();
             in_cb(in_transaction, false, "Failed to launch IPC to probe source");
-            lock.lock();
         }
     }
 }
 
 void kis_datasource::open_interface(std::string in_definition, unsigned int in_transaction, 
         open_callback_t in_cb) {
-    local_demand_locker lock(ext_mutex);
+    kis_unique_lock<kis_mutex> lock(ext_mutex, std::defer_lock, "datasource open_interface");
     lock.lock();
+
+    if (in_transaction == 0)
+        in_transaction = next_transaction++;
 
     set_int_source_definition(in_definition);
 
@@ -267,14 +284,35 @@ void kis_datasource::open_interface(std::string in_definition, unsigned int in_t
     // Launch the IPC
     launch_ipc();
 
+    set_int_source_running(true);
+
+    last_pong = time(0);
+
+    // If we got here we're valid; start a PING timer
+    timetracker->remove_timer(ping_timer_id);
+    ping_timer_id = timetracker->register_timer(std::chrono::seconds(5), true, [this](int) -> int {
+        kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource ping_timer lambda");
+        
+        if (!get_source_running()) {
+            ping_timer_id = -1;
+            return 0;
+        }
+       
+        send_ping();
+        return 1;
+    });
+
     // Create and send open command
     send_open_source(in_definition, in_transaction, in_cb);
 }
 
 void kis_datasource::set_channel(std::string in_channel, unsigned int in_transaction,
         configure_callback_t in_cb) {
-    local_demand_locker lock(ext_mutex);
+    kis_unique_lock<kis_mutex> lock(ext_mutex, std::defer_lock, "datasource set_channel");
     lock.lock();
+
+    if (in_transaction == 0)
+        in_transaction = next_transaction++;
 
     if (!get_source_builder()->get_tune_capable()) {
         if (in_cb != NULL) {
@@ -291,7 +329,10 @@ void kis_datasource::set_channel(std::string in_channel, unsigned int in_transac
 void kis_datasource::set_channel_hop(double in_rate, std::vector<std::string> in_chans,
         bool in_shuffle, unsigned int in_offt, unsigned int in_transaction, 
         configure_callback_t in_cb) {
-    local_locker lock(ext_mutex);
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource set_channel_hop");
+
+    if (in_transaction == 0)
+        in_transaction = next_transaction++;
 
     if (!get_source_builder()->get_tune_capable()) {
         if (in_cb != NULL) {
@@ -324,7 +365,10 @@ void kis_datasource::set_channel_hop(double in_rate,
         std::shared_ptr<tracker_element_vector> in_chans,
         bool in_shuffle, unsigned int in_offt, unsigned int in_transaction, 
         configure_callback_t in_cb) {
-    local_locker lock(ext_mutex);
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource set_channel_hop");
+
+    if (in_transaction == 0)
+        in_transaction = next_transaction++;
 
     if (!get_source_builder()->get_tune_capable()) {
         if (in_cb != NULL) {
@@ -360,9 +404,12 @@ void kis_datasource::set_channel_hop_list(std::vector<std::string> in_chans,
             get_source_hop_offset(), in_transaction, in_cb);
 }
 
-void kis_datasource::connect_remote(std::shared_ptr<buffer_handler_generic> in_ringbuf,
-        std::string in_definition, open_callback_t in_cb) {
-    local_locker lock(ext_mutex);
+void kis_datasource::connect_remote(std::string in_definition, kis_datasource* in_remote, 
+        bool in_tcp, configure_callback_t in_cb) {
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource connect_remote");
+
+    stopped = false;
+    cancelled = false;
 
     // We can't reconnect failed interfaces that are remote
     set_int_source_retry(false);
@@ -373,9 +420,6 @@ void kis_datasource::connect_remote(std::shared_ptr<buffer_handler_generic> in_r
     // Kill any error handlers
     if (error_timer_id > 0)
         timetracker->remove_timer(error_timer_id);
-
-    // Connect the buffer
-    connect_buffer(in_ringbuf);
 
     // Reset the state
     set_int_source_running(true);
@@ -388,50 +432,50 @@ void kis_datasource::connect_remote(std::shared_ptr<buffer_handler_generic> in_r
         set_int_source_error(true);
         set_int_source_error_reason("Unable to parse interface definition of remote source");
         _MSG("Unable to parse interface definition", MSGFLAG_ERROR);
+
+        if (in_cb)
+            in_cb(0, false, "Unable to parse definition of remote source");
+
         return;
     }
+
+    if (in_tcp)  {
+        attach_tcp_socket(in_remote->tcpsocket);
+    } else {
+        write_cb = in_remote->move_write_cb();
+        closure_cb = in_remote->move_closure_cb();
+    }
+
+    in_buf.consume(in_buf.size());
+    out_bufs.clear();
+
+    last_pong = time(0);
+
+    timetracker->remove_timer(ping_timer_id);
+    ping_timer_id = timetracker->register_timer(std::chrono::seconds(5), true, [this](int) -> int {
+        kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource ping_timer lambda");
+        
+        if (!get_source_running()) {
+            ping_timer_id = -1;
+            return 0;
+        }
+
+        if (time(0) - last_pong > 15) {
+            ping_timer_id = -1;
+            trigger_error("did not get a ping response from the capture binary");
+            return 0;
+        }
+       
+        send_ping();
+        return 1;
+    });
 
     // Send an opensource
     send_open_source(in_definition, 0, in_cb);
 }
 
-void kis_datasource::close_source() {
-    local_locker lock(ext_mutex);
-
-    if (ping_timer_id > 0) {
-        timetracker->remove_timer(ping_timer_id);
-        ping_timer_id = -1;
-    }
-
-    if (ringbuf_handler != nullptr) {
-        ringbuf_handler->remove_read_buffer_interface();
-        send_shutdown("closing source");
-    }
-
-    if (ipc_remote != nullptr) {
-        ipc_remote->soft_kill();
-    }
-
-    auto evt = eventbus->get_eventbus_event(event_datasource_closed());
-    evt->get_event_content()->insert(event_datasource_closed(), source_uuid);
-    eventbus->publish(evt);
-
-    ipc_remote.reset();
-    ringbuf_handler.reset();
-
-    if (get_source_error())
-        return;
-
-    if (!get_source_running())
-        return;
-
-    cancel_all_commands("Closing source");
-
-    set_int_source_running(false);
-}
-
 void kis_datasource::disable_source() {
-    local_locker lock(ext_mutex);
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource disable_source");
 
     close_source();
 
@@ -445,20 +489,38 @@ void kis_datasource::disable_source() {
     error_timer_id = -1;
 }
 
-void kis_datasource::trigger_error(std::string in_error) {
-    local_locker lock(ext_mutex);
+void kis_datasource::pause_source() {
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource pause_source");
 
-    // fprintf(stderr, "DEBUG - trigger error %s\n", in_error.c_str());
-
-    if (!quiet_errors) {
-        _MSG_ERROR("Data source '{} / {}' ('{}') encountered an error: {}",
-                get_source_name(), get_source_definition(), get_source_interface(), in_error);
-        set_int_source_error(true);
-        set_int_source_error_reason(in_error);
+    if (!get_source_paused()) {
+        auto evt = eventbus->get_eventbus_event(event_datasource_paused());
+        evt->get_event_content()->insert(event_datasource_paused(), source_uuid);
+        eventbus->publish(evt);
     }
 
-    // Kill any interaction w/ the source
-    close_source();
+    set_source_paused(true);
+}
+
+void kis_datasource::resume_source() {
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource pause_source");
+
+    if (get_source_paused()) {
+        auto evt = eventbus->get_eventbus_event(event_datasource_resumed());
+        evt->get_event_content()->insert(event_datasource_resumed(), source_uuid);
+        eventbus->publish(evt);
+    }
+
+    set_source_paused(false);
+}
+
+void kis_datasource::handle_error(const std::string& in_error) {
+    if (!quiet_errors && in_error.length()) {
+        _MSG_ERROR("Data source '{} / {}' ('{}') encountered an error: {}",
+                get_source_name(), get_source_definition(), get_source_interface(), in_error);
+    }
+
+    set_int_source_error(true);
+    set_int_source_error_reason(in_error);
 
     set_int_source_running(false);
 
@@ -466,15 +528,33 @@ void kis_datasource::trigger_error(std::string in_error) {
     evt->get_event_content()->insert(event_datasource_error(), source_uuid);
     eventbus->publish(evt);
 
-
     handle_source_error();
     cancel_all_commands(in_error);
+
+    close_external();
 }
 
-void kis_datasource::buffer_error(std::string in_error) {
-    buffer_available(0);
+void kis_datasource::close_source() {
+    return close_external();
+}
 
-    trigger_error(in_error);
+void kis_datasource::close_external() {
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource close_external");
+
+    if (ping_timer_id > 0) {
+        timetracker->remove_timer(ping_timer_id);
+        ping_timer_id = -1;
+    }
+
+    auto evt = eventbus->get_eventbus_event(event_datasource_closed());
+    evt->get_event_content()->insert(event_datasource_closed(), source_uuid);
+    eventbus->publish(evt);
+
+    set_int_source_running(false);
+
+    cancel_all_commands("source closed");
+
+    kis_external_interface::close_external();
 }
 
 std::string kis_datasource::get_definition_opt(std::string in_opt) {
@@ -517,7 +597,7 @@ double kis_datasource::get_definition_opt_double(std::string in_opt, double in_d
 }
 
 bool kis_datasource::parse_interface_definition(std::string in_definition) {
-    local_locker lock(ext_mutex);
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource parse_interface");
 
     local_uuid = false;
 
@@ -603,7 +683,7 @@ std::shared_ptr<kis_datasource::tracked_command> kis_datasource::get_command(uin
 }
 
 void kis_datasource::cancel_command(uint32_t in_transaction, std::string in_error) {
-    local_locker lock(ext_mutex);
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource cancel_command");
 
     auto i = command_ack_map.find(in_transaction);
     if (i != command_ack_map.end()) {
@@ -623,7 +703,8 @@ void kis_datasource::cancel_command(uint32_t in_transaction, std::string in_erro
         if (cmd->list_cb != NULL) {
             list_callback_t cb = cmd->list_cb;
             cmd->list_cb = NULL;
-            cb(cmd->transaction, std::vector<shared_interface>());
+            cb(std::static_pointer_cast<kis_datasource>(shared_from_this()),
+                    cmd->transaction, std::vector<shared_interface>());
         } else if (cmd->probe_cb != NULL) {
             probe_callback_t cb = cmd->probe_cb;
             cmd->probe_cb = NULL;
@@ -643,7 +724,7 @@ void kis_datasource::cancel_command(uint32_t in_transaction, std::string in_erro
 }
 
 void kis_datasource::cancel_all_commands(std::string in_error) {
-    local_locker lock(ext_mutex);
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource cancel_all_commands");
 
     // fprintf(stderr, "debug - cancel all commands\n");
 
@@ -704,7 +785,8 @@ void kis_datasource::handle_msg_proxy(const std::string& msg, const int type) {
 
 void kis_datasource::handle_packet_probesource_report(uint32_t in_seqno, 
         const std::string& in_content) {
-    local_demand_locker lock(ext_mutex);
+    kis_unique_lock<kis_mutex> lock(ext_mutex, std::defer_lock, 
+            "datasource handle_packet_probesource_report");
     lock.lock();
 
     KismetDatasource::ProbeSourceReport report;
@@ -761,7 +843,8 @@ void kis_datasource::handle_packet_probesource_report(uint32_t in_seqno,
 
 void kis_datasource::handle_packet_opensource_report(uint32_t in_seqno, 
         const std::string& in_content) {
-    local_demand_locker lock(ext_mutex);
+    kis_unique_lock<kis_mutex> lock(ext_mutex, std::defer_lock, "datasource handle_packet_opensource_report");
+    lock.lock();
 
     KismetDatasource::OpenSourceReport report;
 
@@ -968,29 +1051,11 @@ void kis_datasource::handle_packet_opensource_report(uint32_t in_seqno,
         set_int_source_error_reason(msg);
         return;
     } 
-
-    last_pong = time(0);
-
-    // If we got here we're valid; start a PING timer
-    if (ping_timer_id <= 0) {
-        ping_timer_id = timetracker->register_timer(SERVER_TIMESLICES_SEC, NULL,
-                1, [this](int) -> int {
-            local_locker lock(ext_mutex);
-            
-            if (!get_source_running()) {
-                ping_timer_id = -1;
-                return 0;
-            }
-           
-            send_ping();
-            return 1;
-        });
-    }
 }
 
 void kis_datasource::handle_packet_interfaces_report(uint32_t in_seqno, 
         const std::string& in_content) {
-    local_demand_locker lock(ext_mutex);
+    kis_unique_lock<kis_mutex> lock(ext_mutex, std::defer_lock, "datasource handle_packet_interfaces_report");
     lock.lock();
 
     listed_interfaces.clear();
@@ -1001,6 +1066,7 @@ void kis_datasource::handle_packet_interfaces_report(uint32_t in_seqno,
         _MSG(std::string("Kismet datasource driver ") + get_source_builder()->get_source_type() + 
                 std::string(" could not parse the interface report, something is wrong with "
                     "the remote capture tool"), MSGFLAG_ERROR);
+        lock.unlock();
         trigger_error("Invalid KDSPROBESOURCEREPORT");
         return;
     }
@@ -1021,14 +1087,16 @@ void kis_datasource::handle_packet_interfaces_report(uint32_t in_seqno,
         if (rintf.has_hardware())
             intf->set_hardware(rintf.hardware());
 
-        {
-            local_locker lock(ext_mutex);
-            listed_interfaces.push_back(intf);
-        }
+        if (rintf.has_capinterface())
+            intf->set_cap_interface(rintf.capinterface());
+
+        listed_interfaces.push_back(intf);
     }
 
     // Quiet errors display for shutdown of pipe
     quiet_errors = true;
+
+    lock.unlock();
 
     uint32_t seq = report.success().seqno();
 
@@ -1039,15 +1107,15 @@ void kis_datasource::handle_packet_interfaces_report(uint32_t in_seqno,
         command_ack_map.erase(ci);
 
         if (cb != nullptr) {
-            lock.unlock();
-            cb(transaction, listed_interfaces);
+            cb(std::static_pointer_cast<kis_datasource>(shared_from_this()),
+                    transaction, listed_interfaces);
         }
     }
 
 }
 
 void kis_datasource::handle_packet_error_report(uint32_t in_seqno, const std::string& in_content) {
-    local_locker lock(ext_mutex);
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource handle_packet_error_report");
 
     KismetDatasource::ErrorReport report;
 
@@ -1068,7 +1136,7 @@ void kis_datasource::handle_packet_error_report(uint32_t in_seqno, const std::st
 }
 
 void kis_datasource::handle_packet_configure_report(uint32_t in_seqno, const std::string& in_content) {
-    local_demand_locker lock(ext_mutex);
+    kis_unique_lock<kis_mutex> lock(ext_mutex, std::defer_lock, "datasource handle_packet_configure_report");
     lock.lock();
 
     KismetDatasource::ConfigureReport report;
@@ -1124,6 +1192,9 @@ void kis_datasource::handle_packet_configure_report(uint32_t in_seqno, const std
     if (ci != command_ack_map.end()) {
         auto cb = ci->second->configure_cb;
         auto transaction = ci->second->transaction;
+
+        // _MSG_DEBUG("ds configure report seq {} has cb transaction {} success {} msg {}", seq, transaction, report.success().success(), msg);
+
         command_ack_map.erase(ci);
 
         if (cb != nullptr) {
@@ -1143,15 +1214,15 @@ void kis_datasource::handle_packet_configure_report(uint32_t in_seqno, const std
 void kis_datasource::handle_packet_data_report(uint32_t in_seqno, const std::string& in_content) {
     // If we're paused, throw away this packet
     {
-        local_locker lock(ext_mutex);
+        kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource handle_packet_data_report");
 
         if (get_source_paused())
             return;
     }
 
-    KismetDatasource::DataReport report;
+    auto report = std::make_shared<KismetDatasource::DataReport>();
 
-    if (!report.ParseFromString(in_content)) {
+    if (!report->ParseFromString(in_content)) {
         _MSG(std::string("Kismet datasource driver ") + get_source_builder()->get_source_type() + 
                 std::string(" could not parse the data report, something is wrong with "
                     "the remote capture tool"), MSGFLAG_ERROR);
@@ -1159,83 +1230,89 @@ void kis_datasource::handle_packet_data_report(uint32_t in_seqno, const std::str
         return;
     }
 
-    if (report.has_message()) 
-        handle_msg_proxy(report.message().msgtext(), report.message().msgtype());
+    if (report->has_message()) 
+        handle_msg_proxy(report->message().msgtext(), report->message().msgtype());
 
-    if (report.has_warning())
-        set_int_source_warning(report.warning());
+    if (report->has_warning())
+        set_int_source_warning(report->warning());
 
     kis_packet *packet = packetchain->generate_packet();
 
+    packet->insert(pack_comp_report, new kis_packreport_packinfo(report));
+
     // Process the data chunk
-    if (report.has_packet()) {
+    if (report->has_packet()) {
         kis_datachunk *datachunk = new kis_datachunk();
 
         if (clobber_timestamp && get_source_remote()) {
             gettimeofday(&(packet->ts), NULL);
         } else {
-            packet->ts.tv_sec = report.packet().time_sec();
-            packet->ts.tv_usec = report.packet().time_usec();
+            packet->ts.tv_sec = report->packet().time_sec();
+            packet->ts.tv_usec = report->packet().time_usec();
         }
 
         // Override the DLT if we have one
         if (get_source_override_linktype()) {
             datachunk->dlt = get_source_override_linktype();
         } else {
-            datachunk->dlt = report.packet().dlt();
+            datachunk->dlt = report->packet().dlt();
         }
-        datachunk->copy_data((const uint8_t *) report.packet().data().data(), 
-                report.packet().data().length());
+
+        // datachunk->copy_data((const uint8_t *) report.packet().data().data(), report.packet().data().length());
+
+        datachunk->set_data(const_cast<char *>(report->packet().data().data()), report->packet().data().length(), false);
+
+        get_source_packet_size_rrd()->add_sample(report->packet().data().length(), time(0));
 
         packet->insert(pack_comp_linkframe, datachunk);
     }
 
     // Process JSON
-    if (report.has_json()) {
+    if (report->has_json()) {
         // fprintf(stderr, "debug - got JSON report- %s\n", report.json().json().c_str());
         kis_json_packinfo *jsoninfo = new kis_json_packinfo();
       
         if (clobber_timestamp && get_source_remote()) {
             gettimeofday(&(packet->ts), NULL);
         } else {
-            packet->ts.tv_sec = report.json().time_sec();
-            packet->ts.tv_usec = report.json().time_usec();
+            packet->ts.tv_sec = report->json().time_sec();
+            packet->ts.tv_usec = report->json().time_usec();
         }
 
-        jsoninfo->type = report.json().type();
-        jsoninfo->json_string = report.json().json();
+        jsoninfo->type = report->json().type();
+        jsoninfo->json_string = report->json().json();
 
         packet->insert(pack_comp_json, jsoninfo);
     }
 
     // Process protobufs
-    if (report.has_buffer()) {
+    if (report->has_buffer()) {
         kis_protobuf_packinfo *bufinfo = new kis_protobuf_packinfo();
 
         if (clobber_timestamp && get_source_remote()) {
             gettimeofday(&(packet->ts), NULL);
         } else {
-            packet->ts.tv_sec = report.buffer().time_sec();
-            packet->ts.tv_usec = report.buffer().time_usec();
+            packet->ts.tv_sec = report->buffer().time_sec();
+            packet->ts.tv_usec = report->buffer().time_usec();
         }
 
-        bufinfo->type = report.buffer().type();
-        bufinfo->buffer_string = report.buffer().buffer();
+        bufinfo->type = report->buffer().type();
+        bufinfo->buffer_string = report->buffer().buffer();
 
         packet->insert(pack_comp_protobuf, bufinfo);
     }
 
     // Signal
-    if (report.has_signal()) {
+    if (report->has_signal()) {
         kis_layer1_packinfo *siginfo = NULL;
-        siginfo = handle_sub_signal(report.signal());
+        siginfo = handle_sub_signal(report->signal());
         packet->insert(pack_comp_l1info, siginfo);
     }
 
     // GPS
-    if (report.has_gps()) {
+    if (report->has_gps()) {
         kis_gps_packinfo *gpsinfo = NULL;
-        gpsinfo = handle_sub_gps(report.gps());
+        gpsinfo = handle_sub_gps(report->gps());
         packet->insert(pack_comp_gps, gpsinfo);
     } else if (suppress_gps) {
         auto nogpsinfo = new kis_no_gps_packinfo();
@@ -1244,6 +1321,10 @@ void kis_datasource::handle_packet_data_report(uint32_t in_seqno, const std::str
 
     // TODO handle spectrum
    
+    handle_rx_packet(packet);
+}
+
+void kis_datasource::handle_rx_packet(kis_packet *packet) {
     packetchain_comp_datasource *datasrcinfo = new packetchain_comp_datasource();
     datasrcinfo->ref_source = this;
 
@@ -1252,16 +1333,12 @@ void kis_datasource::handle_packet_data_report(uint32_t in_seqno, const std::str
     inc_source_num_packets(1);
     get_source_packet_rrd()->add_sample(1, time(0));
 
-    handle_rx_packet(packet);
-}
-
-void kis_datasource::handle_rx_packet(kis_packet *packet) {
     // Inject the packet into the packetchain if we have one
     packetchain->process_packet(packet);
 }
 
 void kis_datasource::handle_packet_warning_report(uint32_t in_seqno, const std::string& in_content) {
-    local_locker lock(ext_mutex);
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource handle_packet_warning_report");
 
     KismetDatasource::WarningReport report;
 
@@ -1335,7 +1412,10 @@ kis_gps_packinfo *kis_datasource::handle_sub_gps(KismetDatasource::SubGps in_gps
 
 unsigned int kis_datasource::send_probe_source(std::string in_definition,
         unsigned int in_transaction, probe_callback_t in_cb) {
-    local_locker lock(ext_mutex);
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource send_probe_source");
+
+    if (in_transaction == 0)
+        in_transaction = next_transaction++;
 
     std::shared_ptr<tracked_command> cmd;
     uint32_t seqno;
@@ -1369,7 +1449,10 @@ unsigned int kis_datasource::send_probe_source(std::string in_definition,
 
 unsigned int kis_datasource::send_open_source(std::string in_definition,
         unsigned int in_transaction, open_callback_t in_cb) {
-    local_locker lock(ext_mutex);
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource send_open_source");
+
+    if (in_transaction == 0)
+        in_transaction = next_transaction++;
 
     std::shared_ptr<tracked_command> cmd;
     uint32_t seqno;
@@ -1403,7 +1486,10 @@ unsigned int kis_datasource::send_open_source(std::string in_definition,
 
 unsigned int kis_datasource::send_configure_channel(std::string in_chan,
         unsigned int in_transaction, configure_callback_t in_cb) {
-    local_locker lock(ext_mutex);
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource send_configure_channel");
+
+    if (in_transaction == 0)
+        in_transaction = next_transaction++;
 
     std::shared_ptr<tracked_command> cmd;
     uint32_t seqno;
@@ -1444,9 +1530,11 @@ unsigned int kis_datasource::send_configure_channel_hop(double in_rate,
         unsigned int in_transaction,
         configure_callback_t in_cb) {
 
-    local_locker lock(ext_mutex);
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource send_configure_channel_hop");
 
-    std::shared_ptr<tracked_command> cmd;
+    if (in_transaction == 0)
+        in_transaction = next_transaction++;
+
     uint32_t seqno;
 
     std::shared_ptr<KismetExternal::Command> c(new KismetExternal::Command());
@@ -1478,7 +1566,7 @@ unsigned int kis_datasource::send_configure_channel_hop(double in_rate,
         return 0;
     }
 
-    cmd.reset(new tracked_command(in_transaction, seqno, this));
+    auto cmd = std::make_shared<tracked_command>(in_transaction, seqno, this);
     cmd->configure_cb = in_cb;
 
     command_ack_map.insert(std::make_pair(seqno, cmd));
@@ -1487,7 +1575,10 @@ unsigned int kis_datasource::send_configure_channel_hop(double in_rate,
 }
 
 unsigned int kis_datasource::send_list_interfaces(unsigned int in_transaction, list_callback_t in_cb) {
-    local_locker lock(ext_mutex);
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource send_list_interfaces");
+
+    if (in_transaction == 0)
+        in_transaction = next_transaction++;
 
     std::shared_ptr<tracked_command> cmd;
     uint32_t seqno;
@@ -1504,7 +1595,7 @@ unsigned int kis_datasource::send_list_interfaces(unsigned int in_transaction, l
 
     if (seqno == 0) {
         if (in_cb != NULL) {
-            in_cb(in_transaction, std::vector<shared_interface>());
+            in_cb(std::static_pointer_cast<kis_datasource>(shared_from_this()), in_transaction, std::vector<shared_interface>());
         }
 
         return 0;
@@ -1585,8 +1676,13 @@ void kis_datasource::register_fields() {
 
     packet_rate_rrd_id = 
         register_dynamic_field("kismet.datasource.packets_rrd", 
-                "detected packet rate over past 60 seconds",
+                "received packet rate RRD",
                 &packet_rate_rrd);
+
+    packet_size_rrd_id = 
+        register_dynamic_field("kismet.datasource.packets_datasize_rrd", 
+                "received data RRD (in bytes)",
+                &packet_size_rrd);
 
     register_field("kismet.datasource.retry", 
             "Source will try to re-open after failure", &source_retry);
@@ -1614,13 +1710,18 @@ void kis_datasource::register_fields() {
 }
 
 void kis_datasource::handle_source_error() {
-    local_locker lock(ext_mutex);
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasouce handle_source_error");
 
     // If we're probing or listing we don't do any special handling
     if (mode_listing || mode_probing)
         return;
 
     std::stringstream ss;
+
+    if (ping_timer_id > 0) {
+        timetracker->remove_timer(ping_timer_id);
+        ping_timer_id = -1;
+    }
 
     // Do nothing if we don't handle retry
     if (get_source_remote()) {
@@ -1634,11 +1735,6 @@ void kis_datasource::handle_source_error() {
             alertracker->raise_one_shot("SOURCEERROR", ss.str(), -1);
 
             _MSG(ss.str(), MSGFLAG_ERROR);
-        }
-
-        if (ping_timer_id > 0) {
-            timetracker->remove_timer(ping_timer_id);
-            ping_timer_id = -1;
         }
 
         set_int_source_running(false);
@@ -1658,21 +1754,11 @@ void kis_datasource::handle_source_error() {
             _MSG(ss.str(), MSGFLAG_ERROR);
         }
 
-        if (ping_timer_id > 0) {
-            timetracker->remove_timer(ping_timer_id);
-            ping_timer_id = -1;
-        }
-
         set_int_source_running(false);
 
         return;
     }
     
-    if (ping_timer_id > 0) {
-        timetracker->remove_timer(ping_timer_id);
-        ping_timer_id = -1;
-    }
-
     set_int_source_running(false);
 
     // If we already have an error timer, we're thinking about restarting, 
@@ -1696,11 +1782,10 @@ void kis_datasource::handle_source_error() {
         _MSG(ss.str(), MSGFLAG_ERROR);
 
         // Set a new event to try to re-open the interface
-        error_timer_id = timetracker->register_timer(SERVER_TIMESLICES_SEC * 5,
-                NULL, 0, [this](int) -> int {
-                local_locker lock(ext_mutex);
+        error_timer_id = timetracker->register_timer(std::chrono::seconds(5), false, [this](int) -> int {
+                kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource error_timer lambda");
 
-                error_timer_id = 0;
+                error_timer_id = -1;
 
                 _MSG("Attempting to re-open source " + get_source_name(), MSGFLAG_INFO);
 
@@ -1734,6 +1819,7 @@ void kis_datasource::handle_source_error() {
                                 // Reset the fixed channel if we have one
                                 set_channel(get_source_channel(), 0, NULL);
                             }
+
                         });
 
                     return 0;
@@ -1744,31 +1830,19 @@ void kis_datasource::handle_source_error() {
 }
 
 bool kis_datasource::launch_ipc() {
-    local_locker lock(ext_mutex);
-
-    std::stringstream ss;
-
     if (get_source_ipc_binary() == "") {
-        ss << "missing IPC binary name, cannot launch capture tool";
-        trigger_error(ss.str());
+        trigger_error("missing IPC binary definition, can not launch capture tool");
         return false;
     }
 
-    // Kill the running process if we have one
-    if (ipc_remote != NULL) {
-        _MSG_INFO("Data source '{} / {}' launching while an IPC process is already running; killing "
-                "existing process {}", get_source_name(), get_source_definition(), 
-                get_source_ipc_pid());
-
-        ipc_remote->soft_kill();
-    }
+    ipc_soft_kill();
 
     set_int_source_ipc_pid(-1);
 
     external_binary = get_source_ipc_binary();
 
     if (run_ipc()) {
-        set_int_source_ipc_pid(ipc_remote->get_pid());
+        set_int_source_ipc_pid(ipc.pid);
         return true;
     }
 

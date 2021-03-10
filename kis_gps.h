@@ -68,12 +68,6 @@ public:
         return std::move(dup);
     }
 
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
-        return std::move(dup);
-    }
-
     virtual void initialize() { };
 
     // Take a shared_ptr reference to ourselves from the caller, because we can't 
@@ -123,12 +117,20 @@ public:
     __ProxyPrivSplit(gps_definition, std::string, std::string, std::string, gps_definition);
     __ProxyPrivSplit(gps_priority, int32_t, int32_t, int32_t, gps_priority);
     __ProxyPrivSplit(gps_data_only, uint8_t, bool, bool, gps_data_only);
-    __ProxyPrivSplit(device_connected, uint8_t, bool, bool, gps_connected);
     __ProxyPrivSplit(gps_reconnect, uint8_t, bool, bool, gps_reconnect);
     __ProxyTrackable(gps_prototype, kis_gps_builder, gps_prototype);
 
-    virtual kis_gps_packinfo *get_location() { return gps_location; }
-    virtual kis_gps_packinfo *get_last_location() { return gps_last_location; }
+    __ProxyPrivSplitM(device_connected, uint8_t, bool, bool, gps_connected, gps_mutex);
+
+    virtual std::shared_ptr<kis_gps_packinfo> get_location() { 
+        kis_lock_guard<kis_mutex> lk(gps_mutex);
+        return std::make_shared<kis_gps_packinfo>(new kis_gps_packinfo(gps_location)); 
+    }
+
+    virtual std::shared_ptr<kis_gps_packinfo> get_last_location() { 
+        kis_lock_guard<kis_mutex> lk(gps_mutex);
+        return std::make_shared<kis_gps_packinfo>(new kis_gps_packinfo(gps_last_location)); 
+    }
 
     // Fetch if we have a valid location anymore; per-gps-driver logic 
     // will determine if we consider a value to still be valid
@@ -145,7 +147,7 @@ public:
 
 protected:
     // We share mutexes down to the driver engines so we use a shared
-    std::shared_ptr<kis_recursive_timed_mutex> gps_mutex;
+    kis_mutex gps_mutex;
 
     // Split out local var-key pairs for the source definition
     std::map<std::string, std::string> source_definition_opts;
@@ -186,8 +188,8 @@ protected:
 
     std::shared_ptr<tracker_element_int32> gps_priority;
 
-    std::shared_ptr<kis_tracked_location_triplet> tracked_location;
-    std::shared_ptr<kis_tracked_location_triplet> tracked_last_location;
+    std::shared_ptr<kis_tracked_location_full> tracked_location;
+    std::shared_ptr<kis_tracked_location_full> tracked_last_location;
 
     kis_gps_packinfo *gps_location;
     kis_gps_packinfo *gps_last_location;

@@ -622,6 +622,9 @@ ac_includes_default="\
 
 ac_subst_vars='LTLIBOBJS
 LIBOBJS
+BUILD_CAPTURE_NRF_52840
+BUILD_CAPTURE_RZ_KILLERBEE
+BUILD_CAPTURE_PROXY_ADSB
 BUILD_CAPTURE_ATZB_233
 BUILD_CAPTURE_NXP_KW41Z
 BUILD_CAPTURE_NRF_51822
@@ -665,6 +668,11 @@ NMCFLAGS
 NMLIBS
 libnm_LIBS
 libnm_CFLAGS
+BUILD_CAPTURE_BLADERF_WLAN
+BLADERFCFLAGS
+BLADERFLIBS
+libbladeRF_LIBS
+libbladeRF_CFLAGS
 PROTOBUF_CPP_H_TARGET
 PROTOBUF_CPP_O_TARGET
 PROTOCCFLAGS
@@ -679,11 +687,18 @@ libprotobufc_CFLAGS
 protoc
 protobuf_LIBS
 protobuf_CFLAGS
+pcap
+PCAPCFLAGS
+PCAPLIBS
+libpcap_LIBS
+libpcap_CFLAGS
+LIBWSCFLAGS
+LIBWSLIBS
+libwebsockets_LIBS
+libwebsockets_CFLAGS
 PKG_CONFIG_LIBDIR
 PKG_CONFIG_PATH
 PKG_CONFIG
-pcap
-pcaplnk
 LIBPRELUDE_CONFIG_PREFIX
 LIBPRELUDE_PREFIX
 LIBPRELUDE_LIBS
@@ -711,7 +726,6 @@ BIN_DIR
 LOCALSTATE_DIR
 CONFFILE_DIR
 PLUGINLDFLAGS
-HAVE_CXX11
 HAVE_CXX14
 HAVE_CXX17
 GCC_VERSION
@@ -787,16 +801,20 @@ enable_element_typesafety
 enable_protobuflite
 enable_python_tools
 with_python_interpreter
+enable_debuglibs
 enable_largefile
 enable_mutextimeout
 with_linuxheaders
 enable_linuxwext
+enable_libcap
 with_pcreheaders
 enable_pcre
 enable_prelude
 with_libprelude_prefix
+enable_libwebsockets
 with_protoc
 with_protocc
+enable_bladerf
 enable_libnm
 with_netlink_tiny
 enable_libusb
@@ -823,10 +841,16 @@ CXXCPP
 PKG_CONFIG
 PKG_CONFIG_PATH
 PKG_CONFIG_LIBDIR
+libwebsockets_CFLAGS
+libwebsockets_LIBS
+libpcap_CFLAGS
+libpcap_LIBS
 protobuf_CFLAGS
 protobuf_LIBS
 libprotobufc_CFLAGS
 libprotobufc_LIBS
+libbladeRF_CFLAGS
+libbladeRF_LIBS
 libnm_CFLAGS
 libnm_LIBS
 libnl30_CFLAGS
@@ -1472,12 +1496,18 @@ Optional Features:
                           protobuf
   --disable-python-tools  Disable building Python modules and Python-only data
                           sources
+  --disable-debuglibs     Disable libdw and bfd libs which aid in debugging
   --disable-largefile     omit support for large files
   --disable-mutextimeout  Disable failsafe thread mutex timer, use with
                           caution
   --disable-linuxwext     Disable Linux wireless extensions
+  --disable-libcap        Disable libcap capabilities
   --disable-pcre          Disable PCRE regex
   --enable-prelude        Enable Prelude SIEM as a target for alerts.
+  --disable-libwebsockets Disable C-based libwebsockets, this will only impact
+                          building remote capture sources. The Kismet server
+                          will still have websockets support.
+  --enable-bladerf        Enable bladeRF2-wiphy support
   --disable-libnm         Disable libnm networkmanager support
   --disable-libusb        Disable libUSB support and any libUSB based data
                           sources
@@ -1519,6 +1549,14 @@ Some influential environment variables:
               directories to add to pkg-config's search path
   PKG_CONFIG_LIBDIR
               path overriding pkg-config's built-in search path
+  libwebsockets_CFLAGS
+              C compiler flags for libwebsockets, overriding pkg-config
+  libwebsockets_LIBS
+              linker flags for libwebsockets, overriding pkg-config
+  libpcap_CFLAGS
+              C compiler flags for libpcap, overriding pkg-config
+  libpcap_LIBS
+              linker flags for libpcap, overriding pkg-config
   protobuf_CFLAGS
               C compiler flags for protobuf, overriding pkg-config
   protobuf_LIBS
@@ -1527,6 +1565,10 @@ Some influential environment variables:
               C compiler flags for libprotobufc, overriding pkg-config
   libprotobufc_LIBS
               linker flags for libprotobufc, overriding pkg-config
+  libbladeRF_CFLAGS
+              C compiler flags for libbladeRF, overriding pkg-config
+  libbladeRF_LIBS
+              linker flags for libbladeRF, overriding pkg-config
   libnm_CFLAGS
               C compiler flags for libnm, overriding pkg-config
   libnm_LIBS  linker flags for libnm, overriding pkg-config
@@ -4143,6 +4185,10 @@ BUILD_CAPTURE_UBERTOOTH_ONE=0
 BUILD_CAPTURE_NRF_51822=0
 BUILD_CAPTURE_NXP_KW41Z=0
 BUILD_CAPTURE_ATZB_233=0
+BUILD_CAPTURE_RZ_KILLERBEE=0
+BUILD_CAPTURE_BLADERF_WLAN=0
+BUILD_CAPTURE_PROXY_ADSB=1
+BUILD_CAPTURE_NRF_52840=0
 
 DATASOURCE_BINS="\$(CAPTURE_KISMETDB)"
 
@@ -6054,12 +6100,17 @@ $as_echo "#define HAVE_CXX17 1" >>confdefs.h
 
 
 if test "$HAVE_CXX17" = "1"; then
-    $as_echo "#define HAVE_CXX14 1" >>confdefs.h
 
-    $as_echo "#define HAVE_CXX11 1" >>confdefs.h
+$as_echo "#define HAVE_CXX17 1" >>confdefs.h
+
+
+$as_echo "#define HAVE_CXX14 1" >>confdefs.h
+
+
+$as_echo "#define HAVE_CXX11 1" >>confdefs.h
 
 else
-      ax_cxx_compile_alternatives="14 1y"    ax_cxx_compile_cxx14_required=false
+      ax_cxx_compile_alternatives="14 1y"    ax_cxx_compile_cxx14_required=true
   ac_ext=cpp
 ac_cpp='$CXXCPP $CPPFLAGS'
 ac_compile='$CXX -c $CXXFLAGS $CPPFLAGS conftest.$ac_ext >&5'
@@ -6978,686 +7029,11 @@ $as_echo "#define HAVE_CXX14 1" >>confdefs.h
 
 
     if test "$HAVE_CXX14" = "1"; then
-        $as_echo "#define HAVE_CXX11 1" >>confdefs.h
 
-    else
-          ax_cxx_compile_alternatives="11 0x"    ax_cxx_compile_cxx11_required=true
-  ac_ext=cpp
-ac_cpp='$CXXCPP $CPPFLAGS'
-ac_compile='$CXX -c $CXXFLAGS $CPPFLAGS conftest.$ac_ext >&5'
-ac_link='$CXX -o conftest$ac_exeext $CXXFLAGS $CPPFLAGS $LDFLAGS conftest.$ac_ext $LIBS >&5'
-ac_compiler_gnu=$ac_cv_cxx_compiler_gnu
-  ac_success=no
+$as_echo "#define HAVE_CXX14 1" >>confdefs.h
 
-    if test x$ac_success = xno; then
-    for alternative in ${ax_cxx_compile_alternatives}; do
-      switch="-std=gnu++${alternative}"
-      cachevar=`$as_echo "ax_cv_cxx_compile_cxx11_$switch" | $as_tr_sh`
-      { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether $CXX supports C++11 features with $switch" >&5
-$as_echo_n "checking whether $CXX supports C++11 features with $switch... " >&6; }
-if eval \${$cachevar+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_save_CXX="$CXX"
-         CXX="$CXX $switch"
-         cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-
-// If the compiler admits that it is not ready for C++11, why torture it?
-// Hopefully, this will speed up the test.
-
-#ifndef __cplusplus
-
-#error "This is not a C++ compiler"
-
-#elif __cplusplus < 201103L
-
-#error "This is not a C++11 compiler"
-
-#else
-
-namespace cxx11
-{
-
-  namespace test_static_assert
-  {
-
-    template <typename T>
-    struct check
-    {
-      static_assert(sizeof(int) <= sizeof(T), "not big enough");
-    };
-
-  }
-
-  namespace test_final_override
-  {
-
-    struct Base
-    {
-      virtual void f() {}
-    };
-
-    struct Derived : public Base
-    {
-      virtual void f() override {}
-    };
-
-  }
-
-  namespace test_double_right_angle_brackets
-  {
-
-    template < typename T >
-    struct check {};
-
-    typedef check<void> single_type;
-    typedef check<check<void>> double_type;
-    typedef check<check<check<void>>> triple_type;
-    typedef check<check<check<check<void>>>> quadruple_type;
-
-  }
-
-  namespace test_decltype
-  {
-
-    int
-    f()
-    {
-      int a = 1;
-      decltype(a) b = 2;
-      return a + b;
-    }
-
-  }
-
-  namespace test_type_deduction
-  {
-
-    template < typename T1, typename T2 >
-    struct is_same
-    {
-      static const bool value = false;
-    };
-
-    template < typename T >
-    struct is_same<T, T>
-    {
-      static const bool value = true;
-    };
-
-    template < typename T1, typename T2 >
-    auto
-    add(T1 a1, T2 a2) -> decltype(a1 + a2)
-    {
-      return a1 + a2;
-    }
-
-    int
-    test(const int c, volatile int v)
-    {
-      static_assert(is_same<int, decltype(0)>::value == true, "");
-      static_assert(is_same<int, decltype(c)>::value == false, "");
-      static_assert(is_same<int, decltype(v)>::value == false, "");
-      auto ac = c;
-      auto av = v;
-      auto sumi = ac + av + 'x';
-      auto sumf = ac + av + 1.0;
-      static_assert(is_same<int, decltype(ac)>::value == true, "");
-      static_assert(is_same<int, decltype(av)>::value == true, "");
-      static_assert(is_same<int, decltype(sumi)>::value == true, "");
-      static_assert(is_same<int, decltype(sumf)>::value == false, "");
-      static_assert(is_same<int, decltype(add(c, v))>::value == true, "");
-      return (sumf > 0.0) ? sumi : add(c, v);
-    }
-
-  }
-
-  namespace test_noexcept
-  {
-
-    int f() { return 0; }
-    int g() noexcept { return 0; }
-
-    static_assert(noexcept(f()) == false, "");
-    static_assert(noexcept(g()) == true, "");
-
-  }
-
-  namespace test_constexpr
-  {
-
-    template < typename CharT >
-    unsigned long constexpr
-    strlen_c_r(const CharT *const s, const unsigned long acc) noexcept
-    {
-      return *s ? strlen_c_r(s + 1, acc + 1) : acc;
-    }
-
-    template < typename CharT >
-    unsigned long constexpr
-    strlen_c(const CharT *const s) noexcept
-    {
-      return strlen_c_r(s, 0UL);
-    }
-
-    static_assert(strlen_c("") == 0UL, "");
-    static_assert(strlen_c("1") == 1UL, "");
-    static_assert(strlen_c("example") == 7UL, "");
-    static_assert(strlen_c("another\0example") == 7UL, "");
-
-  }
-
-  namespace test_rvalue_references
-  {
-
-    template < int N >
-    struct answer
-    {
-      static constexpr int value = N;
-    };
-
-    answer<1> f(int&)       { return answer<1>(); }
-    answer<2> f(const int&) { return answer<2>(); }
-    answer<3> f(int&&)      { return answer<3>(); }
-
-    void
-    test()
-    {
-      int i = 0;
-      const int c = 0;
-      static_assert(decltype(f(i))::value == 1, "");
-      static_assert(decltype(f(c))::value == 2, "");
-      static_assert(decltype(f(0))::value == 3, "");
-    }
-
-  }
-
-  namespace test_uniform_initialization
-  {
-
-    struct test
-    {
-      static const int zero {};
-      static const int one {1};
-    };
-
-    static_assert(test::zero == 0, "");
-    static_assert(test::one == 1, "");
-
-  }
-
-  namespace test_lambdas
-  {
-
-    void
-    test1()
-    {
-      auto lambda1 = [](){};
-      auto lambda2 = lambda1;
-      lambda1();
-      lambda2();
-    }
-
-    int
-    test2()
-    {
-      auto a = [](int i, int j){ return i + j; }(1, 2);
-      auto b = []() -> int { return '0'; }();
-      auto c = [=](){ return a + b; }();
-      auto d = [&](){ return c; }();
-      auto e = [a, &b](int x) mutable {
-        const auto identity = [](int y){ return y; };
-        for (auto i = 0; i < a; ++i)
-          a += b--;
-        return x + identity(a + b);
-      }(0);
-      return a + b + c + d + e;
-    }
-
-    int
-    test3()
-    {
-      const auto nullary = [](){ return 0; };
-      const auto unary = [](int x){ return x; };
-      using nullary_t = decltype(nullary);
-      using unary_t = decltype(unary);
-      const auto higher1st = [](nullary_t f){ return f(); };
-      const auto higher2nd = [unary](nullary_t f1){
-        return [unary, f1](unary_t f2){ return f2(unary(f1())); };
-      };
-      return higher1st(nullary) + higher2nd(nullary)(unary);
-    }
-
-  }
-
-  namespace test_variadic_templates
-  {
-
-    template <int...>
-    struct sum;
-
-    template <int N0, int... N1toN>
-    struct sum<N0, N1toN...>
-    {
-      static constexpr auto value = N0 + sum<N1toN...>::value;
-    };
-
-    template <>
-    struct sum<>
-    {
-      static constexpr auto value = 0;
-    };
-
-    static_assert(sum<>::value == 0, "");
-    static_assert(sum<1>::value == 1, "");
-    static_assert(sum<23>::value == 23, "");
-    static_assert(sum<1, 2>::value == 3, "");
-    static_assert(sum<5, 5, 11>::value == 21, "");
-    static_assert(sum<2, 3, 5, 7, 11, 13>::value == 41, "");
-
-  }
-
-  // http://stackoverflow.com/questions/13728184/template-aliases-and-sfinae
-  // Clang 3.1 fails with headers of libstd++ 4.8.3 when using std::function
-  // because of this.
-  namespace test_template_alias_sfinae
-  {
-
-    struct foo {};
-
-    template<typename T>
-    using member = typename T::member_type;
-
-    template<typename T>
-    void func(...) {}
-
-    template<typename T>
-    void func(member<T>*) {}
-
-    void test();
-
-    void test() { func<foo>(0); }
-
-  }
-
-}  // namespace cxx11
-
-#endif  // __cplusplus >= 201103L
-
-
-
-_ACEOF
-if ac_fn_cxx_try_compile "$LINENO"; then :
-  eval $cachevar=yes
-else
-  eval $cachevar=no
-fi
-rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
-         CXX="$ac_save_CXX"
-fi
-eval ac_res=\$$cachevar
-	       { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_res" >&5
-$as_echo "$ac_res" >&6; }
-      if eval test x\$$cachevar = xyes; then
-        CXX="$CXX $switch"
-        if test -n "$CXXCPP" ; then
-          CXXCPP="$CXXCPP $switch"
-        fi
-        ac_success=yes
-        break
-      fi
-    done
-  fi
-
-    if test x$ac_success = xno; then
-                for alternative in ${ax_cxx_compile_alternatives}; do
-      for switch in -std=c++${alternative} +std=c++${alternative} "-h std=c++${alternative}"; do
-        cachevar=`$as_echo "ax_cv_cxx_compile_cxx11_$switch" | $as_tr_sh`
-        { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether $CXX supports C++11 features with $switch" >&5
-$as_echo_n "checking whether $CXX supports C++11 features with $switch... " >&6; }
-if eval \${$cachevar+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_save_CXX="$CXX"
-           CXX="$CXX $switch"
-           cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-
-// If the compiler admits that it is not ready for C++11, why torture it?
-// Hopefully, this will speed up the test.
-
-#ifndef __cplusplus
-
-#error "This is not a C++ compiler"
-
-#elif __cplusplus < 201103L
-
-#error "This is not a C++11 compiler"
-
-#else
-
-namespace cxx11
-{
-
-  namespace test_static_assert
-  {
-
-    template <typename T>
-    struct check
-    {
-      static_assert(sizeof(int) <= sizeof(T), "not big enough");
-    };
-
-  }
-
-  namespace test_final_override
-  {
-
-    struct Base
-    {
-      virtual void f() {}
-    };
-
-    struct Derived : public Base
-    {
-      virtual void f() override {}
-    };
-
-  }
-
-  namespace test_double_right_angle_brackets
-  {
-
-    template < typename T >
-    struct check {};
-
-    typedef check<void> single_type;
-    typedef check<check<void>> double_type;
-    typedef check<check<check<void>>> triple_type;
-    typedef check<check<check<check<void>>>> quadruple_type;
-
-  }
-
-  namespace test_decltype
-  {
-
-    int
-    f()
-    {
-      int a = 1;
-      decltype(a) b = 2;
-      return a + b;
-    }
-
-  }
-
-  namespace test_type_deduction
-  {
-
-    template < typename T1, typename T2 >
-    struct is_same
-    {
-      static const bool value = false;
-    };
-
-    template < typename T >
-    struct is_same<T, T>
-    {
-      static const bool value = true;
-    };
-
-    template < typename T1, typename T2 >
-    auto
-    add(T1 a1, T2 a2) -> decltype(a1 + a2)
-    {
-      return a1 + a2;
-    }
-
-    int
-    test(const int c, volatile int v)
-    {
-      static_assert(is_same<int, decltype(0)>::value == true, "");
-      static_assert(is_same<int, decltype(c)>::value == false, "");
-      static_assert(is_same<int, decltype(v)>::value == false, "");
-      auto ac = c;
-      auto av = v;
-      auto sumi = ac + av + 'x';
-      auto sumf = ac + av + 1.0;
-      static_assert(is_same<int, decltype(ac)>::value == true, "");
-      static_assert(is_same<int, decltype(av)>::value == true, "");
-      static_assert(is_same<int, decltype(sumi)>::value == true, "");
-      static_assert(is_same<int, decltype(sumf)>::value == false, "");
-      static_assert(is_same<int, decltype(add(c, v))>::value == true, "");
-      return (sumf > 0.0) ? sumi : add(c, v);
-    }
-
-  }
-
-  namespace test_noexcept
-  {
-
-    int f() { return 0; }
-    int g() noexcept { return 0; }
-
-    static_assert(noexcept(f()) == false, "");
-    static_assert(noexcept(g()) == true, "");
-
-  }
-
-  namespace test_constexpr
-  {
-
-    template < typename CharT >
-    unsigned long constexpr
-    strlen_c_r(const CharT *const s, const unsigned long acc) noexcept
-    {
-      return *s ? strlen_c_r(s + 1, acc + 1) : acc;
-    }
-
-    template < typename CharT >
-    unsigned long constexpr
-    strlen_c(const CharT *const s) noexcept
-    {
-      return strlen_c_r(s, 0UL);
-    }
-
-    static_assert(strlen_c("") == 0UL, "");
-    static_assert(strlen_c("1") == 1UL, "");
-    static_assert(strlen_c("example") == 7UL, "");
-    static_assert(strlen_c("another\0example") == 7UL, "");
-
-  }
-
-  namespace test_rvalue_references
-  {
-
-    template < int N >
-    struct answer
-    {
-      static constexpr int value = N;
-    };
-
-    answer<1> f(int&)       { return answer<1>(); }
-    answer<2> f(const int&) { return answer<2>(); }
-    answer<3> f(int&&)      { return answer<3>(); }
-
-    void
-    test()
-    {
-      int i = 0;
-      const int c = 0;
-      static_assert(decltype(f(i))::value == 1, "");
-      static_assert(decltype(f(c))::value == 2, "");
-      static_assert(decltype(f(0))::value == 3, "");
-    }
-
-  }
-
-  namespace test_uniform_initialization
-  {
-
-    struct test
-    {
-      static const int zero {};
-      static const int one {1};
-    };
-
-    static_assert(test::zero == 0, "");
-    static_assert(test::one == 1, "");
-
-  }
-
-  namespace test_lambdas
-  {
-
-    void
-    test1()
-    {
-      auto lambda1 = [](){};
-      auto lambda2 = lambda1;
-      lambda1();
-      lambda2();
-    }
-
-    int
-    test2()
-    {
-      auto a = [](int i, int j){ return i + j; }(1, 2);
-      auto b = []() -> int { return '0'; }();
-      auto c = [=](){ return a + b; }();
-      auto d = [&](){ return c; }();
-      auto e = [a, &b](int x) mutable {
-        const auto identity = [](int y){ return y; };
-        for (auto i = 0; i < a; ++i)
-          a += b--;
-        return x + identity(a + b);
-      }(0);
-      return a + b + c + d + e;
-    }
-
-    int
-    test3()
-    {
-      const auto nullary = [](){ return 0; };
-      const auto unary = [](int x){ return x; };
-      using nullary_t = decltype(nullary);
-      using unary_t = decltype(unary);
-      const auto higher1st = [](nullary_t f){ return f(); };
-      const auto higher2nd = [unary](nullary_t f1){
-        return [unary, f1](unary_t f2){ return f2(unary(f1())); };
-      };
-      return higher1st(nullary) + higher2nd(nullary)(unary);
-    }
-
-  }
-
-  namespace test_variadic_templates
-  {
-
-    template <int...>
-    struct sum;
-
-    template <int N0, int... N1toN>
-    struct sum<N0, N1toN...>
-    {
-      static constexpr auto value = N0 + sum<N1toN...>::value;
-    };
-
-    template <>
-    struct sum<>
-    {
-      static constexpr auto value = 0;
-    };
-
-    static_assert(sum<>::value == 0, "");
-    static_assert(sum<1>::value == 1, "");
-    static_assert(sum<23>::value == 23, "");
-    static_assert(sum<1, 2>::value == 3, "");
-    static_assert(sum<5, 5, 11>::value == 21, "");
-    static_assert(sum<2, 3, 5, 7, 11, 13>::value == 41, "");
-
-  }
-
-  // http://stackoverflow.com/questions/13728184/template-aliases-and-sfinae
-  // Clang 3.1 fails with headers of libstd++ 4.8.3 when using std::function
-  // because of this.
-  namespace test_template_alias_sfinae
-  {
-
-    struct foo {};
-
-    template<typename T>
-    using member = typename T::member_type;
-
-    template<typename T>
-    void func(...) {}
-
-    template<typename T>
-    void func(member<T>*) {}
-
-    void test();
-
-    void test() { func<foo>(0); }
-
-  }
-
-}  // namespace cxx11
-
-#endif  // __cplusplus >= 201103L
-
-
-
-_ACEOF
-if ac_fn_cxx_try_compile "$LINENO"; then :
-  eval $cachevar=yes
-else
-  eval $cachevar=no
-fi
-rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
-           CXX="$ac_save_CXX"
-fi
-eval ac_res=\$$cachevar
-	       { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_res" >&5
-$as_echo "$ac_res" >&6; }
-        if eval test x\$$cachevar = xyes; then
-          CXX="$CXX $switch"
-          if test -n "$CXXCPP" ; then
-            CXXCPP="$CXXCPP $switch"
-          fi
-          ac_success=yes
-          break
-        fi
-      done
-      if test x$ac_success = xyes; then
-        break
-      fi
-    done
-  fi
-  ac_ext=cpp
-ac_cpp='$CXXCPP $CPPFLAGS'
-ac_compile='$CXX -c $CXXFLAGS $CPPFLAGS conftest.$ac_ext >&5'
-ac_link='$CXX -o conftest$ac_exeext $CXXFLAGS $CPPFLAGS $LDFLAGS conftest.$ac_ext $LIBS >&5'
-ac_compiler_gnu=$ac_cv_cxx_compiler_gnu
-
-  if test x$ax_cxx_compile_cxx11_required = xtrue; then
-    if test x$ac_success = xno; then
-      as_fn_error $? "*** A compiler with support for C++11 language features is required." "$LINENO" 5
-    fi
-  fi
-  if test x$ac_success = xno; then
-    HAVE_CXX11=0
-    { $as_echo "$as_me:${as_lineno-$LINENO}: No compiler with C++11 support was found" >&5
-$as_echo "$as_me: No compiler with C++11 support was found" >&6;}
-  else
-    HAVE_CXX11=1
 
 $as_echo "#define HAVE_CXX11 1" >>confdefs.h
-
-  fi
-
 
     fi
 fi
@@ -8479,6 +7855,7 @@ if test "$want_python"x == "no"x; then
     BUILD_CAPTURE_SDR_RTLAMR=0
     BUILD_CAPTURE_SDR_RTLADSB=0
     BUILD_CAPTURE_FREAKLABS_ZIGBEE=0
+    BUILD_CAPTURE_PROXY_ADSB=0
     { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: Disabling Python and Python-related tools" >&5
 $as_echo "$as_me: WARNING: Disabling Python and Python-related tools" >&2;}
 else
@@ -8568,7 +7945,22 @@ fi
 HAVE_LIBDW=0
 HAVE_LIBBFD=0
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for dwarf_begin in -ldw" >&5
+# Allow disabling mutex timeout, use with caution
+# Check whether --enable-debuglibs was given.
+if test "${enable_debuglibs+set}" = set; then :
+  enableval=$enable_debuglibs; case "${enableval}" in
+	  no) wantdebuglibs=0 ;;
+	   *) wantdebuglibs=1 ;;
+	 esac
+else
+  wantdebuglibs=1
+
+fi
+
+
+
+if test "$wantdebuglibs" = 1; then
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for dwarf_begin in -ldw" >&5
 $as_echo_n "checking for dwarf_begin in -ldw... " >&6; }
 if ${ac_cv_lib_dw_dwarf_begin+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -8608,7 +8000,7 @@ if test "x$ac_cv_lib_dw_dwarf_begin" = xyes; then :
   HAVE_LIBDW=1
 fi
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for bfd_alloc in -lbfd" >&5
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for bfd_alloc in -lbfd" >&5
 $as_echo_n "checking for bfd_alloc in -lbfd... " >&6; }
 if ${ac_cv_lib_bfd_bfd_alloc+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -8649,8 +8041,8 @@ if test "x$ac_cv_lib_bfd_bfd_alloc" = xyes; then :
 fi
 
 
-if test "$HAVE_LIBDW" = 1; then
-    for ac_header in elfutils/libdw.h elfutils/libdwfl.h dwarf.h
+    if test "$HAVE_LIBDW" = 1; then
+        for ac_header in elfutils/libdw.h elfutils/libdwfl.h dwarf.h
 do :
   as_ac_Header=`$as_echo "ac_cv_header_$ac_header" | $as_tr_sh`
 ac_fn_cxx_check_header_mongrel "$LINENO" "$ac_header" "$as_ac_Header" "$ac_includes_default"
@@ -8663,10 +8055,10 @@ fi
 
 done
 
-fi
+    fi
 
-if test "$HAVE_LIBBFD" = 1; then
-    for ac_header in bfd.h
+    if test "$HAVE_LIBBFD" = 1; then
+        for ac_header in bfd.h
 do :
   ac_fn_cxx_check_header_mongrel "$LINENO" "bfd.h" "ac_cv_header_bfd_h" "$ac_includes_default"
 if test "x$ac_cv_header_bfd_h" = xyes; then :
@@ -8678,14 +8070,14 @@ fi
 
 done
 
-fi
+    fi
 
-DEF_BW_HAS_UNWIND=0
-DEF_BW_HAS_BACKTRACE=0
+    DEF_BW_HAS_UNWIND=0
+    DEF_BW_HAS_BACKTRACE=0
 
-BACKTRACE_OK=0
+    BACKTRACE_OK=0
 
-for ac_header in unwind.h
+    for ac_header in unwind.h
 do :
   ac_fn_cxx_check_header_mongrel "$LINENO" "unwind.h" "ac_cv_header_unwind_h" "$ac_includes_default"
 if test "x$ac_cv_header_unwind_h" = xyes; then :
@@ -8697,7 +8089,7 @@ fi
 
 done
 
-for ac_header in execinfo.h
+    for ac_header in execinfo.h
 do :
   ac_fn_cxx_check_header_mongrel "$LINENO" "execinfo.h" "ac_cv_header_execinfo_h" "$ac_includes_default"
 if test "x$ac_cv_header_execinfo_h" = xyes; then :
@@ -8710,46 +8102,21 @@ fi
 done
 
 
-if test "$DEF_BW_HAS_UNWIND" = 1; then
-    BACKTRACE_WARNING="yes - Full debug info available on crash, using unwind"
+    if test "$DEF_BW_HAS_UNWIND" = 1; then
+        BACKTRACE_WARNING="yes - Full debug info available on crash, using unwind"
 
 $as_echo "#define BACKWARD_HAS_UNWIND 1" >>confdefs.h
 
 
 $as_echo "#define BACKWARD_HAS_BACKTRACE 0" >>confdefs.h
 
-    BACKTRACE_OK=1
-elif test "$DEF_BW_HAS_BACKTRACE" = 1; then
-    BACKTRACE_WARNING="yes - Full debug info available on crash, using backtrace"
+        BACKTRACE_OK=1
+    elif test "$DEF_BW_HAS_BACKTRACE" = 1; then
+        BACKTRACE_WARNING="yes - Full debug info available on crash, using backtrace"
 
 $as_echo "#define BACKWARD_HAS_BACKTRACE 1" >>confdefs.h
 
-    BACKTRACE_OK=1
-else
-    BACKTRACE_OK=0
-    BACKTRACE_WARNING="no - Backtraces will not be available on crashes"
-
-$as_echo "#define DISABLE_BACKWARD 1" >>confdefs.h
-
-fi
-
-if test "$BACKTRACE_OK" = 1; then
-    # Libdw is the best support
-    if test "$DEF_BW_HAS_LIBDW" = 1; then
-
-$as_echo "#define BACKWARD_HAS_DW 1" >>confdefs.h
-
-        LIBS="$LIBS -ldw"
-    elif test "$DEF_BW_HAS_BFD" = 1; then
-
-$as_echo "#define BACKWARD_HAS_BFD 1" >>confdefs.h
-
-        LIBS="$LIBS -lbfd"
-    elif test "$DEF_BW_HAS_BACKTRACE" = 1; then
-
-$as_echo "#define BACKWARD_HAS_BACKTRACE_SYMBOL 1" >>confdefs.h
-
-        BACKTRACE_WARNING="partial - Missing libdw or libbfd will not print full stacks on crash"
+        BACKTRACE_OK=1
     else
         BACKTRACE_OK=0
         BACKTRACE_WARNING="no - Backtraces will not be available on crashes"
@@ -8757,6 +8124,37 @@ $as_echo "#define BACKWARD_HAS_BACKTRACE_SYMBOL 1" >>confdefs.h
 $as_echo "#define DISABLE_BACKWARD 1" >>confdefs.h
 
     fi
+
+    if test "$BACKTRACE_OK" = 1; then
+        # Libdw is the best support
+        if test "$DEF_BW_HAS_LIBDW" = 1; then
+
+$as_echo "#define BACKWARD_HAS_DW 1" >>confdefs.h
+
+            LIBS="$LIBS -ldw"
+        elif test "$DEF_BW_HAS_BFD" = 1; then
+
+$as_echo "#define BACKWARD_HAS_BFD 1" >>confdefs.h
+
+            LIBS="$LIBS -lbfd"
+        elif test "$DEF_BW_HAS_BACKTRACE" = 1; then
+
+$as_echo "#define BACKWARD_HAS_BACKTRACE_SYMBOL 1" >>confdefs.h
+
+            BACKTRACE_WARNING="partial - Missing libdw or libbfd will not print full stacks on crash"
+        else
+            BACKTRACE_OK=0
+            BACKTRACE_WARNING="no - Backtraces will not be available on crashes"
+
+$as_echo "#define DISABLE_BACKWARD 1" >>confdefs.h
+
+        fi
+    fi
+else
+    BACKTRACE_WARNING="no - debug libraries disabled by configure"
+
+$as_echo "#define DISABLE_BACKWARD 1" >>confdefs.h
+
 fi
 
 # Look for something to define standard int types
@@ -9267,11 +8665,6 @@ else
 $as_echo "no" >&6; }
 fi
 
-OCPPFLAGS=$CPPFLAGS
-CPPFLAGS="$CPPFLAGS"
-OLDFLAGS=$LDFLAGS
-LDFLAGS="$CPPFLAGS"
-
 # Do we need libm for math functions?
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for libm math function in std libs" >&5
 $as_echo_n "checking for libm math function in std libs... " >&6; }
@@ -9475,135 +8868,6 @@ else
 $as_echo "yes" >&6; }
 	instgrp="root"
 fi
-
-
-# We need microhttpd if we're building kismet_server
-if test "$caponly" == 0; then
-    HAVE_LIBMICROHTTPD=0
-    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for MHD_start_daemon in -lmicrohttpd" >&5
-$as_echo_n "checking for MHD_start_daemon in -lmicrohttpd... " >&6; }
-if ${ac_cv_lib_microhttpd_MHD_start_daemon+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_check_lib_save_LIBS=$LIBS
-LIBS="-lmicrohttpd  $LIBS"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-/* Override any GCC internal prototype to avoid an error.
-   Use char because int might match the return type of a GCC
-   builtin and then its argument prototype would still apply.  */
-#ifdef __cplusplus
-extern "C"
-#endif
-char MHD_start_daemon ();
-int
-main ()
-{
-return MHD_start_daemon ();
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_cxx_try_link "$LINENO"; then :
-  ac_cv_lib_microhttpd_MHD_start_daemon=yes
-else
-  ac_cv_lib_microhttpd_MHD_start_daemon=no
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$ac_check_lib_save_LIBS
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_microhttpd_MHD_start_daemon" >&5
-$as_echo "$ac_cv_lib_microhttpd_MHD_start_daemon" >&6; }
-if test "x$ac_cv_lib_microhttpd_MHD_start_daemon" = xyes; then :
-  KSLIBS="$KSLIBS -lmicrohttpd" HAVE_LIBMICROHTTPD=1
-else
-  HAVE_LIBMICROHTTPD=0
-fi
-
-    if test "$HAVE_LIBMICROHTTPD" == 0 -a "$caponly" == 0; then
-        as_fn_error $? "libmicrohttpd is needed and is not available" "$LINENO" 5
-    elif test "$HAVE_LIBMICROHTTPD" = 1; then
-        ac_fn_cxx_check_header_mongrel "$LINENO" "microhttpd.h" "ac_cv_header_microhttpd_h" "$ac_includes_default"
-if test "x$ac_cv_header_microhttpd_h" = xyes; then :
-
-$as_echo "#define HAVE_MICROHTTPD_H 1" >>confdefs.h
-
-else
-  as_fn_error $? "microhttpd.h is not available check that libmicrohttpd-dev is installed" "$LINENO" 5
-fi
-
-
-    fi
-
-    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-        #include <microhttpd.h>
-
-int
-main ()
-{
-
-        #if MHD_VERSION <= 0x00093700
-        #error MHD_TOO_OLD
-        #endif
-
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_cxx_try_link "$LINENO"; then :
-  mhd_too_old=0
-else
-  mhd_too_old=1
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-
-    if test "$mhd_too_old" = 1; then
-        as_fn_error $? "sorry - libmicrohttpd is too old. Some distributions such as debian jessie ship a version of libmicrohttpd which has several flaws that break Kismet.  You will need a new version from your distribution backports or from https://www.gnu.org/software/libmicrohttpd/" "$LINENO" 5
-    fi
-
-    OLIBS="$LIBS"
-    LIBS="$LIBS -lmicrohttpd"
-    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-        #include <microhttpd.h>
-
-int
-main ()
-{
-
-        struct MHD_Daemon *microhttpd = NULL;
-        MHD_quiesce_daemon(microhttpd);
-        return 0;
-
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_cxx_try_link "$LINENO"; then :
-  mhd_quiesce=1
-else
-  mhd_quiesce=0
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-    LIBS="$OLIBS"
-
-    if test "$mhd_quiesce" = 1; then
-
-$as_echo "#define MHD_QUIESCE 1" >>confdefs.h
-
-    else
-        { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: Unable to use MHD_quiesce_daemon, this might lead to hangs on shutdown" >&5
-$as_echo "$as_me: WARNING: Unable to use MHD_quiesce_daemon, this might lead to hangs on shutdown" >&2;}
-    fi
-
-fi # caponly
 
 
 # Check for process title manipulation stuff, from proftpd configure.in
@@ -9977,8 +9241,21 @@ fi # want headers
 fi # linux
 
 # Look for capability support
-havecap="yes"
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for cap_init in -lcap" >&5
+# Check whether --enable-libcap was given.
+if test "${enable_libcap+set}" = set; then :
+  enableval=$enable_libcap; case "${enableval}" in
+	  no) wantlibcap=no ;;
+	   *) wantlibcap=yes ;;
+	 esac
+else
+  wantlibcap=yes
+
+fi
+
+
+if test "$wantcap" = "yes"; then
+    havecap="yes"
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for cap_init in -lcap" >&5
 $as_echo_n "checking for cap_init in -lcap... " >&6; }
 if ${ac_cv_lib_cap_cap_init+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -10025,7 +9302,7 @@ else
   havecap=no
 fi
 
-ac_fn_cxx_check_header_mongrel "$LINENO" "sys/prctl.h" "ac_cv_header_sys_prctl_h" "$ac_includes_default"
+    ac_fn_cxx_check_header_mongrel "$LINENO" "sys/prctl.h" "ac_cv_header_sys_prctl_h" "$ac_includes_default"
 if test "x$ac_cv_header_sys_prctl_h" = xyes; then :
 
 else
@@ -10033,7 +9310,7 @@ else
 fi
 
 
-ac_fn_cxx_check_header_mongrel "$LINENO" "sys/capability.h" "ac_cv_header_sys_capability_h" "$ac_includes_default"
+    ac_fn_cxx_check_header_mongrel "$LINENO" "sys/capability.h" "ac_cv_header_sys_capability_h" "$ac_includes_default"
 if test "x$ac_cv_header_sys_capability_h" = xyes; then :
 
 else
@@ -10042,12 +9319,13 @@ fi
 
 
 
-if test "$havecap" = "yes"; then
+    if test "$havecap" = "yes"; then
 
 $as_echo "#define HAVE_CAPABILITY 1" >>confdefs.h
 
-caplibs="-lcap"
+    caplibs="-lcap"
 
+    fi
 fi
 
 
@@ -10497,289 +9775,6 @@ fi
 
 
 
-foundsyspcap=no
-
-if test "$cygwin" = yes; then
-	pcaplib="wpcap";
-else
-	pcaplib="pcap";
-fi
-
-as_ac_Lib=`$as_echo "ac_cv_lib_${pcaplib}''_pcap_open_live" | $as_tr_sh`
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for pcap_open_live in -l${pcaplib}" >&5
-$as_echo_n "checking for pcap_open_live in -l${pcaplib}... " >&6; }
-if eval \${$as_ac_Lib+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_check_lib_save_LIBS=$LIBS
-LIBS="-l${pcaplib}  $LIBS"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-/* Override any GCC internal prototype to avoid an error.
-   Use char because int might match the return type of a GCC
-   builtin and then its argument prototype would still apply.  */
-#ifdef __cplusplus
-extern "C"
-#endif
-char pcap_open_live ();
-int
-main ()
-{
-return pcap_open_live ();
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_cxx_try_link "$LINENO"; then :
-  eval "$as_ac_Lib=yes"
-else
-  eval "$as_ac_Lib=no"
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$ac_check_lib_save_LIBS
-fi
-eval ac_res=\$$as_ac_Lib
-	       { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_res" >&5
-$as_echo "$ac_res" >&6; }
-if eval test \"x\$"$as_ac_Lib"\" = x"yes"; then :
-
-$as_echo "#define HAVE_LIBPCAP 1" >>confdefs.h
- foundsyspcap=yes
-else
-  as_fn_error $? "Libpcap required for proper operation" "$LINENO" 5
-fi
-
-
-if test "$foundsyspcap" = yes; then
-## if we don't have a pcap.h, do a search for pcap/pcap.h
-ac_fn_cxx_check_header_mongrel "$LINENO" "pcap.h" "ac_cv_header_pcap_h" "$ac_includes_default"
-if test "x$ac_cv_header_pcap_h" = xyes; then :
-
-$as_echo "#define HAVE_PCAP_H 1" >>confdefs.h
- foundsyspcaph=yes
-fi
-
-
-    if test "$foundsyspcaph" != yes; then
-		ac_fn_cxx_check_header_mongrel "$LINENO" "pcap/pcap.h" "ac_cv_header_pcap_pcap_h" "$ac_includes_default"
-if test "x$ac_cv_header_pcap_pcap_h" = xyes; then :
-
-$as_echo "#define HAVE_PCAP_H 1" >>confdefs.h
-
-$as_echo "#define HAVE_PCAPPCAP_H 1" >>confdefs.h
-
-else
-  as_fn_error $? "found libpcap but unable to find pcap.h" "$LINENO" 5
-fi
-
-
-    fi
-# Look for the new PCAP stuff
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for pcap_setnonblock in -lpcap" >&5
-$as_echo_n "checking for pcap_setnonblock in -lpcap... " >&6; }
-if ${ac_cv_lib_pcap_pcap_setnonblock+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_check_lib_save_LIBS=$LIBS
-LIBS="-lpcap  $LIBS"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-/* Override any GCC internal prototype to avoid an error.
-   Use char because int might match the return type of a GCC
-   builtin and then its argument prototype would still apply.  */
-#ifdef __cplusplus
-extern "C"
-#endif
-char pcap_setnonblock ();
-int
-main ()
-{
-return pcap_setnonblock ();
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_cxx_try_link "$LINENO"; then :
-  ac_cv_lib_pcap_pcap_setnonblock=yes
-else
-  ac_cv_lib_pcap_pcap_setnonblock=no
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$ac_check_lib_save_LIBS
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_pcap_pcap_setnonblock" >&5
-$as_echo "$ac_cv_lib_pcap_pcap_setnonblock" >&6; }
-if test "x$ac_cv_lib_pcap_pcap_setnonblock" = xyes; then :
-
-$as_echo "#define HAVE_PCAP_NONBLOCK 1" >>confdefs.h
-
-else
-  { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: *** You don't appear to have a version of libpcap which supports non-blocking IO.  We'll fake it" >&5
-$as_echo "$as_me: WARNING: *** You don't appear to have a version of libpcap which supports non-blocking IO.  We'll fake it" >&2;}
-fi
-
-
-if test "$cygwin" != yes; then
-as_ac_Lib=`$as_echo "ac_cv_lib_${pcaplib}''_pcap_get_selectable_fd" | $as_tr_sh`
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for pcap_get_selectable_fd in -l${pcaplib}" >&5
-$as_echo_n "checking for pcap_get_selectable_fd in -l${pcaplib}... " >&6; }
-if eval \${$as_ac_Lib+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_check_lib_save_LIBS=$LIBS
-LIBS="-l${pcaplib}  $LIBS"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-/* Override any GCC internal prototype to avoid an error.
-   Use char because int might match the return type of a GCC
-   builtin and then its argument prototype would still apply.  */
-#ifdef __cplusplus
-extern "C"
-#endif
-char pcap_get_selectable_fd ();
-int
-main ()
-{
-return pcap_get_selectable_fd ();
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_cxx_try_link "$LINENO"; then :
-  eval "$as_ac_Lib=yes"
-else
-  eval "$as_ac_Lib=no"
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$ac_check_lib_save_LIBS
-fi
-eval ac_res=\$$as_ac_Lib
-	       { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_res" >&5
-$as_echo "$ac_res" >&6; }
-if eval test \"x\$"$as_ac_Lib"\" = x"yes"; then :
-
-$as_echo "#define HAVE_PCAP_GETSELFD 1" >>confdefs.h
-
-else
-  as_fn_error $? "installed libpcap version does not support features Kismet requires.  Upgrade to a current version of libpcap" "$LINENO" 5
-fi
-
-else
-as_ac_Lib=`$as_echo "ac_cv_lib_${pcaplib}''_pcap_fileno" | $as_tr_sh`
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for pcap_fileno in -l${pcaplib}" >&5
-$as_echo_n "checking for pcap_fileno in -l${pcaplib}... " >&6; }
-if eval \${$as_ac_Lib+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_check_lib_save_LIBS=$LIBS
-LIBS="-l${pcaplib}  $LIBS"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-/* Override any GCC internal prototype to avoid an error.
-   Use char because int might match the return type of a GCC
-   builtin and then its argument prototype would still apply.  */
-#ifdef __cplusplus
-extern "C"
-#endif
-char pcap_fileno ();
-int
-main ()
-{
-return pcap_fileno ();
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_cxx_try_link "$LINENO"; then :
-  eval "$as_ac_Lib=yes"
-else
-  eval "$as_ac_Lib=no"
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$ac_check_lib_save_LIBS
-fi
-eval ac_res=\$$as_ac_Lib
-	       { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_res" >&5
-$as_echo "$ac_res" >&6; }
-if eval test \"x\$"$as_ac_Lib"\" = x"yes"; then :
-
-$as_echo "#define HAVE_PCAP_FILENO 1" >>confdefs.h
-
-else
-  as_fn_error $? "installed libpcap version does not support features Kismet requires.  Upgrade to a current version of libwpcap" "$LINENO" 5
-fi
-
-fi
-
-# Look for PPI support in pcap
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for PPI support in libpcap" >&5
-$as_echo_n "checking for PPI support in libpcap... " >&6; }
-OCFL="$CFLAGS"
-CFLAGS="-Werror $CFLAGS"
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-		#include <stdio.h>
-		#include <pcap.h>
-
-int
-main ()
-{
-
-		return DLT_PPI==DLT_PPI;
-
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_cxx_try_link "$LINENO"; then :
-  haveppi=yes
-else
-  haveppi=no
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-CFLAGS="$OCFL"
-if test "$haveppi" = "yes"; then
-	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
-$as_echo "yes" >&6; }
-
-$as_echo "#define HAVE_PPI 1" >>confdefs.h
-
-else
-	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
-$as_echo "no" >&6; }
-    as_fn_error $? "found libpcap and pcap.h but unable to compile with PPI support.  Make sure you have a current version of libpcap.\"" "$LINENO" 5
-fi
-
-pcaplnk="-l${pcaplib}"
-
-pcap="yes"
-
-DATASOURCE_BINS="$DATASOURCE_BINS \$(CAPTURE_PCAPFILE)"
-BUILD_CAPTURE_PCAPFILE=1
-
-BUILD_CAPTURE_LINUX_WIFI=0
-if test "$linux" = "yes"; then
-    DATASOURCE_BINS="$DATASOURCE_BINS \$(CAPTURE_LINUX_WIFI)"
-    BUILD_CAPTURE_LINUX_WIFI=1
-fi
-
-fi
-
-if test "$pcap" != "yes"; then
-	as_fn_error $? "Could not find working libpcap.  Libpcap is vital for the majority of capture sources Kismet supports.  It must be explicitly disabled." "$LINENO" 5
-fi
-
-
 
 
 
@@ -10901,8 +9896,356 @@ $as_echo "no" >&6; }
 	fi
 fi
 
+# Check whether --enable-libwebsockets was given.
+if test "${enable_libwebsockets+set}" = set; then :
+  enableval=$enable_libwebsockets; case "${enableval}" in
+	  no) want_libwebsockets=no ;;
+	   *) want_libwebsockets=yes ;;
+	 esac
+else
+  want_libwebsockets=yes
+
+fi
+
+
+if test "x$want_libwebsockets" != "xno"; then :
+
+
+pkg_failed=no
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for libwebsockets" >&5
+$as_echo_n "checking for libwebsockets... " >&6; }
+
+if test -n "$libwebsockets_CFLAGS"; then
+    pkg_cv_libwebsockets_CFLAGS="$libwebsockets_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libwebsockets >= 3.1.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libwebsockets >= 3.1.0") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_libwebsockets_CFLAGS=`$PKG_CONFIG --cflags "libwebsockets >= 3.1.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$libwebsockets_LIBS"; then
+    pkg_cv_libwebsockets_LIBS="$libwebsockets_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libwebsockets >= 3.1.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libwebsockets >= 3.1.0") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_libwebsockets_LIBS=`$PKG_CONFIG --libs "libwebsockets >= 3.1.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+   	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+	        libwebsockets_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libwebsockets >= 3.1.0" 2>&1`
+        else
+	        libwebsockets_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libwebsockets >= 3.1.0" 2>&1`
+        fi
+	# Put the nasty error message in config.log where it belongs
+	echo "$libwebsockets_PKG_ERRORS" >&5
+
+	as_fn_error $? "Package requirements (libwebsockets >= 3.1.0) were not met:
+
+$libwebsockets_PKG_ERRORS
+
+Consider adjusting the PKG_CONFIG_PATH environment variable if you
+installed software in a non-standard prefix.
+
+Alternatively, you may set the environment variables libwebsockets_CFLAGS
+and libwebsockets_LIBS to avoid the need to call pkg-config.
+See the pkg-config man page for more details." "$LINENO" 5
+elif test $pkg_failed = untried; then
+     	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+	{ { $as_echo "$as_me:${as_lineno-$LINENO}: error: in \`$ac_pwd':" >&5
+$as_echo "$as_me: error: in \`$ac_pwd':" >&2;}
+as_fn_error $? "The pkg-config script could not be found or is too old.  Make sure it
+is in your PATH or set the PKG_CONFIG environment variable to the full
+path to pkg-config.
+
+Alternatively, you may set the environment variables libwebsockets_CFLAGS
+and libwebsockets_LIBS to avoid the need to call pkg-config.
+See the pkg-config man page for more details.
+
+To get pkg-config, see <http://pkg-config.freedesktop.org/>.
+See \`config.log' for more details" "$LINENO" 5; }
+else
+	libwebsockets_CFLAGS=$pkg_cv_libwebsockets_CFLAGS
+	libwebsockets_LIBS=$pkg_cv_libwebsockets_LIBS
+        { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+	have_libwebsockets_pkg=yes
+fi
+
+    if test x"$have_libwebsockets_pkg" != "xyes"; then
+        as_fn_error $? "required libwebsockets not available, configure with --disable-websockets to turn off remote capture libwebsockets support.  This will only impact remote capture sources." "$LINENO" 5
+    else
+        { $as_echo "$as_me:${as_lineno-$LINENO}: checking for lws_client_connect_via_info in -lwebsockets" >&5
+$as_echo_n "checking for lws_client_connect_via_info in -lwebsockets... " >&6; }
+if ${ac_cv_lib_websockets_lws_client_connect_via_info+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lwebsockets  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char lws_client_connect_via_info ();
+int
+main ()
+{
+return lws_client_connect_via_info ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_cxx_try_link "$LINENO"; then :
+  ac_cv_lib_websockets_lws_client_connect_via_info=yes
+else
+  ac_cv_lib_websockets_lws_client_connect_via_info=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_websockets_lws_client_connect_via_info" >&5
+$as_echo "$ac_cv_lib_websockets_lws_client_connect_via_info" >&6; }
+if test "x$ac_cv_lib_websockets_lws_client_connect_via_info" = xyes; then :
+
+                     LIBWSLIBS=`pkg-config --libs libwebsockets`
+                     LIBWSFLAGS=`pkg-config --cflags libwebsockets`
+
+                     have_libwebsockets="yes"
+
+$as_echo "#define HAVE_LIBWEBSOCKETS 1" >>confdefs.h
+
+
+else
+  as_fn_error $? "\"libwebsockets not compiled with client support\"" "$LINENO" 5
+fi
+
+    fi
+
+fi
+
+
+
+# Look for libpcap via pkg-config
+have_libpcap=no
+
+pkg_failed=no
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for libpcap" >&5
+$as_echo_n "checking for libpcap... " >&6; }
+
+if test -n "$libpcap_CFLAGS"; then
+    pkg_cv_libpcap_CFLAGS="$libpcap_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libpcap\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libpcap") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_libpcap_CFLAGS=`$PKG_CONFIG --cflags "libpcap" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$libpcap_LIBS"; then
+    pkg_cv_libpcap_LIBS="$libpcap_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libpcap\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libpcap") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_libpcap_LIBS=`$PKG_CONFIG --libs "libpcap" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+   	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+	        libpcap_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libpcap" 2>&1`
+        else
+	        libpcap_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libpcap" 2>&1`
+        fi
+	# Put the nasty error message in config.log where it belongs
+	echo "$libpcap_PKG_ERRORS" >&5
+
+
+    { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: No libpcap found in pkg-config" >&5
+$as_echo "$as_me: WARNING: No libpcap found in pkg-config" >&2;}
+
+elif test $pkg_failed = untried; then
+     	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+
+    { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: No libpcap found in pkg-config" >&5
+$as_echo "$as_me: WARNING: No libpcap found in pkg-config" >&2;}
+
+else
+	libpcap_CFLAGS=$pkg_cv_libpcap_CFLAGS
+	libpcap_LIBS=$pkg_cv_libpcap_LIBS
+        { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+
+    have_libpcap=yes
+
+$as_echo "#define HAVE_LIBPCAP 1" >>confdefs.h
+
+
+    PCAPLIBS=`pkg-config --libs libpcap`
+    PCAPCFLAGS=`pkg-config --cflags libpcap`
+    pcap=yes
+
+fi
+
+# Look for pcap using our legacy mode
+if test "$have_libpcap"x != "yesx"; then
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for pcap_open_live in -lpcap" >&5
+$as_echo_n "checking for pcap_open_live in -lpcap... " >&6; }
+if ${ac_cv_lib_pcap_pcap_open_live+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lpcap  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char pcap_open_live ();
+int
+main ()
+{
+return pcap_open_live ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_cxx_try_link "$LINENO"; then :
+  ac_cv_lib_pcap_pcap_open_live=yes
+else
+  ac_cv_lib_pcap_pcap_open_live=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_pcap_pcap_open_live" >&5
+$as_echo "$ac_cv_lib_pcap_pcap_open_live" >&6; }
+if test "x$ac_cv_lib_pcap_pcap_open_live" = xyes; then :
+
+$as_echo "#define HAVE_LIBPCAP 1" >>confdefs.h
+ foundsyspcap=yes
+else
+  as_fn_error $? "Libpcap required for proper operation" "$LINENO" 5
+fi
+
+
+    if test "$foundsyspcap" = yes; then
+    ## if we don't have a pcap.h, do a search for pcap/pcap.h
+    ac_fn_cxx_check_header_mongrel "$LINENO" "pcap.h" "ac_cv_header_pcap_h" "$ac_includes_default"
+if test "x$ac_cv_header_pcap_h" = xyes; then :
+
+$as_echo "#define HAVE_PCAP_H 1" >>confdefs.h
+ foundsyspcaph=yes
+fi
+
+
+        if test "$foundsyspcaph" != yes; then
+    		ac_fn_cxx_check_header_mongrel "$LINENO" "pcap/pcap.h" "ac_cv_header_pcap_pcap_h" "$ac_includes_default"
+if test "x$ac_cv_header_pcap_pcap_h" = xyes; then :
+
+$as_echo "#define HAVE_PCAP_H 1" >>confdefs.h
+
+$as_echo "#define HAVE_PCAPPCAP_H 1" >>confdefs.h
+
+else
+  as_fn_error $? "found libpcap but unable to find pcap.h" "$LINENO" 5
+fi
+
+
+        fi
+
+        PCAPLIBS="-lpcap"
+        PCAPCFLAGS=""
+        pcap=yes
+    fi
+fi
+
+
+
+
+
+if test "$pcap" != "yes"; then
+	as_fn_error $? "Could not find working libpcap.  Libpcap is vital for the majority of Kismet functionality." "$LINENO" 5
+fi
+
+DATASOURCE_BINS="$DATASOURCE_BINS \$(CAPTURE_PCAPFILE)"
+BUILD_CAPTURE_PCAPFILE=1
+
+BUILD_CAPTURE_LINUX_WIFI=0
+if test "$linux" = "yes"; then
+    DATASOURCE_BINS="$DATASOURCE_BINS \$(CAPTURE_LINUX_WIFI)"
+    BUILD_CAPTURE_LINUX_WIFI=1
+fi
+
 if test "$caponly" = 0 || test "$want_python" = "yes"; then
-    # We only *require* protobuf for C++ and python
 
 pkg_failed=no
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for protobuf" >&5
@@ -11252,6 +10595,238 @@ fi
 
 
 
+
+# To use wiphy we need a very recent bladerf, and we need it even when only building for caponly
+# Check whether --enable-bladerf was given.
+if test "${enable_bladerf+set}" = set; then :
+  enableval=$enable_bladerf; case "${enableval}" in
+      yes) want_bladerf=yes ;;
+        *) want_bladerf=no ;;
+    esac
+else
+  want_bladerf=no
+
+fi
+
+
+if test "x$want_bladerf" == "xyes"; then :
+
+
+pkg_failed=no
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for libbladeRF" >&5
+$as_echo_n "checking for libbladeRF... " >&6; }
+
+if test -n "$libbladeRF_CFLAGS"; then
+    pkg_cv_libbladeRF_CFLAGS="$libbladeRF_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libbladeRF\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libbladeRF") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_libbladeRF_CFLAGS=`$PKG_CONFIG --cflags "libbladeRF" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$libbladeRF_LIBS"; then
+    pkg_cv_libbladeRF_LIBS="$libbladeRF_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libbladeRF\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "libbladeRF") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_libbladeRF_LIBS=`$PKG_CONFIG --libs "libbladeRF" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+   	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+	        libbladeRF_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libbladeRF" 2>&1`
+        else
+	        libbladeRF_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libbladeRF" 2>&1`
+        fi
+	# Put the nasty error message in config.log where it belongs
+	echo "$libbladeRF_PKG_ERRORS" >&5
+
+
+         as_fn_error $? "missing libbladeRF package" "$LINENO" 5
+
+elif test $pkg_failed = untried; then
+     	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+
+         as_fn_error $? "missing libbladeRF package" "$LINENO" 5
+
+else
+	libbladeRF_CFLAGS=$pkg_cv_libbladeRF_CFLAGS
+	libbladeRF_LIBS=$pkg_cv_libbladeRF_LIBS
+        { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+
+
+fi
+
+    BLADERFLIBS=`pkg-config --libs libbladeRF`
+    BLADERFCFLAGS=`pkg-config --cflags libbladeRF`
+
+    OCFL="$CFLAGS"
+
+    CFLAGS="$CFLAGS $BLADERFCFLAGS"
+
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for bladerf_open in -lbladeRF" >&5
+$as_echo_n "checking for bladerf_open in -lbladeRF... " >&6; }
+if ${ac_cv_lib_bladeRF_bladerf_open+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lbladeRF  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char bladerf_open ();
+int
+main ()
+{
+return bladerf_open ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_cxx_try_link "$LINENO"; then :
+  ac_cv_lib_bladeRF_bladerf_open=yes
+else
+  ac_cv_lib_bladeRF_bladerf_open=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_bladeRF_bladerf_open" >&5
+$as_echo "$ac_cv_lib_bladeRF_bladerf_open" >&6; }
+if test "x$ac_cv_lib_bladeRF_bladerf_open" = xyes; then :
+
+                  LIBBLADERF="-lbladerf2"
+                  have_libbladerf="yes"
+
+$as_echo "#define HAVE_LIBBLADERF 1" >>confdefs.h
+
+
+else
+
+                  as_fn_error $? "missing libbladerf2" "$LINENO" 5
+
+fi
+
+
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: checking Required libbladerf2 version" >&5
+$as_echo_n "checking Required libbladerf2 version... " >&6; }
+	cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+            #include <libbladeRF.h>
+
+int
+main ()
+{
+
+            #if LIBBLADERF_API_VERSION < 0x02020100
+            #error Version too old
+            #endif
+			return 0;
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_cxx_try_link "$LINENO"; then :
+
+             { $as_echo "$as_me:${as_lineno-$LINENO}: result: ok" >&5
+$as_echo "ok" >&6; }
+
+else
+
+             { $as_echo "$as_me:${as_lineno-$LINENO}: result: fail" >&5
+$as_echo "fail" >&6; }
+             as_fn_error $? "libbladerf2 version too old, you likely need a git version of libbladerf2" "$LINENO" 5
+
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: checking Required libbladerf2 packet modes" >&5
+$as_echo_n "checking Required libbladerf2 packet modes... " >&6; }
+	cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+            #include <libbladeRF.h>
+
+int
+main ()
+{
+
+            int x = (int) BLADERF_FORMAT_PACKET_META;
+			return 0;
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_cxx_try_link "$LINENO"; then :
+
+             { $as_echo "$as_me:${as_lineno-$LINENO}: result: packet_meta" >&5
+$as_echo "packet_meta" >&6; }
+
+else
+
+             { $as_echo "$as_me:${as_lineno-$LINENO}: result: fail" >&5
+$as_echo "fail" >&6; }
+             as_fn_error $? "unable to find PACKET_META format, you likely need a git version of libbladerf2" "$LINENO" 5
+
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+
+    CFLAGS="$OCFL"
+
+    BUILD_CAPTURE_BLADERF_WLAN=1
+
+fi
+
+
+
+
+
+if test x"$BUILD_CAPTURE_BLADERF_WLAN" = x"1"; then
+    DATASOURCE_BINS="$DATASOURCE_BINS \$(CAPTURE_BLADERF_WIPHY)"
+fi
 
 if test "$bsd" = yes; then
 	{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for BSD net80211/radiotap support" >&5
@@ -12152,14 +11727,13 @@ if test "x$ac_cv_header_ubertooth_ubertooth_h" = xyes; then :
 #define HAVE_UBERTOOTH_UBERTOOTH_H 1
 _ACEOF
  HAVE_UBERTOOTH_H=yes
+
 $as_echo "#define HAVE_UBERTOOTH_UBERTOOTH_H 1" >>confdefs.h
 
-else
-  { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: \"ubertooth/ubertooth.h is missing\"" >&5
-$as_echo "$as_me: WARNING: \"ubertooth/ubertooth.h is missing\"" >&2;}
 fi
 
 done
+
 
             for ac_header in ubertooth.h
 do :
@@ -12169,12 +11743,10 @@ if test "x$ac_cv_header_ubertooth_h" = xyes; then :
 #define HAVE_UBERTOOTH_H 1
 _ACEOF
  HAVE_UBERTOOTH_H=yes
-else
-  { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: \"ubertooth.h is missing\"" >&5
-$as_echo "$as_me: WARNING: \"ubertooth.h is missing\"" >&2;}
 fi
 
 done
+
 
             { $as_echo "$as_me:${as_lineno-$LINENO}: checking for ubertooth_init in -lubertooth" >&5
 $as_echo_n "checking for ubertooth_init in -lubertooth... " >&6; }
@@ -12214,9 +11786,6 @@ fi
 $as_echo "$ac_cv_lib_ubertooth_ubertooth_init" >&6; }
 if test "x$ac_cv_lib_ubertooth_ubertooth_init" = xyes; then :
   HAVE_LIBUBERTOOTH=yes
-else
-  { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: \"libubertooth is missing\"" >&5
-$as_echo "$as_me: WARNING: \"libubertooth is missing\"" >&2;}
 fi
 
 
@@ -12335,6 +11904,16 @@ DATASOURCE_BINS="$DATASOURCE_BINS \$(CAPTURE_NXP_KW41Z)"
 
 BUILD_CAPTURE_ATZB_233=1
 DATASOURCE_BINS="$DATASOURCE_BINS \$(CAPTURE_ATZB_233)"
+
+BUILD_CAPTURE_NRF_52840=1
+DATASOURCE_BINS="$DATASOURCE_BINS \$(CAPTURE_NRF_52840)"
+
+BUILD_CAPTURE_RZ_KILLERBEE=0
+if test "$have_usb" = "yes"; then
+    BUILD_CAPTURE_RZ_KILLERBEE=1
+    DATASOURCE_BINS="$DATASOURCE_BINS \$(CAPTURE_RZ_KILLERBEE)"
+fi
+
 
 if test "$darwin" = "yes"; then
 	suidgroup="staff"
@@ -12537,11 +12116,14 @@ sharedatadir=${sharedatadir}
 
 
 
+
+
+
 #AC_SUBST(CPPFLAGS)
 #AC_SUBST(CFLAGS)
 #AC_SUBST(CXXFLAGS)
 
-ac_config_files="$ac_config_files Makefile Makefile.inc packaging/kismet.pc packaging/systemd/kismet.service packaging/systemd/debug/kismet-debug.service capture_linux_bluetooth/Makefile capture_linux_wifi/Makefile capture_osx_corewlan_wifi/Makefile capture_sdr_rtl433/Makefile capture_sdr_rtlamr/Makefile capture_sdr_rtladsb/Makefile capture_freaklabs_zigbee/Makefile capture_nrf_mousejack/Makefile capture_ti_cc_2540/Makefile capture_ti_cc_2531/Makefile capture_ubertooth_one/Makefile capture_nrf_51822/Makefile capture_nxp_kw41z/Makefile capture_atzb_x_233_usb/Makefile"
+ac_config_files="$ac_config_files Makefile Makefile.inc packaging/kismet.pc packaging/systemd/kismet.service packaging/systemd/debug/kismet-debug.service capture_linux_bluetooth/Makefile capture_linux_wifi/Makefile capture_osx_corewlan_wifi/Makefile capture_sdr_rtl433/Makefile capture_sdr_rtlamr/Makefile capture_sdr_rtladsb/Makefile capture_freaklabs_zigbee/Makefile capture_nrf_mousejack/Makefile capture_ti_cc_2540/Makefile capture_ti_cc_2531/Makefile capture_ubertooth_one/Makefile capture_nrf_51822/Makefile capture_nxp_kw41z/Makefile capture_rz_killerbee/Makefile capture_bladerf_wiphy/Makefile capture_proxy_adsb/Makefile capture_nrf_52840/Makefile capture_atzb_x_233_usb/Makefile"
 
 cat >confcache <<\_ACEOF
 # This file is a shell script that caches the results of configure
@@ -13253,6 +12835,10 @@ do
     "capture_ubertooth_one/Makefile") CONFIG_FILES="$CONFIG_FILES capture_ubertooth_one/Makefile" ;;
     "capture_nrf_51822/Makefile") CONFIG_FILES="$CONFIG_FILES capture_nrf_51822/Makefile" ;;
     "capture_nxp_kw41z/Makefile") CONFIG_FILES="$CONFIG_FILES capture_nxp_kw41z/Makefile" ;;
+    "capture_rz_killerbee/Makefile") CONFIG_FILES="$CONFIG_FILES capture_rz_killerbee/Makefile" ;;
+    "capture_bladerf_wiphy/Makefile") CONFIG_FILES="$CONFIG_FILES capture_bladerf_wiphy/Makefile" ;;
+    "capture_proxy_adsb/Makefile") CONFIG_FILES="$CONFIG_FILES capture_proxy_adsb/Makefile" ;;
+    "capture_nrf_52840/Makefile") CONFIG_FILES="$CONFIG_FILES capture_nrf_52840/Makefile" ;;
     "capture_atzb_x_233_usb/Makefile") CONFIG_FILES="$CONFIG_FILES capture_atzb_x_233_usb/Makefile" ;;
 
   *) as_fn_error $? "invalid argument: \`$ac_config_target'" "$LINENO" 5;;
@@ -13855,21 +13441,22 @@ else
 	echo "$suidgroup"
 fi
 
-printf "   Linux WEXT capture : "
-if test "$linux_wireless" = "yes"; then
-	echo "yes"
-elif test "$linux" != "yes"; then
-	echo "n/a (only Linux)"
-else
-	echo "no"
-fi
 printf "        Prelude  SIEM : $wantprelude\n"
-printf "   PCRE Regex Filters : "
+
+printf "            PCRE regex: "
 if test "$wantpcre" = "yes"; then
 	echo "yes"
 else
 	echo "no"
 fi
+
+printf " Websocket datasources: "
+if test "$have_libwebsockets"x = "yesx"; then
+    echo "yes"
+else
+    echo "no (not building remote capture with websockets)"
+fi
+
 printf "LibCapability (enhanced\n"
 printf "   privilege dropping): "
 if test "$havecap" = "yes"; then
@@ -13880,11 +13467,11 @@ else
 	echo "no";
 fi
 
-printf "   OSX/Darwin capture : "
-if test "$darwin" = "yes"; then
+printf "  Linux Wi-Fi capture : "
+if test "$linux_wireless" = "yes"; then
 	echo "yes"
-elif test "$darwin" != "yes"; then
-	echo "n/a (only OSX/Darwin)"
+elif test "$linux" != "yes"; then
+	echo "n/a (only Linux)"
 else
 	echo "no"
 fi
@@ -13907,13 +13494,22 @@ else
     echo "no (will not be able to control NetworkManager, $LIBNM_MISSING_REASON)"
 fi
 
-printf "       Linux Bluetooth: "
+printf "   Linux HCI Bluetooth: "
 if test "$BUILD_CAPTURE_LINUX_BLUETOOTH" = 1; then
 	echo "yes";
 elif test "$linux" != "yes"; then
 	echo "n/a (only Linux)"
 else
 	echo "no (will not be able to track Bluetooth on Linux)";
+fi
+
+printf "   OSX/Darwin capture : "
+if test "$darwin" = "yes"; then
+	echo "yes"
+elif test "$darwin" != "yes"; then
+	echo "n/a (only OSX/Darwin)"
+else
+	echo "no"
 fi
 
 printf "         nRF MouseJack: "
@@ -13949,6 +13545,11 @@ if test "$BUILD_CAPTURE_NRF_51822" = 1; then
         echo "yes";
 fi
 
+printf "       NRF52840 Zigbee: "
+if test "$BUILD_CAPTURE_NRF_52840" = 1; then
+        echo "yes";
+fi
+
 printf "  NXP KW41Z BLE/Zigbee: "
 if test "$BUILD_CAPTURE_NXP_KW41Z" = 1; then
         echo "yes";
@@ -13961,6 +13562,13 @@ if test "$BUILD_CAPTURE_ATZB_233" = 1; then
 	echo "yes";
 else
 	echo "no";
+fi
+
+printf "          RZ KILLERBEE: "
+if test "$BUILD_CAPTURE_RZ_KILLERBEE" = 1; then
+        echo "yes";
+else
+        echo "no (libusb-1.0 not available)";
 fi
 
 
@@ -14002,6 +13610,20 @@ else
 	echo "no (python modules are disabled)";
 fi
 
+printf "            ADSB Proxy: "
+if test "$BUILD_CAPTURE_PROXY_ADSB" = 1; then
+	echo "yes";
+else
+	echo "no (python modules are disabled)";
+fi
+
+printf "         bladeRF-wiphy: "
+if test "$BUILD_CAPTURE_BLADERF_WLAN" = 1; then
+	echo "yes";
+else
+	echo "no (bladeRF support not enabled)";
+fi
+
 printf " lm-sensors monitoring: "
 if test "$HAVE_LIBLMSENSORS" = 1; then
 	echo "yes";
@@ -14037,16 +13659,6 @@ if test "$linux_wireless" != "yes" -a "$linux" = "yes"; then
 	echo "Orinoco, Prism, and just about every other live capture method).  Make "
 	echo "sure this is what you want to do."
     echo "*** WARNING ***"
-fi
-
-if test "$pcap" != "yes" -a "$linux" = "yes"; then
-	echo
-	echo "*** WARNING ***"
-	echo "LibPCAP was not found (or was disabled)."
-	echo "Kismet on Linux without LibPcap cannot capture data locally and will "
-	echo "almost certainly NOT BE WHAT YOU WANT."
-	echo "You need both the libpcap libraries and development headers (called "
-	echo "libpcap-dev or libpcap-devel by most distributions)."
 fi
 
 if test "$havenetlink" != "yes" -a "$linux" = "yes"; then

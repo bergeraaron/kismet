@@ -54,7 +54,6 @@ config_file::config_file(global_registry *in_globalreg) {
 }
 
 config_file::~config_file() {
-    local_locker lock(&config_locker);
 }
 
 int config_file::parse_config(const char *in_fname) {
@@ -84,7 +83,7 @@ int config_file::parse_config(const char *in_fname) {
 int config_file::parse_config(const char *in_fname,
         std::map<std::string, std::vector<config_entity> > &target_map,
         std::map<std::string, int> &target_map_dirty) {
-    local_locker lock(&config_locker);
+    kis_lock_guard<kis_mutex> lk(config_locker, "configfile parse_config");
 
     FILE *configf;
     char confline[8192];
@@ -234,17 +233,12 @@ int config_file::parse_opt_override(const std::string path) {
 
 
 int config_file::save_config(const char *in_fname) {
-    local_locker lock(&config_locker);
-
-    std::stringstream sstream;
+    kis_lock_guard<kis_mutex> lk(config_locker, "config_file save_config");
 
     FILE *wf = NULL;
 
     if ((wf = fopen(in_fname, "w")) == NULL) {
-
-        sstream << "Error writing config file '" << in_fname <<
-            "': " << kis_strerror_r(errno);
-        _MSG(sstream.str(), MSGFLAG_ERROR);
+        _MSG_ERROR("Could not write config file {} - {}", in_fname, kis_strerror_r(errno));
         return -1;
     }
 
@@ -259,7 +253,7 @@ int config_file::save_config(const char *in_fname) {
 }
 
 std::string config_file::fetch_opt(std::string in_key) {
-    local_locker lock(&config_locker);
+    kis_lock_guard<kis_mutex> lk(config_locker, "config_file fetch_opt");
 
     auto cmitr = config_map.find(str_lower(in_key));
     // No such key
@@ -285,7 +279,7 @@ std::string config_file::fetch_opt_dfl(std::string in_key, std::string in_dfl) {
 }
 
 std::vector<std::string> config_file::fetch_opt_vec(std::string in_key) {
-    local_locker lock(&config_locker);
+    kis_lock_guard<kis_mutex> lk(config_locker, "config_file fetch_opt_vec");
 
     // Empty vec to return
     std::vector<std::string> eretvec;
@@ -317,6 +311,11 @@ int config_file::fetch_opt_bool(std::string in_key, int dvalue) {
     return r;
 }
 
+std::string config_file::fetch_opt_path(const std::string& in_key, const std::string& in_dfl) {
+    auto p = fetch_opt_dfl(in_key, in_dfl);
+    return expand_log_path(p, "", "", 0, 1);
+}
+
 int config_file::fetch_opt_int(const std::string& in_key, int dvalue) {
     return fetch_opt_as<int>(in_key, dvalue);
 }
@@ -330,7 +329,7 @@ unsigned long config_file::fetch_opt_ulong(const std::string& in_key, unsigned l
 }
 
 int config_file::fetch_opt_dirty(const std::string& in_key) {
-    local_locker lock(&config_locker);
+    kis_lock_guard<kis_mutex> lk(config_locker, "config_file fetch_opt_dirty");
     if (config_map_dirty.find(str_lower(in_key)) == config_map_dirty.end())
         return 0;
 
@@ -338,12 +337,12 @@ int config_file::fetch_opt_dirty(const std::string& in_key) {
 }
 
 void config_file::set_opt_dirty(const std::string& in_key, int in_dirty) {
-    local_locker lock(&config_locker);
+    kis_lock_guard<kis_mutex> lk(config_locker, "config_file set_opt_dirty");
     config_map_dirty[str_lower(in_key)] = in_dirty;
 }
 
 void config_file::set_opt(const std::string& in_key, const std::string& in_val, int in_dirty) {
-    local_locker lock(&config_locker);
+    kis_lock_guard<kis_mutex> lk(config_locker, "config_file set_opt");
 
     std::vector<config_entity> v;
     config_entity e(in_val, "::dynamic::");
@@ -354,7 +353,7 @@ void config_file::set_opt(const std::string& in_key, const std::string& in_val, 
 
 void config_file::set_opt_vec(const std::string& in_key, const std::vector<std::string>& in_val, 
         int in_dirty) {
-    local_locker lock(&config_locker);
+    kis_lock_guard<kis_mutex> lk(config_locker, "config_file set_opt_vec");
 
     std::vector<config_entity> cev;
     for (unsigned int x = 0; x < in_val.size(); x++) {
@@ -367,24 +366,14 @@ void config_file::set_opt_vec(const std::string& in_key, const std::vector<std::
 }
 
 
-// Expand a logfile into a full filename
-// Path/template from config
-// Logfile name to use
-// Logfile type to use
-// Starting number or desired number
-std::string config_file::expand_log_path(const std::string& path, const std::string& logname, 
-        const std::string& type, int start, int overwrite) {
-    local_locker lock(&config_locker);
+std::string config_file::process_log_template(const std::string& path, const std::string& logname,
+        const std::string& type, unsigned int iteration) {
 
     std::string logtemplate;
-    int inc = 0;
-    int incpad = 0;
 
     logtemplate = path;
 
-    for (unsigned int nl = logtemplate.find("%"); nl < logtemplate.length();
-            nl = logtemplate.find("%", nl)) {
-
+    for (unsigned int nl = logtemplate.find("%"); nl < logtemplate.length(); nl = logtemplate.find("%", nl)) {
         char op = logtemplate[nl+1];
         logtemplate.erase(nl, 2);
 
@@ -439,10 +428,9 @@ std::string config_file::expand_log_path(const std::string& path, const std::str
         } else if (op == 'l') {
             logtemplate.insert(nl, type.c_str());
         } else if (op == 'i') {
-            inc = nl;
+            logtemplate.insert(nl, fmt::format("{}", iteration));
         } else if (op == 'I') {
-            inc = nl;
-            incpad = 1;
+            logtemplate.insert(nl, fmt::format("{:06}", iteration));
         } else if (op == 'h') { 
             if (Globalreg::globalreg->homepath == "") {
                 char *pwbuf;
@@ -457,8 +445,7 @@ std::string config_file::expand_log_path(const std::string& path, const std::str
 
                 if (getpwuid_r(getuid(), &pw, pwbuf, pwbuf_sz, &pw_result) != 0 || 
                         pw_result == NULL) {
-                    fprintf(stderr, "ERROR:  Could not explode home directory path, "
-                            "getpwuid() failed.\n");
+                    fprintf(stderr, "ERROR:  Could not explode home directory path, getpwuid() failed.\n");
                     exit(1);
                 } else {
                     logtemplate.insert(nl, pw_result->pw_dir);
@@ -488,115 +475,64 @@ std::string config_file::expand_log_path(const std::string& path, const std::str
         }
     }
 
-    // If we've got an incremental, go back and find it and start testing
-    if (inc) {
-        int found = 0;
-
-        if (start == 0) {
-            // If we don't have a number we want to use, find the next free
-            for (int num = 1; num < 10000; num++) {
-                std::string copied;
-                struct stat filstat;
-
-                char numstr[6];
-                if (incpad)
-                    snprintf(numstr, 6, "%05d", num);
-                else
-                    snprintf(numstr, 6, "%d", num);
-
-                copied = logtemplate;
-                copied.insert(inc, numstr);
-                copied += ".gz";
-
-                if (stat(copied.c_str(), &filstat) == 0) {
-                    continue;
-                }
-
-                copied = logtemplate;
-                copied.insert(inc, numstr);
-                copied += ".bz2";
-
-                if (stat(copied.c_str(), &filstat) == 0) {
-                    continue;
-                }
-
-                copied = logtemplate;
-                copied.insert(inc, numstr);
-
-                if (stat(copied.c_str(), &filstat) == 0) {
-                    continue;
-                }
-
-                // If we haven't been found with any of our variants, we're
-                // clean, mark us found
-
-                found = 1;
-                logtemplate = copied;
-                break;
-            }
-        } else {
-            // Otherwise find out if this incremental is taken
-            std::string copied = logtemplate;
-            struct stat filstat;
-            char numstr[5];
-            snprintf(numstr, 5, "%d", start);
-            int localfound = 1;
-
-            copied.insert(inc, numstr);
-
-            copied = logtemplate;
-            copied.insert(inc, numstr);
-            copied += ".gz";
-
-            if (stat(copied.c_str(), &filstat) == 0 && overwrite != 0) {
-                localfound = 0;
-            }
-
-            copied = logtemplate;
-            copied.insert(inc, numstr);
-            copied += ".bz2";
-
-            if (stat(copied.c_str(), &filstat) == 0 && overwrite != 0) {
-                localfound = 0;
-            }
-
-            copied = logtemplate;
-            copied.insert(inc, numstr);
-
-            if (stat(copied.c_str(), &filstat) == 0 && overwrite != 0) {
-                localfound = 0;
-            }
-
-            // If we haven't been found with any of our variants, we're
-            // clean, mark us found
-
-            found = localfound;
-            if (localfound == 0)
-                logtemplate = "";
-            else
-                logtemplate = copied;
-        }
-
-
-        if (!found) {
-            fprintf(stderr, "ERROR:  Unable to find a logging file within 100 hits. "
-                    "If you really are logging this many times in 1 day, change "
-                    "log names or edit the source.\n");
-            exit(1);
-        }
-    } else {
-        struct stat filstat;
-
-        if (stat(logtemplate.c_str(), &filstat) != -1 && overwrite == 0) {
-            logtemplate = "";
-        }
-    }
-
     return logtemplate;
 }
 
+std::string config_file::expand_log_path(const std::string& path, const std::string& logname, 
+        const std::string& type, int start, int overwrite) {
+    kis_lock_guard<kis_mutex> lk(config_locker, "config_file expand_log_path");
+
+    auto have_incremental = path.find("%i") != std::string::npos || path.find("%I") != std::string::npos;
+    struct stat filstat;
+
+    if (have_incremental) {
+        // If we don't have a number we want to use, find the next free
+        for (unsigned int i = start; i < 10000; i++) {
+            auto logfile = process_log_template(path, logname, type, i);
+
+            if (overwrite)
+                return logfile;
+
+            if (stat(logfile.c_str(), &filstat) == 0)
+                continue;
+
+            auto lfgz = logfile + ".gz";
+            if (stat(lfgz.c_str(), &filstat) == 0)
+                continue;
+
+            auto lfbz = logfile + ".bz2";
+            if (stat(lfgz.c_str(), &filstat) == 0)
+                continue;
+
+            return logfile;
+        } 
+
+        _MSG_ERROR("Could not allocate file for {} ({}) within a reasonable search, try moving "
+                "similarly named log files out of the logging directory?", logname, type);
+        return "";
+    }
+
+    auto logfile = process_log_template(path, logname, type, 0);
+
+    if (overwrite)
+        return logfile;
+
+    if (stat(logfile.c_str(), &filstat) == 0)
+        return "";
+
+    auto lfgz = logfile + ".gz";
+    if (stat(lfgz.c_str(), &filstat) == 0)
+        return "";
+
+    auto lfbz = logfile + ".bz2";
+    if (stat(lfgz.c_str(), &filstat) == 0)
+        return "";
+
+    return logfile;
+}
+
 uint32_t config_file::fetch_file_checksum() {
-    local_locker lock(&config_locker);
+    kis_lock_guard<kis_mutex> lk(config_locker, "config_file fetch_file_checksum");
 
     if (checksum == 0)
         calculate_file_checksum();
@@ -605,7 +541,7 @@ uint32_t config_file::fetch_file_checksum() {
 }
 
 void config_file::calculate_file_checksum() {
-    local_locker lock(&config_locker);
+    kis_lock_guard<kis_mutex> lk(config_locker, "config_file calculate_file_checksum");
 
     std::string cks;
 
@@ -627,7 +563,7 @@ header_value_config::header_value_config() {
 }
 
 void header_value_config::parse_line(const std::string& in_confline) {
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex, "header_value_config parse_line");
 
     auto cpos = in_confline.find(":");
 
@@ -646,22 +582,22 @@ void header_value_config::parse_line(const std::string& in_confline) {
 }
 
 std::string header_value_config::get_header() {
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex, "header_value_config get_header");
     return header;
 }
 
 void header_value_config::set_header(const std::string& in_str) {
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex, "header_value_config set_header");
     header = in_str;
 }
 
 bool header_value_config::has_key(const std::string& in_str) {
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex, "header_value_config has_key");
     return (content_map.find(in_str) != content_map.end());
 }
 
 std::string header_value_config::get_value(const std::string& in_str) {
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex, "header_value_config get_value");
     
     auto vi = content_map.find(in_str);
 
@@ -672,7 +608,7 @@ std::string header_value_config::get_value(const std::string& in_str) {
 }
 
 std::string header_value_config::get_value(const std::string& in_str, const std::string& in_defl) {
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex, "header_value_config get_value");
 
     auto vi = content_map.find(in_str);
 
@@ -683,7 +619,7 @@ std::string header_value_config::get_value(const std::string& in_str, const std:
 }
 
 void header_value_config::erase_key(const std::string& in_key) {
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex, "header_value_config erase_key");
 
     auto vi = content_map.find(in_key);
 

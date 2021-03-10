@@ -7,7 +7,7 @@
     (at your option) any later version.
 
     Kismet is distributed in the hope that it will be useful,
-      but WITHOUT ANY WARRANTY; without even the implied warranty of
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
@@ -35,6 +35,7 @@
 #include "devicetracker.h"
 #include "dlttracker.h"
 #include "manuf.h"
+#include "messagebus.h"
 
 Kis_Mousejack_Phy::Kis_Mousejack_Phy(global_registry *in_globalreg, int in_phyid) :
     kis_phy_handler(in_globalreg, in_phyid) {
@@ -141,6 +142,12 @@ int Kis_Mousejack_Phy::CommonClassifierMousejack(CHAINCALL_PARMS) {
                  UCD_UPDATE_PACKETS | UCD_UPDATE_LOCATION |
                  UCD_UPDATE_SEENBY | UCD_UPDATE_ENCRYPTION),
                 "KB/Mouse");
+
+    kis_unique_lock<kis_mutex> lk_list(mphy->devicetracker->get_devicelist_mutex(), 
+            std::defer_lock, "common_classifier_mousejack");
+    kis_unique_lock<kis_mutex> lk_device(device->device_mutex, std::defer_lock, 
+            "common_classifier_mousejack");
+    std::lock(lk_list, lk_device);
 
     // Figure out what we think it could be; this isn't very precise.  Fingerprinting
     // based on methods in mousejack python.

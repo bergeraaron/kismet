@@ -26,6 +26,7 @@
 #include "kis_mutex.h"
 #include "trackedelement.h"
 #include "trackedcomponent.h"
+#include "json/json.h"
 
 #ifdef HAVE_LIBPCRE
 #include <pcre.h>
@@ -51,7 +52,7 @@ protected:
     virtual bool match_element(std::shared_ptr<tracker_element> element) = 0;
     virtual void set_matched_elements(std::shared_ptr<tracker_element_vector> elements);
 
-    kis_recursive_timed_mutex mutex;
+    kis_mutex mutex;
     std::shared_ptr<tracker_element_vector> matched;
 };
 

@@ -32,6 +32,8 @@
 
 #include "fmt.h"
 
+#include "boost/asio.hpp"
+
 class global_registry;
 
 // Pre-defs for all the things we point to
@@ -53,7 +55,7 @@ class kis_manuf;
 // Field name resolver
 class entry_tracker;
 // HTTP server
-class kis_net_httpd;
+class kis_net_beast_httpd;
 
 #define KISMET_INSTANCE_SERVER	0
 #define KISMET_INSTANCE_DRONE	1
@@ -132,6 +134,9 @@ public:
 // 
 // Really this just just a big ugly hack to do globals without looking like
 // we're doing globals, but it's a lot nicer for maintenance at least.
+
+class tracker_element_uuid;
+
 class global_registry {
 public:
 	// argc and argv for modules to allow overrides
@@ -139,7 +144,7 @@ public:
 	char **argv;
 	char **envp;
 
-    uuid server_uuid;
+    std::shared_ptr<tracker_element_uuid> server_uuid;
     std::size_t server_uuid_hash;
 
 	// getopt-long number for arguments that don't take a short letter
@@ -159,7 +164,7 @@ public:
     // Signal service thread that gets cleaned up at exit
     std::thread signal_service_thread;
     
-    message_bus *messagebus;
+    std::shared_ptr<message_bus> messagebus;
 
     // Globals which should be deprecated in favor of named globals; all code should
     // be migrated to the shared pointer references
@@ -245,18 +250,22 @@ public:
     void start_deferred();
     void shutdown_deferred();
 
+    // Global ASIO contexts and IO threads
+    const int n_io_threads = static_cast<int>(std::thread::hardware_concurrency() * 4);
+    boost::asio::io_context io{n_io_threads};
+
 protected:
-    kis_recursive_timed_mutex ext_mutex;
+    kis_mutex ext_mutex;
     // Exernal global references, string to intid
     std::map<std::string, int> ext_name_map;
     // External globals
     std::map<int, std::shared_ptr<void> > ext_data_map;
     std::atomic<int> next_ext_ref;
 
-    kis_recursive_timed_mutex lifetime_mutex;
+    kis_mutex lifetime_mutex;
     std::vector<std::shared_ptr<lifetime_global> > lifetime_vec;
 
-    kis_recursive_timed_mutex deferred_mutex;
+    kis_mutex deferred_mutex;
     bool deferred_started;
     std::vector<std::shared_ptr<deferred_startup> > deferred_vec;
 };
@@ -264,6 +273,7 @@ protected:
 namespace Globalreg {
     extern std::atomic<unsigned long> n_tracked_fields;
     extern std::atomic<unsigned long> n_tracked_components;
+    extern std::atomic<unsigned long> n_tracked_http_connections;
 
     extern global_registry *globalreg;
 

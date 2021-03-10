@@ -1,5 +1,4 @@
 /*
-Minor cleanup to pcapng generation
    This file is part of Kismet
 
    Kismet is free software; you can redistribute it and/or modify
@@ -35,18 +34,19 @@ Minor cleanup to pcapng generation
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include "boost_like_hash.h"
 #include "globalregistry.h"
 #include "packetchain.h"
 #include "timetracker.h"
 #include "packet.h"
 #include "gpstracker.h"
 #include "uuid.h"
+#include "streamtracker.h"
 
 #include "devicetracker.h"
 #include "devicetracker_component.h"
-#include "kis_net_microhttpd.h"
+#include "kis_net_beast_httpd.h"
 #include "phy_80211_components.h"
-#include "phy_80211_httpd_pcap.h"
 #include "phy_80211_ssidtracker.h"
 
 #include "datasource_dot11_scan.h"
@@ -116,6 +116,8 @@ class dot11_packinfo : public packet_component {
             subtype = packet_sub_unknown;
             source_mac = mac_addr(0);
             dest_mac = mac_addr(0);
+            transmit_mac = mac_addr(0);
+            receive_mac = mac_addr(0);
             bssid_mac = mac_addr(0);
             other_mac = mac_addr(0);
             distrib = distrib_unknown;
@@ -138,12 +140,14 @@ class dot11_packinfo : public packet_component {
 
             maxrate = 0;
 
-            // Many of thse will not be available until the IE tags are parsed
+            // Many of these will not be available until the IE tags are parsed
             ietag_csum = 0;
 
             dot11d_country = "";
 
+            wps_version = 0; 
             wps = DOT11_WPS_NO_WPS;
+            wps_config_methods = 0;
             wps_manuf = "";
             wps_device_name = "";
             wps_model_name = "";
@@ -187,6 +191,8 @@ class dot11_packinfo : public packet_component {
         // Address set
         mac_addr source_mac;
         mac_addr dest_mac;
+        mac_addr transmit_mac;
+        mac_addr receive_mac;
         mac_addr bssid_mac;
         mac_addr other_mac;
 
@@ -236,7 +242,9 @@ class dot11_packinfo : public packet_component {
         std::vector<dot11_packinfo_dot11d_entry> dot11d_vec;
 
         // WPS information
+        uint8_t wps_version;
         uint8_t wps;
+        uint16_t wps_config_methods;
         // The field below is useful because some APs use
         // a MAC address with 'Unknown' OUI but will
         // tell their manufacturer in this field:
@@ -296,9 +304,7 @@ class dot11_ssid_alert {
         std::map<mac_addr, int> allow_mac_map;
 };
 
-class kis_80211_phy : public kis_phy_handler, 
-    public kis_net_httpd_cppstream_handler, public time_tracker_event {
-
+class kis_80211_phy : public kis_phy_handler, public time_tracker_event {
 public:
     using ie_tag_tuple = std::tuple<uint8_t, uint32_t, uint8_t>;
 
@@ -367,16 +373,6 @@ public:
     static std::string crypt_to_string(uint64_t cryptset);
     static std::string crypt_to_simple_string(uint64_t cryptset);
 
-    // HTTPD API
-    virtual bool httpd_verify_path(const char *path, const char *method) override;
-
-    virtual void httpd_create_stream_response(kis_net_httpd *httpd,
-            kis_net_httpd_connection *connection,
-            const char *url, const char *method, const char *upload_data,
-            size_t *upload_data_size, std::stringstream &stream) override;
-
-    virtual KIS_MHD_RETURN httpd_post_complete(kis_net_httpd_connection *concls) override;
-
     // time_tracker event handler
     virtual int timetracker_event(int eventid) override;
 
@@ -392,17 +388,28 @@ public:
     const std::string dot11_wpa_handshake_event_base = "DOT11_WPA_HANDSHAKE_BASEDEV";
     const std::string dot11_wpa_handshake_event_dot11 = "DOT11_WPA_HANDSHAKE_DOT11";
 
+    static size_t ssid_hash(const std::string& ssid, unsigned int ssid_len) {
+        auto hash = xx_hash_cpp{};
+
+        boost_like::hash_combine(hash, ssid);
+        boost_like::hash_combine(hash, ssid_len);
+
+        return hash.hash();
+    }
+
 protected:
     std::shared_ptr<alert_tracker> alertracker;
     std::shared_ptr<packet_chain> packetchain;
     std::shared_ptr<time_tracker> timetracker;
     std::shared_ptr<device_tracker> devicetracker;
     std::shared_ptr<event_bus> eventbus;
+    std::shared_ptr<entry_tracker> entrytracker;
+    std::shared_ptr<stream_tracker> streamtracker;
 
     // Checksum of recent packets for duplication filtering
-    uint32_t *recent_packet_checksums;
+    std::atomic<uint32_t> *recent_packet_checksums;
     size_t recent_packet_checksums_sz;
-    unsigned int recent_packet_checksum_pos;
+    std::atomic<unsigned int> recent_packet_checksum_pos;
 
     // Handle advertised SSIDs
     void handle_ssid(std::shared_ptr<kis_tracked_device_base> basedev, 
@@ -435,9 +442,10 @@ protected:
             std::shared_ptr<dot11_tracked_device> dest_dot11,
             kis_packet *in_pack, dot11_packinfo *dot11info);
 
-    void generate_handshake_pcap(std::shared_ptr<kis_tracked_device_base> dev, 
-            kis_net_httpd_connection *connection,
-            std::stringstream &stream);
+    void generate_handshake_pcap(std::shared_ptr<kis_net_beast_httpd_connection> con,
+            std::shared_ptr<kis_tracked_device_base> dev, 
+            std::shared_ptr<dot11_tracked_device> dot11dev, 
+            std::string mode);
 
     int dot11_device_entry_id;
 
@@ -474,7 +482,8 @@ protected:
         alert_longssid_ref, alert_disconinvalid_ref, alert_deauthinvalid_ref,
         alert_dhcpclient_ref, alert_wmm_ref, alert_nonce_zero_ref, 
         alert_nonce_duplicate_ref, alert_11kneighborchan_ref, alert_probechan_ref,
-        alert_rtlwifi_p2p_ref, alert_deauthflood_ref, alert_noclientmfp_ref;
+        alert_rtlwifi_p2p_ref, alert_deauthflood_ref, alert_noclientmfp_ref,
+        alert_rtl8195_vdoo_ref;
 
     // Are we allowed to send wepkeys to the client (server config)
     int client_wepkey_allowed;
@@ -512,21 +521,12 @@ protected:
     int device_idle_timer;
     unsigned int device_idle_min_packets;
 
-    // Pcap handlers
-    std::unique_ptr<phy_80211_httpd_pcap> httpd_pcap;
-
     // Do we process control and phy frames?
     bool process_ctl_phy;
 
     // IE fingerprinting lists
     std::vector<ie_tag_tuple> beacon_ie_fingerprint_list;
     std::vector<ie_tag_tuple> probe_ie_fingerprint_list;
-
-    // New endpoints as we migrate to the simplified API
-    std::shared_ptr<kis_net_httpd_path_tracked_endpoint> clients_of_endp;
-
-    // Related-by API
-    std::shared_ptr<kis_net_httpd_path_tracked_endpoint> related_to_key_endp;
 
     // AP view
     std::shared_ptr<device_tracker_view> ap_view;
@@ -542,6 +542,9 @@ protected:
 
     // Do we keep WPA packets?
     bool keep_eapol_packets;
+
+    // Do we only get signal from beacons?
+    bool signal_from_beacon;
 };
 
 #endif

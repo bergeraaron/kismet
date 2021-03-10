@@ -24,9 +24,12 @@ Antennatracker::Antennatracker() {
 
     antenna_id_map = 
         std::make_shared<tracker_element_int_map>();
-    antenna_endp = 
-        std::make_shared<kis_net_httpd_simple_tracked_endpoint>("/antennas/antennas",
-                antenna_id_map, &mutex);
+
+    auto httpd = Globalreg::fetch_global_as<kis_net_beast_httpd>();
+
+    httpd->register_route("/antennas/antennas", {"GET", "POST"}, httpd->RO_ROLE, {},
+            std::make_shared<kis_net_web_tracked_endpoint>(antenna_id_map, mutex));
+
     next_ant_id = 0;
 }
 
@@ -35,7 +38,7 @@ Antennatracker::~Antennatracker() {
 }
 
 int Antennatracker::add_antenna(uuid in_src, int in_srcnum, int in_adjustment) {
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex, "antenna add_antenna");
 
     for (auto ai : *antenna_id_map) {
         auto a = std::static_pointer_cast<tracked_antenna>(ai.second);
@@ -63,7 +66,7 @@ int Antennatracker::add_antenna(uuid in_src, int in_srcnum, int in_adjustment) {
 }
 
 int Antennatracker::add_antenna(uuid in_src, int in_srcnum, int in_adjustment, uuid in_ant_uuid) {
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex, "antennatracker add_antenna");
 
     for (auto ai : *antenna_id_map) {
         auto a = std::static_pointer_cast<tracked_antenna>(ai.second);
@@ -87,7 +90,7 @@ int Antennatracker::add_antenna(uuid in_src, int in_srcnum, int in_adjustment, u
 }
 
 int Antennatracker::set_antenna_adjustment(int in_antnum, int in_adjustment) {
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex, "antennatracker set_antenna_adjustment");
 
     auto ai = antenna_id_map->find(in_antnum);
 
@@ -101,7 +104,7 @@ int Antennatracker::set_antenna_adjustment(int in_antnum, int in_adjustment) {
 }
 
 std::shared_ptr<tracked_antenna> Antennatracker::get_antenna(int in_antnum) {
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex, "antennatracker get_antenna");
 
     auto ai = antenna_id_map->find(in_antnum);
 

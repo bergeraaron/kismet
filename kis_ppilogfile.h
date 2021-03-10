@@ -22,17 +22,12 @@
 #include "config.h"
 
 #ifdef HAVE_LIBPCAP
-#ifdef HAVE_PPI
 
 #include <stdio.h>
 #include <string>
 
 extern "C" {
-#ifndef HAVE_PCAPPCAP_H
-#include <pcap.h>
-#else
 #include <pcap/pcap.h>
-#endif
 }
 
 #include "globalregistry.h"
@@ -94,7 +89,7 @@ protected:
     int pack_comp_80211, pack_comp_mangleframe, pack_comp_radiodata,
         pack_comp_gps, pack_comp_checksum, pack_comp_decap, pack_comp_linkframe;
 
-    kis_recursive_timed_mutex packet_mutex;
+    kis_mutex packet_mutex;
 };
 
 class ppi_logfile_builder : public kis_logfile_builder {
@@ -137,8 +132,6 @@ public:
                 "metadata headers");
     }
 };
-
-#endif /* ppi */
 
 #endif /* pcap */
 

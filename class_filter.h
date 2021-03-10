@@ -23,6 +23,7 @@
 
 #include "trackedcomponent.h"
 #include "eventbus.h"
+#include "kis_net_beast_httpd.h"
 
 // Common class-based filter mechanism which can be used in multiple locations;
 // implements basic default behavior and REST endpoints.
@@ -35,9 +36,7 @@ public:
     class_filter(const std::string& in_id, const std::string& in_description,
             const std::string& in_type);
 
-    virtual ~class_filter() {
-        local_locker l(&mutex);
-    }
+    virtual ~class_filter() { }
 
     __ProxyGet(filter_id, std::string, std::string, filter_id);
     __ProxyGet(filter_description, std::string, std::string, filter_description);
@@ -62,7 +61,7 @@ protected:
         register_field("kismet.classfilter.default", "Default filter (pass/reject)", &filter_default);
     }
 
-    kis_recursive_timed_mutex mutex;
+    kis_mutex mutex;
 
     std::string base_uri;
 
@@ -72,11 +71,8 @@ protected:
     std::shared_ptr<tracker_element_uint8> filter_default;
 
     // Default endpoint
-    std::shared_ptr<kis_net_httpd_simple_post_endpoint> default_endp;
-    int default_set_endp_handler(std::ostream& stream, const Json::Value& json);
+    void default_set_endp_handler(std::shared_ptr<kis_net_beast_httpd_connection> con);
 
-    // Default display endpoint
-    std::shared_ptr<kis_net_httpd_simple_tracked_endpoint> self_endp;
     // Build the return object; subfilters must implement this to bypass class hierarchy & call
     // build_self_content
     virtual std::shared_ptr<tracker_element_map> self_endp_handler() = 0;
@@ -137,13 +133,8 @@ protected:
 	std::map<std::string, std::map<mac_addr, bool>> unknown_phy_mac_filter_map;
 
     // Address management endpoint keyed on path
-    std::shared_ptr<kis_net_httpd_path_post_endpoint> macaddr_edit_endp;
-    unsigned int edit_endp_handler(std::ostream& stream, const std::vector<std::string>& path, 
-            const Json::Value& json);
-
-    std::shared_ptr<kis_net_httpd_path_post_endpoint> macaddr_remove_endp;
-    unsigned int remove_endp_handler(std::ostream& stream, const std::vector<std::string> &path,
-            const Json::Value& json);
+    void edit_endp_handler(std::shared_ptr<kis_net_beast_httpd_connection> con);
+    void remove_endp_handler(std::shared_ptr<kis_net_beast_httpd_connection> con);
 
     virtual std::shared_ptr<tracker_element_map> self_endp_handler() override;
     virtual void build_self_content(std::shared_ptr<tracker_element_map> content) override;

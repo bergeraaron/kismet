@@ -61,16 +61,11 @@ public:
     kis_tracked_ip_data();
     kis_tracked_ip_data(int in_id);
     kis_tracked_ip_data(int in_id, std::shared_ptr<tracker_element_map> e);
+    kis_tracked_ip_data(const kis_tracked_ip_data *p);
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -95,16 +90,11 @@ public:
     kis_tracked_signal_data();
     kis_tracked_signal_data(int in_id);
     kis_tracked_signal_data(int in_id, std::shared_ptr<tracker_element_map> e);
+    kis_tracked_signal_data(const kis_tracked_signal_data *p);
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -164,16 +154,11 @@ public:
     kis_tracked_seenby_data();
     kis_tracked_seenby_data(int in_id);
     kis_tracked_seenby_data(int in_id, std::shared_ptr<tracker_element_map> e);
+    kis_tracked_seenby_data(const kis_tracked_seenby_data *p);
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -183,7 +168,7 @@ public:
     __Proxy(num_packets, uint64_t, uint64_t, uint64_t, num_packets);
     __ProxyIncDec(num_packets, uint64_t, uint64_t, num_packets);
 
-    __ProxyTrackable(freq_khz_map, tracker_element_double_map_double, freq_khz_map);
+    __ProxyDynamicTrackable(freq_khz_map, tracker_element_double_map_double, freq_khz_map, freq_khz_map_id);
     __ProxyDynamicTrackable(signal_data, kis_tracked_signal_data, signal_data, signal_data_id);
 
     void inc_frequency_count(int frequency);
@@ -199,11 +184,113 @@ protected:
     std::shared_ptr<tracker_element_uint64> num_packets;
 
     std::shared_ptr<tracker_element_double_map_double> freq_khz_map;
+    int freq_khz_map_id;
     int frequency_val_id;
 
     std::shared_ptr<kis_tracked_signal_data> signal_data;
     int signal_data_id;
 };
+
+class kis_tracked_data_bins : public tracker_component {
+public:
+    kis_tracked_data_bins() :
+        tracker_component() {
+        register_fields();
+        reserve_fields(NULL);
+    }
+
+    kis_tracked_data_bins(int in_id) :
+        tracker_component(in_id) {
+            register_fields();
+            reserve_fields(NULL);
+        }
+
+    kis_tracked_data_bins(int in_id, std::shared_ptr<tracker_element_map> e) :
+        tracker_component(in_id) {
+        register_fields();
+        reserve_fields(e);
+    }
+
+    kis_tracked_data_bins(const kis_tracked_data_bins *p) :
+        tracker_component{p} {
+
+        __ImportId(packet_rrd_bin_250_id, p);
+        __ImportId(packet_rrd_bin_500_id, p);
+        __ImportId(packet_rrd_bin_1000_id, p);
+        __ImportId(packet_rrd_bin_1500_id, p);
+        __ImportId(packet_rrd_bin_jumbo_id, p);
+
+        reserve_fields(nullptr);
+    }
+
+    virtual uint32_t get_signature() const override {
+        return adler32_checksum("kis_tracked_data_bins");
+    }
+
+    virtual std::unique_ptr<tracker_element> clone_type() override {
+        using this_t = std::remove_pointer<decltype(this)>::type;
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
+        return std::move(dup);
+    }
+
+    __ProxyDynamicTrackable(packet_rrd_bin_250, kis_tracked_minute_rrd<>, packet_rrd_bin_250, packet_rrd_bin_250_id);
+    __ProxyDynamicTrackable(packet_rrd_bin_500, kis_tracked_minute_rrd<>, packet_rrd_bin_500, packet_rrd_bin_500_id);
+    __ProxyDynamicTrackable(packet_rrd_bin_1000, kis_tracked_minute_rrd<>, packet_rrd_bin_1000, packet_rrd_bin_1000_id);
+    __ProxyDynamicTrackable(packet_rrd_bin_1500, kis_tracked_minute_rrd<>, packet_rrd_bin_1500, packet_rrd_bin_1500_id);
+    __ProxyDynamicTrackable(packet_rrd_bin_jumbo, kis_tracked_minute_rrd<>, packet_rrd_bin_jumbo, packet_rrd_bin_jumbo_id);
+
+    void add_sample(size_t size, time_t ts) {
+        if (size <= 250)
+            get_packet_rrd_bin_250()->add_sample(1, ts);
+        else if (size <= 500)
+            get_packet_rrd_bin_500()->add_sample(1, ts);
+        else if (size <= 1000)
+            get_packet_rrd_bin_1000()->add_sample(1, ts);
+        else if (size <= 1500)
+            get_packet_rrd_bin_1500()->add_sample(1, ts);
+        else
+            get_packet_rrd_bin_jumbo()->add_sample(1, ts);
+    }
+
+protected:
+    virtual void register_fields() override {
+        tracker_component::register_fields();
+
+        packet_rrd_bin_250_id =
+            register_dynamic_field("kismet.device.packet.bin.250", "RRD of packets up to 250 bytes",
+                &packet_rrd_bin_250);
+        packet_rrd_bin_500_id = 
+            register_dynamic_field("kismet.device.packet.bin.500", "RRD of packets up to 500 bytes",
+                &packet_rrd_bin_500);
+        packet_rrd_bin_1000_id = 
+            register_dynamic_field("kismet.device.packet.bin.1000", "RRD of packets up to 1000 bytes",
+                    &packet_rrd_bin_1000);
+        packet_rrd_bin_1500_id =
+            register_dynamic_field("kismet.device.packet.bin.1500", "RRD of packets up to 1500 bytes",
+                    &packet_rrd_bin_1500);
+        packet_rrd_bin_jumbo_id =
+            register_dynamic_field("kismet.device.packet.bin.jumbo", "RRD of packets over 1500 bytes",
+                    &packet_rrd_bin_jumbo);
+    }
+
+    // Data bins divided by size we track, named by max size
+    std::shared_ptr<kis_tracked_minute_rrd<>> packet_rrd_bin_250;
+    int packet_rrd_bin_250_id;
+
+    std::shared_ptr<kis_tracked_minute_rrd<>> packet_rrd_bin_500;
+    int packet_rrd_bin_500_id;
+
+    std::shared_ptr<kis_tracked_minute_rrd<>> packet_rrd_bin_1000;
+    int packet_rrd_bin_1000_id;
+
+    std::shared_ptr<kis_tracked_minute_rrd<>> packet_rrd_bin_1500;
+    int packet_rrd_bin_1500_id;
+
+    std::shared_ptr<kis_tracked_minute_rrd<>> packet_rrd_bin_jumbo;
+    int packet_rrd_bin_jumbo_id;
+
+};
+
 
 
 // Bitfield of basic types a device is classified as.  The device may be multiple
@@ -258,23 +345,80 @@ public:
         reserve_fields(e);
     }
 
+    kis_tracked_device_base(const kis_tracked_device_base *p) :
+        tracker_component{p} {
+
+        __ImportField(key, p);
+        __ImportField(macaddr, p);
+        __ImportField(phyname, p);
+        __ImportField(devicename, p);
+
+        __ImportId(username_id, p);
+
+        __ImportField(commonname, p);
+        __ImportField(type_string, p);
+        __ImportField(basic_type_set,p );
+        __ImportField(crypt_string, p);
+        __ImportField(basic_crypt_set, p);
+        __ImportField(first_time, p);
+        __ImportField(last_time, p);
+        __ImportField(mod_time, p);
+
+        __ImportField(packets, p);
+        __ImportField(tx_packets, p);
+        __ImportField(rx_packets, p);
+        __ImportField(llc_packets, p);
+        __ImportField(error_packets, p);
+        __ImportField(data_packets, p);
+        __ImportField(crypt_packets, p);
+        __ImportField(filter_packets, p);
+
+
+        __ImportField(datasize, p);
+
+        __ImportId(packets_rrd_id, p);
+        __ImportId(data_rrd_id, p);
+
+        __ImportField(channel, p);
+        __ImportField(frequency, p);
+
+        __ImportId(signal_data_id, p);
+
+        __ImportField(freq_khz_map, p);
+        __ImportField(manuf, p);
+        __ImportField(alert, p);
+
+        __ImportId(tag_map_id, p);
+        __ImportId(tag_entry_id, p);
+
+        __ImportId(location_id, p);
+        
+        __ImportId(seenby_map_id, p);
+
+        __ImportId(frequency_val_id, p);
+        __ImportId(seenby_val_id, p);
+
+        __ImportId(related_device_group_id, p);
+
+        reserve_fields(nullptr);
+    }
+
     virtual ~kis_tracked_device_base() { }
 
     virtual uint32_t get_signature() const override {
         return adler32_checksum("kis_tracked_device_base");
     }
 
+    static uint32_t get_static_signature() {
+        return adler32_checksum("kis_tracked_device_base");
+    }
+
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
-        return std::move(dup);
-    }
 
     __Proxy(key, device_key, device_key, device_key, key);
 
@@ -293,7 +437,13 @@ public:
     __ProxySwappingTrackable(phyname, tracker_element_string, phyname);
     __ProxyGet(phyname, std::string, std::string, phyname);
 
-	__Proxy(phyid, int32_t, int32_t, int32_t, phyid);
+    int get_phyid() const {
+        return phy_id;
+    } 
+
+    void set_phyid(int id) {
+        phy_id = id;
+    }
 
     __ProxyL(devicename, std::string, std::string, std::string, devicename, 
             [this](std::string i) -> bool {
@@ -392,20 +542,6 @@ public:
 
     __ProxyDynamicTrackable(location, kis_tracked_location, location, location_id);
     __ProxyDynamicTrackable(data_rrd, rrdt, data_rrd, data_rrd_id);
-    __ProxyDynamicTrackable(location_cloud, kis_location_history, location_cloud, 
-            location_cloud_id);
-
-    typedef kis_tracked_minute_rrd<> mrrdt;
-    __ProxyDynamicTrackable(packet_rrd_bin_250, mrrdt, packet_rrd_bin_250, 
-            packet_rrd_bin_250_id);
-    __ProxyDynamicTrackable(packet_rrd_bin_500, mrrdt, packet_rrd_bin_500,
-            packet_rrd_bin_500_id);
-    __ProxyDynamicTrackable(packet_rrd_bin_1000, mrrdt, packet_rrd_bin_1000,
-            packet_rrd_bin_1000_id);
-    __ProxyDynamicTrackable(packet_rrd_bin_1500, mrrdt, packet_rrd_bin_1500,
-            packet_rrd_bin_1500_id);
-    __ProxyDynamicTrackable(packet_rrd_bin_jumbo, mrrdt, packet_rrd_bin_jumbo,
-            packet_rrd_bin_jumbo_id);
 
     __Proxy(channel, std::string, std::string, std::string, channel);
     __Proxy(frequency, double, double, double, frequency);
@@ -429,7 +565,9 @@ public:
 
     __ProxyDynamicTrackable(tag_map, tracker_element_string_map, tag_map, tag_map_id);
 
-    __Proxy(server_uuid, uuid, uuid, uuid, server_uuid);
+    void set_server_uuid(std::shared_ptr<tracker_element_uuid> uuid) {
+        insert(uuid);
+    }
 
     __ProxyTrackable(related_devices_map, tracker_element_string_map, related_devices_map);
     void add_related_device(const std::string& in_relationship, const device_key in_key);
@@ -445,17 +583,17 @@ public:
 
     // Lock our device around serialization
     virtual void pre_serialize() override {
-        local_eol_shared_locker lock(&device_mutex);
+        // local_eol_shared_locker lock(&device_mutex);
     }
 
     virtual void post_serialize() override {
-        local_shared_unlocker unlock(&device_mutex);
+        // local_shared_unlocker unlock(&device_mutex);
     }
 
     // Protective per-device mutex, should be managed by pre/post serialization
     // functions, and by anything modifying the device or any of the per-phy records
     // inside it
-    kis_recursive_timed_mutex device_mutex;
+    kis_mutex device_mutex;
 
 protected:
     virtual void register_fields() override;
@@ -475,7 +613,7 @@ protected:
 
     // Phy name
     std::shared_ptr<tracker_element_string> phyname;
-	std::shared_ptr<tracker_element_int32> phyid;
+    int phy_id;
 
     // Printable name for UI summary.  For APs could be latest SSID, for BT the UAP guess, etc.
     std::shared_ptr<tracker_element_string> devicename;
@@ -527,18 +665,6 @@ protected:
     int data_rrd_id;
     std::shared_ptr<kis_tracked_rrd<>> data_rrd;
 
-    // Data bins divided by size we track, named by max size
-    int packet_rrd_bin_250_id;
-    std::shared_ptr<kis_tracked_minute_rrd<>> packet_rrd_bin_250;
-    int packet_rrd_bin_500_id;
-    std::shared_ptr<kis_tracked_minute_rrd<>> packet_rrd_bin_500;
-    int packet_rrd_bin_1000_id;
-    std::shared_ptr<kis_tracked_minute_rrd<>> packet_rrd_bin_1000;
-    int packet_rrd_bin_1500_id;
-    std::shared_ptr<kis_tracked_minute_rrd<>> packet_rrd_bin_1500;
-    int packet_rrd_bin_jumbo_id;
-    std::shared_ptr<kis_tracked_minute_rrd<>> packet_rrd_bin_jumbo;
-
 	// Channel and frequency as per PHY type
     std::shared_ptr<tracker_element_string> channel;
     std::shared_ptr<tracker_element_double> frequency;
@@ -567,15 +693,9 @@ protected:
     std::shared_ptr<kis_tracked_location> location;
     int location_id;
 
-    std::shared_ptr<kis_location_history> location_cloud;
-    int location_cloud_id;
-
     // Seenby map (mapped by int16 device id)
     std::shared_ptr<tracker_element_int_map> seenby_map;
     int seenby_map_id;
-
-    // Server UUID which generated this device
-    std::shared_ptr<tracker_element_uuid> server_uuid;
 
     // Non-exported local value for frequency count
     int frequency_val_id;

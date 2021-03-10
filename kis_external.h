@@ -7,7 +7,7 @@
     (at your option) any later version.
 
     Kismet is distributed in the hope that it will be useful,
-      but WITHOUT ANY WARRANTY; without even the implied warranty of
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
@@ -33,59 +33,88 @@
 #include "config.h"
 
 #include <functional>
+#include <list>
 
-#include <eventbus.h>
+#include "endian_magic.h"
+#include "eventbus.h"
 #include "globalregistry.h"
-#include "buffer_handler.h"
-#include "ipc_remote2.h"
-#include "kis_net_microhttpd.h"
+#include "ipctracker_v2.h"
+#include "kis_external_packet.h"
+#include "kis_net_beast_httpd.h"
 
-// Namespace stub and forward class definition to make deps hopefully
-// easier going forward
+#include "boost/asio.hpp"
+using boost::asio::ip::tcp;
+
+#include <google/protobuf/message_lite.h>
+#include <google/protobuf/io/zero_copy_stream_impl.h>
+
+#include "protobuf_cpp/kismet.pb.h"
+#include "protobuf_cpp/http.pb.h"
+#include "protobuf_cpp/eventbus.pb.h"
+
+// Namespace stub and forward class definition to make deps hopefully easier going forward
 namespace KismetExternal {
     class Command;
 };
 
 struct kis_external_http_session {
-    kis_net_httpd_connection *connection; 
+    std::shared_ptr<kis_net_beast_httpd_connection> connection;
     std::shared_ptr<conditional_locker<int> > locker;
 };
 
-struct kis_external_http_uri {
-    std::string uri;
-    std::string method;
-    bool auth_req;
-};
 
 // External interface API bridge;
-class kis_external_interface : public buffer_interface, kis_net_httpd_chain_stream_handler {
+class kis_external_interface : public std::enable_shared_from_this<kis_external_interface> {
 public:
     kis_external_interface();
-    kis_external_interface(std::shared_ptr<kis_recursive_timed_mutex> mutex);
     virtual ~kis_external_interface();
 
-    // Connect an existing buffer, such as a TCP socket or IPC pipe
-    virtual void connect_buffer(std::shared_ptr<buffer_handler_generic> in_ringbuf);
-
-    // Trigger an error condition and call all the related functions
-    virtual void trigger_error(std::string reason);
-
-    // Buffer interface - called when the attached ringbuffer has data available.
-    virtual void buffer_available(size_t in_amt) override;
-
-    // Buffer interface - handles error on IPC or TCP, called when there is a 
-    // low-level error on the communications stack (process death, etc).
-    // Passes error to the the internal source_error function
-    virtual void buffer_error(std::string in_error) override;
-
-    // Check to see if an IPC binary is available
-    static bool check_ipc(const std::string& in_binary);
-    
+    std::shared_ptr<kis_external_interface> get_shared() {
+        return shared_from_this();
+    }
 
     // Launch the external binary and connect the IPC channel to our buffer
     // interface; most tools will use this unless they support network; 
     // datasources are the primary exception
     virtual bool run_ipc();
+
+    // Attach a tcp socket
+    virtual bool attach_tcp_socket(tcp::socket& socket);
+
+
+    // Check to see if an IPC binary is available
+    static bool check_ipc(const std::string& in_binary);
+
+    // Set a closure callback, for instance when being driven from a websocket
+    virtual void set_closure_cb(std::function<void ()> cb) {
+        kis_lock_guard<kis_mutex> lk(ext_mutex, "external set_closure_cb");
+        closure_cb = cb;
+    }
+
+    // Move a closure cb to a new entity and clear it
+    virtual std::function<void ()> move_closure_cb() {
+        kis_lock_guard<kis_mutex> lk(ext_mutex, "external move_closure_cb");
+        auto ret = closure_cb;
+        closure_cb = nullptr;
+        return ret;
+    }
+
+    // Set a write callback, which is called instead of an asio async write, for use for 
+    // instance when being driven from a websocket connection and we need to proxy it
+    // to the ws
+    virtual void set_write_cb(std::function<int (const char *, size_t, 
+                std::function<void (int, std::size_t)>)> cb) {
+        kis_lock_guard<kis_mutex> lk(ext_mutex, "external set_write_cb");
+        write_cb = cb;
+    }
+
+    virtual std::function<int (const char *, size_t, 
+            std::function<void (int, std::size_t)>)> move_write_cb() {
+        kis_lock_guard<kis_mutex> lk(ext_mutex, "external move_write_cb");
+        auto ret = write_cb;
+        write_cb = nullptr;
+        return ret;
+    }
 
     // close the external interface
     virtual void close_external();
@@ -93,34 +122,16 @@ public:
     // We use the raw http server APIs instead of the newer endpoint handlers because we
     // potentially mess with the headers and other internals
 
-    // Webserver proxy interface - standard verifypath
-    virtual bool httpd_verify_path(const char *path, const char *method) override;
-
-    // Called as a connection is being set up;  brokers access with the http
-    // proxy
-    //
-    // Returns:
-    //  MHD_NO  - Streambuffer should not automatically close out the buffer; this
-    //            is used when spawning an independent thread for managing the stream,
-    //            for example with pcap streaming
-    //  MHD_YES - Streambuffer should automatically close the buffer when the
-    //            streamresponse is complete, typically used when streaming a finite
-    //            amount of data through a memchunk buffer like a json serialization
-    virtual KIS_MHD_RETURN httpd_create_stream_response(kis_net_httpd *httpd,
-            kis_net_httpd_connection *connection,
-            const char *url, const char *method, const char *upload_data,
-            size_t *upload_data_size) override;
-
-    // Called when a POST event is complete - all data has been uploaded and
-    // cached in the connection info; brokers connections to to the proxy
-    //
-    // Returns:
-    //  MHD_NO  - Streambuffer should not automatically close out the buffer
-    //  MHD_YES - Streambuffer should automatically close the buffer when the
-    //            streamresponse is complete
-    virtual KIS_MHD_RETURN httpd_post_complete(kis_net_httpd_connection *con __attribute__((unused))) override;
+    // Trigger an error
+    virtual void trigger_error(const std::string& in_error);
 
 protected:
+    std::function<void (void)> closure_cb;
+    std::function<int (const char *, size_t, std::function<void (int, std::size_t)>)> write_cb;
+
+    // Handle an error; override in child classes; called when an error causes a shutdown
+    virtual void handle_error(const std::string& error) { }
+
     // Wrap a protobuf'd packet in our network framing and send it, returning the sequence
     // number
     virtual unsigned int send_packet(std::shared_ptr<KismetExternal::Command> c);
@@ -143,31 +154,52 @@ protected:
     unsigned int send_pong(uint32_t ping_seqno);
     unsigned int send_shutdown(std::string reason);
 
-    std::shared_ptr<kis_recursive_timed_mutex> ext_mutex;
+    std::atomic<bool> stopped;
+    std::atomic<bool> cancelled;
 
-    // Communications API.  We implement a buffer interface and listen to the
-    // incoming read buffer, we're agnostic if it's a network or IPC buffer.
-    std::shared_ptr<buffer_handler_generic> ringbuf_handler;
-
-    // If we're an IPC instance, the IPC control.  The ringbuf_handler is associated
-    // with the IPC instance.
-    std::shared_ptr<ipc_remote_v2> ipc_remote;
+    kis_mutex ext_mutex;
 
     std::shared_ptr<time_tracker> timetracker;
+    std::shared_ptr<ipc_tracker_v2> ipctracker;
 
     std::atomic<uint32_t> seqno;
     std::atomic<time_t> last_pong;
 
+    int ping_timer_id;
+
+    // Async input
+    boost::asio::streambuf in_buf;
+
+    std::list<std::shared_ptr<std::string>> out_bufs;
+
+    void start_write(const char *data, size_t len);
+    void write_impl();
+
+    // Common strand
+    boost::asio::io_service::strand strand_;
+
+    // Pipe IPC
     std::string external_binary;
     std::vector<std::string> external_binary_args;
 
-    int ping_timer_id;
+    kis_ipc_record ipc;
+    boost::asio::posix::stream_descriptor ipc_in, ipc_out;
 
-    size_t ipc_buffer_sz;
+    std::atomic<bool> ipc_running;
+
+
+    void start_ipc_read(std::shared_ptr<kis_external_interface> ref);
+
+    void ipc_soft_kill();
+    void ipc_hard_kill();
+
+    // TCP socket
+    tcp::socket tcpsocket;
+
+    void start_tcp_read(std::shared_ptr<kis_external_interface> ref);
 
 
     // Eventbus proxy code
-
     std::shared_ptr<event_bus> eventbus;
     std::map<std::string, unsigned long> eventbus_callback_map;
 
@@ -184,14 +216,190 @@ protected:
             std::string in_method, std::map<std::string, std::string> in_postdata);
     unsigned int send_http_auth(std::string in_session);
 
-    // Valid URIs, mapped by method (GET, POST, etc); these are matched in
-    // httpd_verify_path and then passed on; if a URI is present here, it's mapped
-    // to true
-    std::map<std::string, std::vector<struct kis_external_http_uri *> > http_proxy_uri_map;
-
     // HTTP session identities for multi-packet responses
     uint32_t http_session_id;
     std::map<uint32_t, std::shared_ptr<kis_external_http_session> > http_proxy_session_map;
+
+public:
+    static const int result_handle_packet_cancelled = -2;
+    static const int result_handle_packet_error = -1;
+    static const int result_handle_packet_needbuf = 1;
+    static const int result_handle_packet_ok = 2;
+
+    std::shared_ptr<KismetExternal::Command> cached_cmd;
+
+    // Handle a buffer containing a network frame packet
+    template<class BoostBuffer>
+    int handle_packet(BoostBuffer& buffer) {
+        const kismet_external_frame_t *frame;
+        uint32_t frame_sz, data_sz;
+        // uint32_t data_checksum;
+
+        // Consume everything in the buffer that we can
+        while (1) {
+            // See if we have enough to get a frame header
+            size_t buffamt = buffer.size();
+
+            if (buffamt < sizeof(kismet_external_frame_t)) {
+                return result_handle_packet_needbuf;
+            }
+
+            frame = boost::asio::buffer_cast<const kismet_external_frame_t *>(buffer.data());
+
+            // Check the frame signature
+            if (kis_ntoh32(frame->signature) != KIS_EXTERNAL_PROTO_SIG) {
+                _MSG_ERROR("Kismet external interface got command frame with invalid signature");
+                trigger_error("Invalid signature on command frame");
+                return result_handle_packet_error;
+            }
+
+            // Check the length
+            data_sz = kis_ntoh32(frame->data_sz);
+            frame_sz = data_sz + sizeof(kismet_external_frame);
+
+            // If we've got a bogus length, blow it up.  Anything over 8k is assumed to be insane.
+            // The old legacy protocol used the same signature (oversight) so remote tcp streams
+            // can send us bogus info
+            if (frame_sz >= 8192) {
+                _MSG_ERROR("Kismet external interface got a command frame which is too large to "
+                        "be processed ({}); either the frame is malformed or you are connecting to "
+                        "a legacy Kismet remote capture drone; make sure you have updated to modern "
+                        "Kismet on all connected systems.", frame_sz);
+                trigger_error("Command frame too large for buffer");
+                return result_handle_packet_error;
+            }
+
+            // If we don't have the whole buffer available, bail on this read
+            if (frame_sz > buffamt) {
+                return result_handle_packet_needbuf;
+            }
+
+#if 0
+            // Try disabling rx checksum since TCP should handle this, might get us a little more speed
+            // for a relatively unneeded step since we validate w/in the rest of the handler
+
+            // We have a complete payload, checksum 
+            data_checksum = adler32_checksum((const char *) frame->data, data_sz);
+
+            if (data_checksum != kis_ntoh32(frame->data_checksum)) {
+                _MSG_ERROR("Kismet external interface got a command frame with an invalid checksum; "
+                        "either the frame is malformed, a network error occurred, or an unsupported tool "
+                        "has connected to the external interface API.");
+                trigger_error("command frame has invalid checksum");
+                return result_handle_packet_error;
+            }
+#endif
+
+            // std::shared_ptr<KismetExternal::Command> cmd(new KismetExternal::Command());
+
+            // Re-use a cached command
+            if (cached_cmd == nullptr) {
+                cached_cmd = std::make_shared<KismetExternal::Command>();
+            } else {
+                cached_cmd->Clear();
+            }
+
+            auto ai = new google::protobuf::io::ArrayInputStream(frame->data, data_sz);
+
+            if (!cached_cmd->ParseFromZeroCopyStream(ai)) {
+                delete(ai);
+                _MSG_ERROR("Kismet external interface could not interpret the payload of the "
+                        "command frame; either the frame is malformed, a network error occurred, or "
+                        "an unsupported tool is connected to the external interface API");
+                trigger_error("unparsable command frame");
+                return result_handle_packet_error;
+            }
+
+            // Dispatch the received command
+            dispatch_rx_packet(cached_cmd);
+
+            delete(ai);
+
+            buffer.consume(frame_sz);
+        }
+
+        return result_handle_packet_ok;
+    }
+
+    // Handle a buffer with a single frame in it; for instance, fed by the websocket api.  The buffer is not
+    // consumed.
+    template<class ConstBufferSequence>
+    int handle_external_command(const ConstBufferSequence& data, size_t sz) {
+        const kismet_external_frame_t *frame;
+        uint32_t frame_sz, data_sz;
+        uint32_t data_checksum;
+
+        if (sz < sizeof(kismet_external_frame_t)) {
+            return result_handle_packet_needbuf;
+        }
+
+        frame = boost::asio::buffer_cast<const kismet_external_frame_t *>(data);
+
+        // Check the frame signature
+        if (kis_ntoh32(frame->signature) != KIS_EXTERNAL_PROTO_SIG) {
+            _MSG_ERROR("Kismet external interface got command frame with invalid signature");
+            trigger_error("Invalid signature on command frame");
+            return result_handle_packet_error;
+        }
+
+        // Check the length
+        data_sz = kis_ntoh32(frame->data_sz);
+        frame_sz = data_sz + sizeof(kismet_external_frame);
+
+        // If we've got a bogus length, blow it up.  Anything over 8k is assumed to be insane.
+        if ((long int) frame_sz >= 8192) {
+            _MSG_ERROR("Kismet external interface got a command frame which is too large to "
+                    "be processed ({}); either the frame is malformed or you are connecting to "
+                    "a legacy Kismet remote capture drone; make sure you have updated to modern "
+                    "Kismet on all connected systems.", frame_sz);
+            trigger_error("Command frame too large for buffer");
+            return result_handle_packet_error;
+        }
+
+        // If we don't have the whole buffer available, bail on this read
+        if (frame_sz > sz) {
+            return result_handle_packet_needbuf;
+        }
+
+        // We have a complete payload, checksum 
+        data_checksum = adler32_checksum((const char *) frame->data, data_sz);
+
+        if (data_checksum != kis_ntoh32(frame->data_checksum)) {
+            _MSG_ERROR("Kismet external interface got a command frame with an invalid checksum; "
+                    "either the frame is malformed, a network error occurred, or an unsupported tool "
+                    "has connected to the external interface API.");
+            trigger_error("command frame has invalid checksum");
+            return result_handle_packet_error;
+        }
+
+        // Process the data payload as a protobuf frame
+        // std::shared_ptr<KismetExternal::Command> cmd(new KismetExternal::Command());
+        
+        // Re-use a cached command
+        if (cached_cmd == nullptr) {
+            cached_cmd = std::make_shared<KismetExternal::Command>();
+        } else {
+            cached_cmd->Clear();
+        }
+
+        auto ai = new google::protobuf::io::ArrayInputStream(frame->data, data_sz);
+
+        if (!cached_cmd->ParseFromZeroCopyStream(ai)) {
+            delete(ai);
+            _MSG_ERROR("Kismet external interface could not interpret the payload of the "
+                    "command frame; either the frame is malformed, a network error occurred, or "
+                    "an unsupported tool is connected to the external interface API");
+            trigger_error("unparsable command frame");
+            return result_handle_packet_error;
+        }
+
+        // Dispatch the received command
+        dispatch_rx_packet(cached_cmd);
+
+        delete(ai);
+
+        return result_handle_packet_ok;
+    }
 };
 
 #endif

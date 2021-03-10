@@ -24,14 +24,17 @@
 #include <stdio.h>
 #include <stdint.h>
 
+#include <map>
 #include <memory>
 #include <string>
-#include <map>
+#include <unordered_map>
 
 #include "globalregistry.h"
 #include "kis_mutex.h"
+#include "robin_hood.h"
 #include "trackedelement.h"
-#include "kis_net_microhttpd.h"
+
+class kis_net_beast_httpd_connection;
 
 // Allocate and track named fields and give each one a custom int
 class entry_tracker : public lifetime_global, public deferred_startup {
@@ -104,12 +107,16 @@ public:
     void register_serializer(const std::string& type, std::shared_ptr<tracker_element_serializer> in_ser);
     void remove_serializer(const std::string& type);
     bool can_serialize(const std::string& type);
-    int serialize(const std::string& type, std::ostream &stream, shared_tracker_element elem,
+
+    int serialize(const std::string& type, std::ostream& stream, shared_tracker_element elem,
             std::shared_ptr<tracker_element_serializer::rename_map> name_map = nullptr);
 
+    int serialize_with_json_summary(const std::string& type, std::ostream& stream, shared_tracker_element elem,
+            const Json::Value& json_summary);
+
 protected:
-    kis_recursive_timed_mutex entry_mutex;
-    kis_recursive_timed_mutex serializer_mutex;
+    kis_mutex entry_mutex;
+    kis_mutex serializer_mutex;
 
     int next_field_num;
 
@@ -125,12 +132,11 @@ protected:
         std::unique_ptr<tracker_element> builder;
     };
 
-    std::map<std::string, std::shared_ptr<reserved_field> > field_name_map;
-    std::map<int, std::shared_ptr<reserved_field> > field_id_map;
-    std::map<std::string, std::shared_ptr<tracker_element_serializer> > serializer_map;
+    robin_hood::unordered_node_map<std::string, std::shared_ptr<reserved_field> > field_name_map;
+    robin_hood::unordered_node_map<int, std::shared_ptr<reserved_field> > field_id_map;
+    robin_hood::unordered_node_map<std::string, std::shared_ptr<tracker_element_serializer> > serializer_map;
 
-    std::shared_ptr<kis_net_httpd_simple_stream_endpoint> tracked_fields_endp;
-    int tracked_fields_endp_handler(std::ostream& stream);
+    void tracked_fields_endp_handler(std::shared_ptr<kis_net_beast_httpd_connection> con);
 };
 
 class serializer_scope {

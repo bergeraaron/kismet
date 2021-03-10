@@ -19,8 +19,25 @@
 #include "phy_80211_ssidtracker.h"
 
 #include "boost_like_hash.h"
+#include "phy_80211.h"
 #include "timetracker.h"
 #include "trackedelement_workers.h"
+#include "messagebus.h"
+
+dot11_tracked_ssid_group::dot11_tracked_ssid_group(int in_id, const std::string& in_ssid, unsigned int in_ssid_len,
+        unsigned int in_crypt_set) :
+    tracker_component(in_id) {
+        mutex.set_name("dot11_tracked_ssid_group internal");
+
+        register_fields();
+        reserve_fields(nullptr);
+
+        set_ssid(in_ssid);
+        set_ssid_len(in_ssid_len);
+        set_crypt_set(in_crypt_set);
+
+        set_ssid_hash(kis_80211_phy::ssid_hash(in_ssid, in_ssid_len));
+}
 
 void dot11_tracked_ssid_group::register_fields() {
     tracker_component::register_fields();
@@ -53,18 +70,8 @@ void dot11_tracked_ssid_group::reserve_fields(std::shared_ptr<tracker_element_ma
 
 }
 
-uint64_t dot11_tracked_ssid_group::generate_hash(const std::string& ssid, unsigned int ssid_len, uint64_t crypt_set) {
-    auto hash = xx_hash_cpp{};
-
-    boost_like::hash_combine(hash, ssid);
-    boost_like::hash_combine(hash, ssid_len);
-    boost_like::hash_combine(hash, crypt_set);
-
-    return hash.hash();
-}
-
 void dot11_tracked_ssid_group::add_advertising_device(std::shared_ptr<kis_tracked_device_base> device) {
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex);
     advertising_device_map->insert(device->get_key(), nullptr);
 
     if (device->get_first_time() < get_first_time() || get_first_time() == 0)
@@ -75,7 +82,7 @@ void dot11_tracked_ssid_group::add_advertising_device(std::shared_ptr<kis_tracke
 }
 
 void dot11_tracked_ssid_group::add_probing_device(std::shared_ptr<kis_tracked_device_base> device) {
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex);
     probing_device_map->insert(device->get_key(), nullptr);
 
     if (device->get_first_time() < get_first_time() || get_first_time() == 0)
@@ -86,7 +93,7 @@ void dot11_tracked_ssid_group::add_probing_device(std::shared_ptr<kis_tracked_de
 }
 
 void dot11_tracked_ssid_group::add_responding_device(std::shared_ptr<kis_tracked_device_base> device) {
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex);
     responding_device_map->insert(device->get_key(), nullptr);
 
     if (device->get_first_time() < get_first_time() || get_first_time() == 0)
@@ -119,12 +126,20 @@ phy_80211_ssid_tracker::phy_80211_ssid_tracker() {
 
     // Always register the endpoint so we don't get a 404, it'll just return nothing if 
     // ssid tracking is disabled since we'll never populate our SSID table
-    ssid_endp = 
-        std::make_shared<kis_net_httpd_simple_post_endpoint>("/phy/phy80211/ssids/views/ssids",
-                [this](std::ostream& stream, const std::string& uri, const Json::Value& json,
-                    kis_net_httpd_connection::variable_cache_map& variable_cache) -> unsigned int {
-                return ssid_endpoint_handler(stream, uri, json, variable_cache);
-                });
+
+    auto httpd = Globalreg::fetch_mandatory_global_as<kis_net_beast_httpd>();
+
+    httpd->register_route("/phy/phy80211/ssids/views/ssids", {"GET", "POST"}, httpd->RO_ROLE, {},
+            std::make_shared<kis_net_web_function_endpoint>(
+                [this](std::shared_ptr<kis_net_beast_httpd_connection> con) {
+                    return ssid_endpoint_handler(con);
+                }));
+
+    httpd->register_route("/phy/phy80211/ssids/by-hash/:hash/ssid", {"GET", "POST"}, httpd->RO_ROLE, {},
+            std::make_shared<kis_net_web_tracked_endpoint>(
+                [this](std::shared_ptr<kis_net_beast_httpd_connection> con) {
+                    return detail_endpoint_handler(con);
+                }));
 
 }
 
@@ -135,9 +150,9 @@ phy_80211_ssid_tracker::~phy_80211_ssid_tracker() {
 
 }
 
-unsigned int phy_80211_ssid_tracker::ssid_endpoint_handler(std::ostream& stream,
-        const std::string& uri, const Json::Value& json,
-        kis_net_httpd_connection::variable_cache_map& postvars) {
+void phy_80211_ssid_tracker::ssid_endpoint_handler(std::shared_ptr<kis_net_beast_httpd_connection> con) {
+    std::ostream stream(&con->response_stream());
+
     auto summary_vec = std::vector<SharedElementSummary>{};
     auto rename_map = std::make_shared<tracker_element_serializer::rename_map>();
 
@@ -149,7 +164,7 @@ unsigned int phy_80211_ssid_tracker::ssid_endpoint_handler(std::ostream& stream,
 
     auto order_field = std::vector<int>{};
 
-    auto regex = json["regex"];
+    auto regex = con->json()["regex"];
 
     std::shared_ptr<tracker_element_string_map> wrapper_elem;
 
@@ -168,7 +183,7 @@ unsigned int phy_80211_ssid_tracker::ssid_endpoint_handler(std::ostream& stream,
     try {
         // If the structured component has a 'fields' record, derive the fields simplification; we need this to
         // compute the search path so we have to implement our own copy of the code
-        auto fields = json.get("fields", Json::Value(Json::arrayValue));
+        auto fields = con->json().get("fields", Json::Value(Json::arrayValue));
 
         for (const auto& i : fields) {
             if (i.isString()) {
@@ -184,14 +199,14 @@ unsigned int phy_80211_ssid_tracker::ssid_endpoint_handler(std::ostream& stream,
         }
 
         // Capture timestamp and negative-offset timestamp
-        auto raw_ts = json.get("last_time", 0).asInt64();
+        auto raw_ts = con->json().get("last_time", 0).asInt64();
         if (raw_ts < 0)
             timestamp_min = time(0) + raw_ts;
         else
             timestamp_min = raw_ts;
     } catch (const std::runtime_error& e) {
+        con->set_status(400);
         stream << "Invalid request: " << e.what() << "\n";
-        return 400;
     }
 
     // Input fields from variables
@@ -202,82 +217,78 @@ unsigned int phy_80211_ssid_tracker::ssid_endpoint_handler(std::ostream& stream,
     unsigned int in_order_direction = 0;
 
     // Parse datatables sub-data for windowing, etc
-    try {
-        // Extract the column number -> column fieldpath data
-        auto column_number_map = json["colmap"];
+    // Extract the column number -> column fieldpath data
+    auto column_number_map = con->json()["colmap"];
 
-        if (json.get("datatable", false).asBool()) {
-            // Extract from the raw postvars 
-            if (postvars.find("start") != postvars.end())
-                *(postvars["start"]) >> in_window_start;
+    if (con->json().get("datatable", false).asBool()) {
+        // Extract from the raw postvars 
+        if (con->http_variables().find("start") != con->http_variables().end())
+            in_window_start = string_to_n<unsigned int>(con->http_variables()["start"]);
 
-            if (postvars.find("length") != postvars.end())
-                *(postvars["length"]) >> in_window_len;
+        if (con->http_variables().find("length") != con->http_variables().end())
+            in_window_len = string_to_n<unsigned int>(con->http_variables()["length"]);
 
-            if (postvars.find("draw") != postvars.end())
-                *(postvars["draw"]) >> in_dt_draw;
+        if (con->http_variables().find("draw") != con->http_variables().end())
+            in_dt_draw = string_to_n<unsigned int>(con->http_variables()["draw"]);
 
-            if (postvars.find("search[value]") != postvars.end())
-                *(postvars["search[value]"]) >> search_term;
+        if (con->http_variables().find("search[value]") != con->http_variables().end())
+            search_term = con->http_variables()["search[value]"];
 
-            // Search every field we return
-            if (search_term.length() != 0) 
-                for (const auto& svi : summary_vec)
-                    search_paths.push_back(svi->resolved_path);
+        // Search every field we return
+        if (search_term.length() != 0) 
+            for (const auto& svi : summary_vec)
+                search_paths.push_back(svi->resolved_path);
 
-            // We only allow ordering by a single column, we don't do sub-ordering;
-            // look for that single column
-            if (postvars.find("order[0][column]") != postvars.end())
-                *(postvars["order[0][column]"]) >> in_order_column_num;
+        // We only allow ordering by a single column, we don't do sub-ordering;
+        // look for that single column
+        if (con->http_variables().find("order[0][column]") != con->http_variables().end())
+            in_order_column_num = con->http_variables()["order[0][column]"];
 
-            auto column_index = column_number_map[in_order_column_num];
-            if (!column_index.isNull() && postvars.find("order[0][dir]") != postvars.end()) {
-                auto order = postvars.find("order[0][dir]")->second->str();
+        auto column_index = column_number_map[in_order_column_num];
+        if (!column_index.isNull() && 
+                con->http_variables().find("order[0][dir]") != con->http_variables().end()) {
+            auto order = con->http_variables()["order[0][dir]"];
 
-                if (order == "asc")
-                    in_order_direction = 1;
-                else
-                    in_order_direction = 0;
+            if (order == "asc")
+                in_order_direction = 1;
+            else
+                in_order_direction = 0;
 
-                // Resolve the path, we only allow the first one
-                if (column_index.isArray() && column_index.size() > 0) {
-                    if (column_index[0].isArray()) {
-                        // We only allow the first field, but make sure we're not a nested array
-                        if (column_index[0].size() > 0) {
-                            order_field = tracker_element_summary(column_index[0][0].asString()).resolved_path;
-                        }
-                    } else {
-                        // Otherwise get the first array
-                        if (column_index.size() >= 1) {
-                            order_field = tracker_element_summary(column_index[0].asString()).resolved_path;
-                        }
+            // Resolve the path, we only allow the first one
+            if (column_index.isArray() && column_index.size() > 0) {
+                if (column_index[0].isArray()) {
+                    // We only allow the first field, but make sure we're not a nested array
+                    if (column_index[0].size() > 0) {
+                        order_field = tracker_element_summary(column_index[0][0].asString()).resolved_path;
+                    }
+                } else {
+                    // Otherwise get the first array
+                    if (column_index.size() >= 1) {
+                        order_field = tracker_element_summary(column_index[0].asString()).resolved_path;
                     }
                 }
             }
-
-            if (in_window_len > 500) 
-                in_window_len = 500;
-
-            // Set the window elements for datatables
-            length_elem->set(in_window_len);
-            start_elem->set(in_window_start);
-            dt_draw_elem->set(in_dt_draw);
-
-            // Set up the datatables wrapper
-            wrapper_elem = std::make_shared<tracker_element_string_map>();
-            transmit = wrapper_elem;
-
-            wrapper_elem->insert("draw", dt_draw_elem);
-            wrapper_elem->insert("data", output_ssids_elem);
-            wrapper_elem->insert("recordsTotal", total_sz_elem);
-            wrapper_elem->insert("recordsFiltered", filtered_sz_elem);
-
-            // We transmit the wrapper elem
-            transmit = wrapper_elem;
         }
-    } catch (const std::exception& e) {
-        stream << "Invalid request: " << e.what() << "\n";
-        return 400;
+
+        if (in_window_len > 500) 
+            in_window_len = 500;
+
+        // Set the window elements for datatables
+        length_elem->set(in_window_len);
+        start_elem->set(in_window_start);
+        dt_draw_elem->set(in_dt_draw);
+
+        // Set up the datatables wrapper
+        wrapper_elem = std::make_shared<tracker_element_string_map>();
+        transmit = wrapper_elem;
+
+        wrapper_elem->insert("draw", dt_draw_elem);
+        wrapper_elem->insert("data", output_ssids_elem);
+        wrapper_elem->insert("recordsTotal", total_sz_elem);
+        wrapper_elem->insert("recordsFiltered", filtered_sz_elem);
+
+        // We transmit the wrapper elem
+        transmit = wrapper_elem;
     }
 
     // Next vector we do work on
@@ -287,7 +298,7 @@ unsigned int phy_80211_ssid_tracker::ssid_endpoint_handler(std::ostream& stream,
     // which is protected from the main vector being grown/shrank.  While we're in there, log the total
     // size of the original vector for windowed ops.
     {
-        local_shared_locker l(&mutex);
+        kis_lock_guard<kis_mutex> lk(mutex);
 
         next_work_vec->set(ssid_vector->begin(), ssid_vector->end());
         total_sz_elem->set(next_work_vec->size());
@@ -319,8 +330,8 @@ unsigned int phy_80211_ssid_tracker::ssid_endpoint_handler(std::ostream& stream,
                 tracker_element_regex_worker(regex);
             next_work_vec = worker.do_work(next_work_vec);
         } catch (const std::exception& e) {
+            con->set_status(400);
             stream << "Invalid regex: " << e.what() << "\n";
-            return 400;
         }
     }
 
@@ -370,7 +381,7 @@ unsigned int phy_80211_ssid_tracker::ssid_endpoint_handler(std::ostream& stream,
 
     // Summarize into the output element
     for (auto i = si; i != ei; ++i) {
-        output_ssids_elem->push_back(summarize_single_tracker_element(*i, summary_vec, rename_map));
+        output_ssids_elem->push_back(summarize_tracker_element(*i, summary_vec, rename_map));
     }
 
     // If the transmit wasn't assigned to a wrapper...
@@ -378,11 +389,22 @@ unsigned int phy_80211_ssid_tracker::ssid_endpoint_handler(std::ostream& stream,
         transmit = output_ssids_elem;
 
     // serialize
-    Globalreg::globalreg->entrytracker->serialize(kishttpd::get_suffix(uri), stream, transmit, rename_map);
-
-    // And done
-    return 200;
+    Globalreg::globalreg->entrytracker->serialize(static_cast<std::string>(con->uri()), stream, 
+            transmit, rename_map);
 }
+
+std::shared_ptr<tracker_element> phy_80211_ssid_tracker::detail_endpoint_handler(std::shared_ptr<kis_net_beast_httpd_connection> con) {
+    kis_lock_guard<kis_mutex> lk(mutex, "phy_80211_ssid_tracker detail_endpoint_handler");
+
+    auto h = string_to_n<size_t>(con->uri_params()[":hash"]);
+    auto k = ssid_map.find(h);
+
+    if (k == ssid_map.end())
+        throw std::runtime_error("unknown ssid");
+
+    return k->second;
+}
+
 
 void phy_80211_ssid_tracker::handle_broadcast_ssid(const std::string& ssid, unsigned int ssid_len, 
         uint64_t crypt_set, std::shared_ptr<kis_tracked_device_base> device) {
@@ -393,9 +415,9 @@ void phy_80211_ssid_tracker::handle_broadcast_ssid(const std::string& ssid, unsi
     if (ssid_len == 0)
         return;
 
-    auto key = dot11_tracked_ssid_group::generate_hash(ssid, ssid_len, crypt_set);
+    auto key = kis_80211_phy::ssid_hash(ssid, ssid_len);
 
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex);
 
     auto mapdev = ssid_map.find(key);
 
@@ -419,9 +441,9 @@ void phy_80211_ssid_tracker::handle_response_ssid(const std::string& ssid, unsig
     if (ssid_len == 0)
         return;
 
-    auto key = dot11_tracked_ssid_group::generate_hash(ssid, ssid_len, crypt_set);
+    auto key = kis_80211_phy::ssid_hash(ssid, ssid_len);
 
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex);
 
     auto mapdev = ssid_map.find(key);
 
@@ -446,9 +468,9 @@ void phy_80211_ssid_tracker::handle_probe_ssid(const std::string& ssid, unsigned
     if (ssid_len == 0)
         return;
 
-    auto key = dot11_tracked_ssid_group::generate_hash(ssid, ssid_len, crypt_set);
+    auto key = kis_80211_phy::ssid_hash(ssid, ssid_len);
 
-    local_locker l(&mutex);
+    kis_lock_guard<kis_mutex> lk(mutex);
 
     auto mapdev = ssid_map.find(key);
 

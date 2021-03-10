@@ -25,8 +25,6 @@
 
 #include "globalregistry.h"
 #include "kis_mutex.h"
-#include "ipc_remote2.h"
-#include "buffer_handler.h"
 #include "uuid.h"
 #include "gpstracker.h"
 #include "packet.h"
@@ -34,6 +32,7 @@
 #include "packetchain.h"
 #include "entrytracker.h"
 #include "kis_external.h"
+#include "timetracker.h"
 
 #include "protobuf_cpp/kismet.pb.h"
 #include "protobuf_cpp/datasource.pb.h"
@@ -51,6 +50,17 @@ class kis_datasource_cap_keyed_object;
 
 class datasource_tracker;
 class kis_datasource;
+
+class kis_packreport_packinfo : public packet_component {
+public:
+    kis_packreport_packinfo(std::shared_ptr<KismetDatasource::DataReport> r) :
+        report{r} {
+            self_destruct = 1;
+        }
+
+protected:
+    std::shared_ptr<KismetDatasource::DataReport> report;
+};
 
 class kis_datasource_builder : public tracker_component {
 public:
@@ -79,15 +89,11 @@ public:
         return adler32_checksum("kis_datasource_builder");
     }
 
+    // We don't support initializing fields by inheritance since we always get built with
+    // a builder attached
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
         auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
         return std::move(dup);
     }
 
@@ -102,8 +108,7 @@ public:
     // Typical implementation:
     // return shared_datasource(new SomeKismetDatasource(globalreg, in_shared_builder));
     virtual std::shared_ptr<kis_datasource> 
-        build_datasource(std::shared_ptr<kis_datasource_builder> in_shared_builder,
-                std::shared_ptr<kis_recursive_timed_mutex> mutex) { return nullptr; };
+        build_datasource(std::shared_ptr<kis_datasource_builder> in_shared_builder) { return nullptr; };
 
     __Proxy(source_type, std::string, std::string, std::string, source_type);
     __Proxy(source_description, std::string, std::string, std::string, source_description);
@@ -125,8 +130,6 @@ public:
 protected:
     virtual void register_fields() override {
         tracker_component::register_fields();
-
-        set_local_name("kismet.datasource.type_driver");
 
         register_field("kismet.datasource.driver.type", "Type", &source_type);
         register_field("kismet.datasource.driver.description", "Description", &source_description);
@@ -162,6 +165,14 @@ protected:
                 "Datasource can channel hop", &hop_capable);
     }
 
+    virtual void reserve_fields(std::shared_ptr<tracker_element_map> e) override {
+        tracker_component::reserve_fields(e);
+
+        tracked_id = Globalreg::globalreg->entrytracker->register_field("kismet.datasource.type_driver",
+                tracker_element_factory<tracker_element_map>(),
+                "datasource driver handler");
+    }
+
     int datasource_entity_id;
 
     std::shared_ptr<tracker_element_string> source_type;
@@ -181,13 +192,13 @@ protected:
 
 class kis_datasource : public tracker_component, public kis_external_interface {
 public:
-    // Initialize and tell us what sort of builder and mutex; if nullptr, external
-    // will allocate its own mutex
-    kis_datasource(shared_datasource_builder in_builder, std::shared_ptr<kis_recursive_timed_mutex> mutex);
+    kis_datasource(shared_datasource_builder in_builder);
 
     kis_datasource() :
         tracker_component(0),
         kis_external_interface() {
+        error_timer_id = -1;
+        ping_timer_id = -1;
         register_fields();
         reserve_fields(NULL);
     }
@@ -195,6 +206,8 @@ public:
     kis_datasource(int in_id) :
         tracker_component(in_id),
         kis_external_interface() {
+        error_timer_id = -1;
+        ping_timer_id = -1;
         register_fields();
         reserve_fields(NULL);
     }
@@ -202,6 +215,8 @@ public:
     kis_datasource(int in_id, std::shared_ptr<tracker_element_map> e) :
         tracker_component(in_id),
         kis_external_interface() {
+        error_timer_id = -1;
+        ping_timer_id = -1;
         register_fields();
         reserve_fields(e);
     }
@@ -230,7 +245,8 @@ public:
     
     // 'List' callback - called with caller-supplied transaction id and contents,
     // if any, of the interface list command
-    typedef std::function<void (unsigned int, std::vector<shared_interface>)> list_callback_t;
+    typedef std::function<void (std::shared_ptr<kis_datasource> src,
+            unsigned int, std::vector<shared_interface>)> list_callback_t;
 
     // List all interfaces this source can support
     virtual void list_interfaces(unsigned int in_transaction, list_callback_t in_cb);
@@ -283,12 +299,10 @@ public:
             unsigned int in_transaction, configure_callback_t in_cb);
 
 
-    // Connect an interface to a pre-existing buffer (such as from a TCP server
-    // connection); This doesn't require async because we're just binding the
-    // interface; anything we do with the buffer is itself async in the
-    // future however
-    virtual void connect_remote(std::shared_ptr<buffer_handler_generic> in_ringbuf,
-            std::string in_definition, open_callback_t in_cb);
+    // Instantiate from an incoming remote; caller must then assign tcpsocket or callbacks and trigger
+    // a datasource open
+    virtual void connect_remote(std::string in_definition, kis_datasource* in_remote, 
+            bool in_tcp, configure_callback_t in_cb);
 
 
     // close the source
@@ -307,6 +321,14 @@ public:
     virtual void disable_source();
 
 
+    // Pauses a source
+    // Paused sources remain open, but discard any packts
+    virtual void pause_source();
+
+    // Resumes a source
+    virtual void resume_source();
+
+
     // Get an option from the definition
     virtual std::string get_definition_opt(std::string in_opt);
     virtual bool get_definition_opt_bool(std::string in_opt, bool in_default);
@@ -315,79 +337,82 @@ public:
 
     // Kismet-only variables can be set realtime, they have no capture-binary
     // equivalents and are only used for tracking purposes in the Kismet server
-    __ProxyMS(source_name, std::string, std::string, std::string, source_name, ext_mutex);
-    __ProxyMS(source_uuid, uuid, uuid, uuid, source_uuid, ext_mutex);
+    __ProxyM(source_name, std::string, std::string, std::string, source_name, ext_mutex);
+    __ProxyM(source_uuid, uuid, uuid, uuid, source_uuid, ext_mutex);
 
     // Source key is a checksum of the uuid for us to do fast indexing
-    __ProxyMS(source_key, uint32_t, uint32_t, uint32_t, source_key, ext_mutex);
+    __ProxyM(source_key, uint32_t, uint32_t, uint32_t, source_key, ext_mutex);
 
     // Prototype/driver definition
-    __ProxyTrackableMS(source_builder, kis_datasource_builder, source_builder, ext_mutex);
+    __ProxyTrackable(source_builder, kis_datasource_builder, source_builder);
 
     // Read-only access to the source state; this mirrors the state in the capture
     // binary. Set commands queue a command to the binary and then update as
     // they complete.
-    __ProxyGetMS(source_definition, std::string, std::string, source_definition, ext_mutex);
-    __ProxyGetMS(source_interface, std::string, std::string, source_interface, ext_mutex);
-    __ProxyGetMS(source_cap_interface, std::string, std::string, source_cap_interface, ext_mutex);
-    __ProxyGetMS(source_hardware, std::string, std::string, source_hardware, ext_mutex);
+    __ProxyGetM(source_definition, std::string, std::string, source_definition, ext_mutex);
+    __ProxyGetM(source_interface, std::string, std::string, source_interface, ext_mutex);
+    __ProxyGetM(source_cap_interface, std::string, std::string, source_cap_interface, ext_mutex);
+    __ProxyGetM(source_hardware, std::string, std::string, source_hardware, ext_mutex);
 
-    __ProxyGetMS(source_dlt, uint32_t, uint32_t, source_dlt, ext_mutex);
+    __ProxyGetM(source_dlt, uint32_t, uint32_t, source_dlt, ext_mutex);
 
-    __ProxyTrackableMS(source_channels_vec, tracker_element_vector, source_channels_vec, ext_mutex);
+    __ProxyTrackableM(source_channels_vec, tracker_element_vector, source_channels_vec, ext_mutex);
 
     // Any alert state passed from the driver we want to be able to consistently
     // report to the user
-    __ProxyGetMS(source_warning, std::string, std::string, source_warning, ext_mutex);
+    __ProxyGetM(source_warning, std::string, std::string, source_warning, ext_mutex);
 
-    __ProxyGetMS(source_hopping, uint8_t, bool, source_hopping, ext_mutex);
-    __ProxyGetMS(source_channel, std::string, std::string, source_channel, ext_mutex);
-    __ProxyGetMS(source_hop_rate, double, double, source_hop_rate, ext_mutex);
-    __ProxyGetMS(source_split_hop, uint8_t, bool, source_hop_split, ext_mutex);
-    __ProxyGetMS(source_hop_offset, uint32_t, uint32_t, source_hop_offset, ext_mutex);
-    __ProxyGetMS(source_hop_shuffle, uint8_t, bool, source_hop_shuffle, ext_mutex);
-    __ProxyGetMS(source_hop_shuffle_skip, uint32_t, uint32_t, source_hop_shuffle_skip, ext_mutex);
-    __ProxyTrackableMS(source_hop_vec, tracker_element_vector, source_hop_vec, ext_mutex);
+    __ProxyGetM(source_hopping, uint8_t, bool, source_hopping, ext_mutex);
+    __ProxyGetM(source_channel, std::string, std::string, source_channel, ext_mutex);
+    __ProxyGetM(source_hop_rate, double, double, source_hop_rate, ext_mutex);
+    __ProxyGetM(source_split_hop, uint8_t, bool, source_hop_split, ext_mutex);
+    __ProxyGetM(source_hop_offset, uint32_t, uint32_t, source_hop_offset, ext_mutex);
+    __ProxyGetM(source_hop_shuffle, uint8_t, bool, source_hop_shuffle, ext_mutex);
+    __ProxyGetM(source_hop_shuffle_skip, uint32_t, uint32_t, source_hop_shuffle_skip, ext_mutex);
+    __ProxyTrackableM(source_hop_vec, tracker_element_vector, source_hop_vec, ext_mutex);
 
-    __ProxyGetMS(source_running, uint8_t, bool, source_running, ext_mutex);
+    __ProxyGetM(source_running, uint8_t, bool, source_running, ext_mutex);
 
-    __ProxyGetMS(source_remote, uint8_t, bool, source_remote, ext_mutex);
-    __ProxyGetMS(source_passive, uint8_t, bool, source_passive, ext_mutex);
+    __ProxyGetM(source_remote, uint8_t, bool, source_remote, ext_mutex);
+    __ProxyGetM(source_passive, uint8_t, bool, source_passive, ext_mutex);
 
-    __ProxyMS(source_num_packets, uint64_t, uint64_t, uint64_t, source_num_packets, ext_mutex);
-    __ProxyIncDecMS(source_num_packets, uint64_t, uint64_t, source_num_packets, ext_mutex);
+    __ProxyM(source_num_packets, uint64_t, uint64_t, uint64_t, source_num_packets, ext_mutex);
+    __ProxyIncDecM(source_num_packets, uint64_t, uint64_t, source_num_packets, ext_mutex);
 
-    __ProxyMS(source_num_error_packets, uint64_t, uint64_t, uint64_t, source_num_error_packets, ext_mutex);
-    __ProxyIncDecMS(Msource_num_error_packets, uint64_t, uint64_t, source_num_error_packets, ext_mutex);
+    __ProxyM(source_num_error_packets, uint64_t, uint64_t, uint64_t, source_num_error_packets, ext_mutex);
+    __ProxyIncDecM(Msource_num_error_packets, uint64_t, uint64_t, source_num_error_packets, ext_mutex);
 
-    __ProxyDynamicTrackableMS(source_packet_rrd, kis_tracked_minute_rrd<>, 
+    __ProxyDynamicTrackableM(source_packet_rrd, kis_tracked_rrd<>, 
             packet_rate_rrd, packet_rate_rrd_id, ext_mutex);
 
+    __ProxyDynamicTrackableM(source_packet_size_rrd, kis_tracked_rrd<>, 
+            packet_size_rrd, packet_size_rrd_id, ext_mutex);
+
     // IPC binary name, if any
-    __ProxyGetMS(source_ipc_binary, std::string, std::string, source_ipc_binary, ext_mutex);
+    __ProxyGetM(source_ipc_binary, std::string, std::string, source_ipc_binary, ext_mutex);
     // IPC channel pid, if any
-    __ProxyGetMS(source_ipc_pid, int64_t, pid_t, source_ipc_pid, ext_mutex);
+    __ProxyGetM(source_ipc_pid, int64_t, pid_t, source_ipc_pid, ext_mutex);
 
     // Retry API - do we try to re-open when there's a problem?
-    __ProxyGetMS(source_error, uint8_t, bool, source_error, ext_mutex);
-    __ProxyMS(source_retry, uint8_t, bool, bool, source_retry, ext_mutex);
-    __ProxyGetMS(source_retry_attempts, uint32_t, uint32_t, source_retry_attempts, ext_mutex);
+    __ProxyGetM(source_error, uint8_t, bool, source_error, ext_mutex);
+    __ProxyM(source_retry, uint8_t, bool, bool, source_retry, ext_mutex);
+    __ProxyGetM(source_retry_attempts, uint32_t, uint32_t, source_retry_attempts, ext_mutex);
 
     __Proxy(source_number, uint64_t, uint64_t, uint64_t, source_number);
 
-    __ProxyMS(source_paused, uint8_t, bool, bool, source_paused, ext_mutex);
+    __ProxyM(source_paused, uint8_t, bool, bool, source_paused, ext_mutex);
 
 
     // Random metadata
-    __ProxyMS(source_info_antenna_type, std::string, std::string, std::string, source_info_antenna_type, ext_mutex);
-    __ProxyMS(source_info_antenna_gain, double, double, double, source_info_antenna_gain, ext_mutex);
-    __ProxyMS(source_info_antenna_orientation, double, double, double, source_info_antenna_orientation, ext_mutex);
-    __ProxyMS(source_info_antenna_beamwidth, double, double, double, source_info_antenna_beamwidth, ext_mutex);
-    __ProxyMS(source_info_amp_type, std::string, std::string, std::string, source_info_amp_type, ext_mutex);
-    __ProxyMS(source_info_amp_gain, double, double, double, source_info_amp_gain, ext_mutex);
+    __ProxyM(source_info_antenna_type, std::string, std::string, std::string, source_info_antenna_type, ext_mutex);
+    __ProxyM(source_info_antenna_gain, double, double, double, source_info_antenna_gain, ext_mutex);
+    __ProxyM(source_info_antenna_orientation, double, double, double, source_info_antenna_orientation, ext_mutex);
+    __ProxyM(source_info_antenna_beamwidth, double, double, double, source_info_antenna_beamwidth, ext_mutex);
+    __ProxyM(source_info_amp_type, std::string, std::string, std::string, source_info_amp_type, ext_mutex);
+    __ProxyM(source_info_amp_gain, double, double, double, source_info_amp_gain, ext_mutex);
 
     // Overridden linktype
-    __ProxyPrivSplitMS(source_override_linktype, unsigned int, unsigned int, uint32_t, 
+    __ProxyPrivSplitM(source_override_linktype, unsigned int, unsigned int, uint32_t, 
             source_override_linktype, ext_mutex);
 
     
@@ -402,34 +427,30 @@ public:
     // method recognized by the device categorization stage
     virtual void checksum_packet(kis_packet *in_pack __attribute__((unused))) { return; }
 
-    // IPC error
-    virtual void buffer_error(std::string in_error) override;
-
     virtual void pre_serialize() override {
-        local_eol_shared_locker l(ext_mutex);
+        kis_lock_guard<kis_mutex> lk(ext_mutex, kismet::retain_lock, "datasource preserialize");
     }
 
     virtual void post_serialize() override {
-        local_shared_unlocker ul(ext_mutex);
+        kis_lock_guard<kis_mutex> lk(ext_mutex, std::adopt_lock);
     }
 
-    static std::string event_datasource_error() {
-        return "DATASOURCE_ERROR";
-    }
+    static std::string event_datasource_error() { return "DATASOURCE_ERROR"; }
+    static std::string event_datasource_opened() { return "DATASOURCE_OPENED"; }
+    static std::string event_datasource_closed() { return "DATASOURCE_CLOSED"; }
+    static std::string event_datasource_paused() { return "DATASOURCE_PAUSED"; }
+    static std::string event_datasource_resumed() { return "DATASOURCE_RESUMED"; }
 
-    static std::string event_datasource_opened() {
-        return "DATASOURCE_OPENED";
-    }
-
-    static std::string event_datasource_closed() {
-        return "DATASOURCE_CLOSED";
-    }
-
+    // Handle injecting packets into the packet chain after the data report has been received
+    // and processed.  Subclasses can override this to manipulate packet content.
+    virtual void handle_rx_packet(kis_packet *packet);
 
 protected:
     // Source error; sets error state, fails all pending function callbacks,
     // shuts down the buffer and ipc, and initiates retry if we retry errors
-    virtual void trigger_error(std::string in_reason) override;
+    virtual void handle_error(const std::string& in_reason) override;
+
+    virtual void close_external() override;
 
 
     // Common interface parsing to set our name/uuid/interface and interface
@@ -460,7 +481,7 @@ protected:
 
             // Generate a timeout for 5 seconds from now
             auto src_alias = in_src;
-            timer_id = timetracker->register_timer(SERVER_TIMESLICES_SEC * 15,
+            timer_id = timetracker->register_timer(SERVER_TIMESLICES_SEC * 30,
                     NULL, 0, [src_alias, this](int) -> int {
                     src_alias->cancel_command(command_seq, "Command did not complete");
                     return 0;
@@ -490,6 +511,7 @@ protected:
     };
 
     // Tracked commands we need to ack
+    std::atomic<unsigned int> next_transaction;
     std::map<uint32_t, std::shared_ptr<kis_datasource::tracked_command> > command_ack_map;
 
     // Get a command
@@ -515,10 +537,6 @@ protected:
     virtual void handle_packet_opensource_report(uint32_t in_seqno, const std::string& in_packet);
     virtual void handle_packet_probesource_report(uint32_t in_seqno, const std::string& in_packet);
     virtual void handle_packet_warning_report(uint32_t in_seqno, const std::string& in_packet);
-
-    // Handle injecting packets into the packet chain after the data report has been received
-    // and processed.  Subclasses can override this to manipulate packet content.
-    virtual void handle_rx_packet(kis_packet *packet);
 
     virtual unsigned int send_configure_channel(std::string in_channel, unsigned int in_transaction,
             configure_callback_t in_cb);
@@ -556,23 +574,23 @@ protected:
     // given to us by the capture binary itself.  We use the ProxySet macros with
     // a modified function name so that we can easily set our tracker components
     // from the KV handlers
-    __ProxySetMS(int_source_definition, std::string, std::string, source_definition, ext_mutex);
-    __ProxySetMS(int_source_interface, std::string, std::string, source_interface, ext_mutex);
-    __ProxySetMS(int_source_cap_interface, std::string, std::string, source_cap_interface, ext_mutex);
-    __ProxySetMS(int_source_hardware, std::string, std::string, source_hardware, ext_mutex);
-    __ProxySetMS(int_source_dlt, uint32_t, uint32_t, source_dlt, ext_mutex);
-    __ProxyTrackableMS(int_source_channels_vec, tracker_element_vector, source_channels_vec, ext_mutex);
+    __ProxySetM(int_source_definition, std::string, std::string, source_definition, ext_mutex);
+    __ProxySetM(int_source_interface, std::string, std::string, source_interface, ext_mutex);
+    __ProxySetM(int_source_cap_interface, std::string, std::string, source_cap_interface, ext_mutex);
+    __ProxySetM(int_source_hardware, std::string, std::string, source_hardware, ext_mutex);
+    __ProxySetM(int_source_dlt, uint32_t, uint32_t, source_dlt, ext_mutex);
+    __ProxyTrackableM(int_source_channels_vec, tracker_element_vector, source_channels_vec, ext_mutex);
 
-    __ProxySetMS(int_source_warning, std::string, std::string, source_warning, ext_mutex);
+    __ProxySetM(int_source_warning, std::string, std::string, source_warning, ext_mutex);
 
-    __ProxySetMS(int_source_hopping, uint8_t, bool, source_hopping, ext_mutex);
-    __ProxySetMS(int_source_channel, std::string, std::string, source_channel, ext_mutex);
-    __ProxySetMS(int_source_hop_rate, double, double, source_hop_rate, ext_mutex);
-    __ProxySetMS(int_source_hop_split, uint8_t, bool, source_hop_split, ext_mutex);
-    __ProxySetMS(int_source_hop_shuffle, uint8_t, bool, source_hop_shuffle, ext_mutex);
-    __ProxySetMS(int_source_hop_shuffle_skip, uint32_t, uint32_t, source_hop_shuffle_skip, ext_mutex);
-    __ProxySetMS(int_source_hop_offset, uint32_t, uint32_t, source_hop_offset, ext_mutex);
-    __ProxyTrackableMS(int_source_hop_vec, tracker_element_vector, source_hop_vec, ext_mutex);
+    __ProxySetM(int_source_hopping, uint8_t, bool, source_hopping, ext_mutex);
+    __ProxySetM(int_source_channel, std::string, std::string, source_channel, ext_mutex);
+    __ProxySetM(int_source_hop_rate, double, double, source_hop_rate, ext_mutex);
+    __ProxySetM(int_source_hop_split, uint8_t, bool, source_hop_split, ext_mutex);
+    __ProxySetM(int_source_hop_shuffle, uint8_t, bool, source_hop_shuffle, ext_mutex);
+    __ProxySetM(int_source_hop_shuffle_skip, uint32_t, uint32_t, source_hop_shuffle_skip, ext_mutex);
+    __ProxySetM(int_source_hop_offset, uint32_t, uint32_t, source_hop_offset, ext_mutex);
+    __ProxyTrackableM(int_source_hop_vec, tracker_element_vector, source_hop_vec, ext_mutex);
 
     // Prototype object which created us, defines our overall capabilities
     std::shared_ptr<kis_datasource_builder> source_builder;
@@ -626,7 +644,10 @@ protected:
     std::shared_ptr<tracker_element_uint64> source_num_error_packets;
 
     int packet_rate_rrd_id;
-    std::shared_ptr<kis_tracked_minute_rrd<>> packet_rate_rrd;
+    std::shared_ptr<kis_tracked_rrd<>> packet_rate_rrd;
+
+    int packet_size_rrd_id;
+    std::shared_ptr<kis_tracked_rrd<>> packet_size_rrd;
 
 
     // Local ID number is an increasing number assigned to each 
@@ -642,32 +663,29 @@ protected:
     // Try to re-open sources in error automatically
     
     // Are we in error state?
-    __ProxySetMS(int_source_error, uint8_t, bool, source_error, ext_mutex);
+    __ProxySetM(int_source_error, uint8_t, bool, source_error, ext_mutex);
     std::shared_ptr<tracker_element_uint8> source_error;
 
     // Why are we in error state?
-    __ProxySetMS(int_source_error_reason, std::string, std::string, source_error_reason, ext_mutex);
+    __ProxySetM(int_source_error_reason, std::string, std::string, source_error_reason, ext_mutex);
     std::shared_ptr<tracker_element_string> source_error_reason;
 
     // Do we want to try to re-open automatically?
-    __ProxySetMS(int_source_retry, uint8_t, bool, source_retry, ext_mutex);
+    __ProxySetM(int_source_retry, uint8_t, bool, source_retry, ext_mutex);
     std::shared_ptr<tracker_element_uint8> source_retry;
 
     // How many consecutive errors have we had?
-    __ProxySetMS(int_source_retry_attempts, uint32_t, uint32_t, source_retry_attempts, ext_mutex);
-    __ProxyIncDecMS(int_source_retry_attempts, uint32_t, uint32_t, source_retry_attempts, ext_mutex);
+    __ProxySetM(int_source_retry_attempts, uint32_t, uint32_t, source_retry_attempts, ext_mutex);
+    __ProxyIncDecM(int_source_retry_attempts, uint32_t, uint32_t, source_retry_attempts, ext_mutex);
     std::shared_ptr<tracker_element_uint32> source_retry_attempts;
 
     // How many total errors?
-    __ProxySetMS(int_source_total_retry_attempts, uint32_t, uint32_t, source_total_retry_attempts, ext_mutex);
-    __ProxyIncDecMS(int_source_total_retry_attempts, uint32_t, uint32_t, source_total_retry_attempts, ext_mutex);
+    __ProxySetM(int_source_total_retry_attempts, uint32_t, uint32_t, source_total_retry_attempts, ext_mutex);
+    __ProxyIncDecM(int_source_total_retry_attempts, uint32_t, uint32_t, source_total_retry_attempts, ext_mutex);
     std::shared_ptr<tracker_element_uint32> source_total_retry_attempts;
 
     // Timer ID for trying to recover from an error
     int error_timer_id;
-
-    // Timer ID for sending a PING
-    int ping_timer_id;
 
     // Function that gets called when we encounter an error; allows for scheduling
     // bringup, etc
@@ -689,19 +707,19 @@ protected:
     // Do we clobber the remote timestamp?
     bool clobber_timestamp;
 
-    __ProxySetMS(int_source_remote, uint8_t, bool, source_remote, ext_mutex);
+    __ProxySetM(int_source_remote, uint8_t, bool, source_remote, ext_mutex);
     std::shared_ptr<tracker_element_uint8> source_remote;
 
-    __ProxySetMS(int_source_passive, uint8_t, bool, source_passive, ext_mutex);
+    __ProxySetM(int_source_passive, uint8_t, bool, source_passive, ext_mutex);
     std::shared_ptr<tracker_element_uint8> source_passive;
 
-    __ProxySetMS(int_source_running, uint8_t, bool, source_running, ext_mutex);
+    __ProxySetM(int_source_running, uint8_t, bool, source_running, ext_mutex);
     std::shared_ptr<tracker_element_uint8> source_running;
 
-    __ProxySetMS(int_source_ipc_binary, std::string, std::string, source_ipc_binary, ext_mutex);
+    __ProxySetM(int_source_ipc_binary, std::string, std::string, source_ipc_binary, ext_mutex);
     std::shared_ptr<tracker_element_string> source_ipc_binary;
 
-    __ProxySetMS(int_source_ipc_pid, int64_t, pid_t, source_ipc_pid, ext_mutex);
+    __ProxySetM(int_source_ipc_pid, int64_t, pid_t, source_ipc_pid, ext_mutex);
     std::shared_ptr<tracker_element_int64> source_ipc_pid;
 
 
@@ -716,9 +734,6 @@ protected:
     // We've gotten our response from an operation, don't report additional errors
     bool quiet_errors;
 
-    // Last time we saw a PONG
-    time_t last_pong;
-
     // We suppress automatically adding GPS to packets from this source
     bool suppress_gps;
 
@@ -726,7 +741,7 @@ protected:
     std::shared_ptr<packet_chain> packetchain;
 
     // Packet components we inject
-    int pack_comp_linkframe, pack_comp_l1info, pack_comp_gps, pack_comp_no_gps,
+    int pack_comp_report, pack_comp_linkframe, pack_comp_l1info, pack_comp_gps, pack_comp_no_gps,
         pack_comp_datasrc, pack_comp_json, pack_comp_protobuf;
 
 };
@@ -763,15 +778,10 @@ public:
         return adler32_checksum("kis_datasource_interface");
     }
 
+    // We don't support building fields by inheritance
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
         auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
         return std::move(dup);
     }
 
@@ -779,10 +789,9 @@ public:
     __ProxyTrackable(options_vec, tracker_element_vector, options_vec);
 
     __ProxyTrackable(prototype, kis_datasource_builder, prototype);
-
     __Proxy(in_use_uuid, uuid, uuid, uuid, in_use_uuid);
-
     __Proxy(hardware, std::string, std::string, std::string, hardware);
+    __Proxy(cap_interface, std::string, std::string, std::string, cap_interface);
 
     void populate(std::string in_interface, std::string in_options) {
         std::vector<std::string> optvec = str_tokenize(in_options, ",");
@@ -806,6 +815,7 @@ protected:
         tracker_component::register_fields();
 
         register_field("kismet.datasource.probed.interface", "Interface name", &interface);
+        register_field("kismet.datasource.probed.capture_interface", "Capture interface name", &cap_interface);
         register_field("kismet.datasource.probed.options_vec",
                 "Interface options", &options_vec);
 
@@ -823,6 +833,7 @@ protected:
     }
 
     std::shared_ptr<tracker_element_string> interface;
+    std::shared_ptr<tracker_element_string> cap_interface;
     std::shared_ptr<tracker_element_vector> options_vec;
 
     std::shared_ptr<kis_datasource_builder> prototype;

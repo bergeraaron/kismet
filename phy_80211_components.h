@@ -63,19 +63,30 @@ public:
         reserve_fields(e);
     }
 
+    dot11_tracked_eapol(const dot11_tracked_eapol *p) :
+        tracker_component{p} {
+
+        __ImportField(eapol_time, p);
+        __ImportField(eapol_dir, p);
+        __ImportField(eapol_replay_counter, p);
+        __ImportField(eapol_msg_num, p);
+        __ImportField(eapol_install, p);
+        __ImportField(eapol_nonce, p);
+        __ImportField(eapol_rsn_pmkid, p);
+
+        __ImportField(eapol_packet, p);
+        __ImportId(eapol_packet_id, p);
+
+        reserve_fields(nullptr);
+    }
+
     virtual uint32_t get_signature() const override {
         return adler32_checksum("dot11_tracked_eapol");
     }
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -130,19 +141,23 @@ public:
         reserve_fields(e);
     }
 
+    dot11_tracked_nonce(const dot11_tracked_nonce *p) :
+        tracker_component{p} {
+        __ImportField(eapol_time, p);
+        __ImportField(eapol_msg_num, p);
+        __ImportField(eapol_install, p);
+        __ImportField(eapol_nonce, p);
+        __ImportField(eapol_replay_counter, p);
+        reserve_fields(nullptr);
+    }
+
     virtual uint32_t get_signature() const override {
         return adler32_checksum("dot11_tracked_nonce");
     }
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -207,6 +222,20 @@ public:
         reserve_fields(e);
     }
 
+    dot11_tracked_ssid_alert(const dot11_tracked_ssid_alert *p) :
+        tracker_component{p} {
+#ifdef HAVE_LIBPCRE
+        ssid_re = NULL;
+        ssid_study = NULL;
+#endif
+        __ImportField(ssid_group_name, p);
+        __ImportField(ssid_regex, p);
+        __ImportField(allowed_macs_vec, p);
+        __ImportId(allowed_mac_id, p);
+
+        reserve_fields(nullptr);
+    }
+
     virtual ~dot11_tracked_ssid_alert() {
 #ifdef HAVE_LIBCPRE
         if (ssid_re != NULL)
@@ -222,13 +251,7 @@ public:
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -242,10 +265,10 @@ public:
 
     void set_allowed_macs(std::vector<mac_addr> mvec);
 
-    bool compare_ssid(std::string ssid, mac_addr mac);
+    bool compare_ssid(const std::string& ssid, mac_addr mac);
 
 protected:
-    kis_recursive_timed_mutex ssid_mutex;
+    kis_mutex ssid_mutex;
 
     virtual void register_fields() override;
 
@@ -280,19 +303,23 @@ public:
         reserve_fields(e);
     }
 
+    dot11_11d_tracked_range_info(const dot11_11d_tracked_range_info *p) :
+        tracker_component{p} {
+
+        __ImportField(startchan, p);
+        __ImportField(numchan, p);
+        __ImportField(txpower, p);
+
+        reserve_fields(nullptr);
+    }
+
     virtual uint32_t get_signature() const override {
         return adler32_checksum("dot11_11d_tracked_range_info");
     }
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -332,19 +359,25 @@ public:
         reserve_fields(e);
     }
 
+    dot11_tracked_ietag(const dot11_tracked_ietag *p) {
+        __ImportField(unique_tag_id, p);
+        __ImportField(tag_number, p);
+        __ImportField(tag_oui, p);
+        __ImportField(tag_oui_manuf, p);
+        __ImportField(tag_vendor_or_sub, p);
+        __ImportField(complete_tag_data, p);
+
+        reserve_fields(nullptr);
+    }
+
+
     virtual uint32_t get_signature() const override {
         return adler32_checksum("dot11_tracked_ietag");
     }
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -388,19 +421,52 @@ public:
             reserve_fields(e);
         }
 
+    dot11_probed_ssid(const dot11_probed_ssid *p) :
+        tracker_component{p} {
+            __ImportField(ssid, p);
+            __ImportField(ssid_len, p);
+            __ImportField(bssid, p);
+            __ImportField(first_time, p);
+            __ImportField(last_time, p);
+            __ImportField(dot11r_mobility, p);
+            __ImportField(dot11r_mobility_domain_id, p);
+
+            __ImportId(location_id, p);
+
+            __ImportField(crypt_set, p);
+            __ImportField(wpa_mfp_required, p);
+            __ImportField(wpa_mfp_supported, p);
+
+            __ImportId(ie_tag_list_id, p);
+
+            __ImportId(wps_version_id, p);
+
+            __ImportId(wps_state_id, p);
+
+            __ImportId(wps_config_methods_id, p);
+
+            __ImportId(wps_manuf_id, p);
+
+            __ImportId(wps_device_name_id, p);
+
+            __ImportId(wps_model_name_id, p);
+
+            __ImportId(wps_model_number_id, p);
+
+            __ImportId(wps_serial_number_id, p);
+
+            __ImportId(wps_uuid_e_id, p);
+
+            reserve_fields(nullptr);
+        }
+
     virtual uint32_t get_signature() const override {
         return adler32_checksum("dot11_probed_ssid");
     }
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -421,7 +487,9 @@ public:
 
     __ProxyDynamicTrackable(ie_tag_list, tracker_element_vector_double, ie_tag_list, ie_tag_list_id);
 
+    __ProxyDynamic(wps_version, uint8_t, uint8_t, uint8_t, wps_version, wps_version_id);
     __ProxyDynamic(wps_state, uint32_t, uint32_t, uint32_t, wps_state, wps_state_id);
+    __ProxyDynamic(wps_config_methods, uint16_t, uint16_t, uint16_t, wps_config_methods, wps_config_methods_id);
     __ProxyDynamic(wps_manuf, std::string, std::string, std::string, wps_manuf, wps_manuf_id);
     __ProxyDynamic(wps_device_name, std::string, std::string, std::string, wps_device_name, wps_device_name_id);
     __ProxyDynamic(wps_model_name, std::string, std::string, std::string, wps_model_name, wps_model_name_id);
@@ -452,8 +520,14 @@ protected:
     int ie_tag_list_id;
 
     // WPS components
+    std::shared_ptr<tracker_element_uint8> wps_version;
+    int wps_version_id;
+
     std::shared_ptr<tracker_element_uint32> wps_state;
     int wps_state_id;
+
+    std::shared_ptr<tracker_element_uint16> wps_config_methods;
+    int wps_config_methods_id;
 
     std::shared_ptr<tracker_element_string> wps_manuf;
     int wps_manuf_id;
@@ -500,24 +574,87 @@ public:
             reserve_fields(e);
         }
 
+    dot11_advertised_ssid(const dot11_advertised_ssid *p) :
+        tracker_component{p} {
+            __ImportField(ssid, p);
+            __ImportField(ssid_len, p);
+            __ImportField(ssid_hash, p);
+
+            __ImportId(owe_ssid_id, p);
+
+            __ImportId(owe_ssid_len_id, p);
+
+            __ImportId(owe_bssid_id, p);
+
+            __ImportField(ssid_beacon, p);
+            __ImportField(ssid_probe_response, p);
+
+            __ImportField(channel, p);
+            __ImportField(ht_mode, p);
+            __ImportField(ht_center_1, p);
+            __ImportField(ht_center_2, p);
+
+            __ImportField(first_time, p);
+            __ImportField(last_time, p);
+
+            __ImportId(beacon_info_id, p);
+
+            __ImportField(ssid_cloaked, p);
+            __ImportField(crypt_set, p);
+            __ImportField(wpa_mfp_required, p);
+            __ImportField(wpa_mfp_supported, p);
+            __ImportField(beaconrate, p);
+            __ImportField(beacons_sec, p);
+            __ImportField(ietag_checksum, p);
+
+            __ImportId(dot11d_country_id, p);
+
+            __ImportId(dot11d_vec_id, p);
+            __ImportId(dot11d_country_entry_id, p);
+
+            __ImportId(wps_version_id, p);
+            __ImportId(wps_state_id, p);
+            __ImportId(wps_config_methods_id, p);
+            __ImportId(wps_manuf_id, p);
+            __ImportId(wps_device_name_id, p);
+            __ImportId(wps_model_name_id, p);
+            __ImportId(wps_model_number_id, p);
+            __ImportId(wps_serial_number_id, p);
+            __ImportId(wps_uuid_e_id, p);
+
+            __ImportId(location_id, p);
+
+            __ImportField(dot11r_mobility, p);
+            __ImportField(dot11r_mobility_domain_id, p);
+
+            __ImportField(dot11e_qbss, p);
+            __ImportField(dot11e_qbss_stations, p);
+            __ImportField(dot11e_qbss_channel_load, p);
+
+            __ImportField(ccx_txpower, p);
+            __ImportField(cisco_client_mfp, p);
+
+            __ImportId(ie_tag_list_id, p);
+            __ImportId(ie_tag_content_id, p);
+            __ImportId(ie_tag_content_element_id, p);
+
+            reserve_fields(nullptr);
+        }
+
     virtual uint32_t get_signature() const override {
         return adler32_checksum("dot11_advertised_ssid");
     }
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
     __Proxy(ssid, std::string, std::string, std::string, ssid);
     __Proxy(ssid_len, uint32_t, unsigned int, unsigned int, ssid_len);
+
+    __Proxy(ssid_hash, uint64_t, uint64_t, uint64_t, ssid_hash);
 
     __ProxyDynamic(owe_ssid, std::string, std::string, std::string, owe_ssid, owe_ssid_id);
     __ProxyDynamic(owe_ssid_len, uint32_t, unsigned, unsigned int, owe_ssid_len, owe_ssid_len_id);
@@ -558,7 +695,10 @@ public:
     __ProxyDynamicTrackable(dot11d_vec, tracker_element_vector, dot11d_vec, dot11d_vec_id);
     void set_dot11d_vec(std::vector<dot11_packinfo_dot11d_entry> vec);
 
+    __ProxyDynamic(wps_version, uint8_t, uint8_t, uint8_t, wps_version, wps_version_id);
     __ProxyDynamic(wps_state, uint32_t, uint32_t, uint32_t, wps_state, wps_state_id);
+    __ProxyDynamic(wps_config_methods, uint16_t, uint16_t, uint16_t, wps_config_methods,
+            wps_config_methods_id);
     __ProxyDynamic(wps_manuf, std::string, std::string, std::string, wps_manuf, wps_manuf_id);
     __ProxyDynamic(wps_device_name, std::string, std::string, std::string, wps_device_name, 
             wps_device_name_id);
@@ -615,6 +755,8 @@ protected:
     std::shared_ptr<tracker_element_string> ssid;
     std::shared_ptr<tracker_element_uint32> ssid_len;
 
+    std::shared_ptr<tracker_element_uint64> ssid_hash;
+
     std::shared_ptr<tracker_element_string> owe_ssid;
     int owe_ssid_id;
 
@@ -658,8 +800,14 @@ protected:
     int dot11d_country_entry_id;
 
     // WPS components
+    std::shared_ptr<tracker_element_uint8> wps_version;
+    int wps_version_id;
+
     std::shared_ptr<tracker_element_uint32> wps_state;
     int wps_state_id;
+
+    std::shared_ptr<tracker_element_uint16> wps_config_methods;
+    int wps_config_methods_id;
 
     std::shared_ptr<tracker_element_string> wps_manuf;
     int wps_manuf_id;
@@ -732,19 +880,47 @@ public:
             reserve_fields(e);
         }
 
+    dot11_client(const dot11_client *p) :
+        tracker_component{p} {
+            __ImportField(bssid, p);
+            __ImportField(bssid_key, p);
+            
+            __ImportField(first_time, p);
+            __ImportField(last_time, p);
+
+            __ImportField(client_type, p);
+
+            __ImportId(dhcp_host_id, p);
+            __ImportId(dhcp_vendor_id, p);
+
+            __ImportField(tx_cryptset, p);
+            __ImportField(rx_cryptset, p);
+
+            __ImportId(eap_identity_id, p);
+            __ImportId(cdp_device_id, p);
+            __ImportId(cdp_port_id, p);
+
+            __ImportField(decrypted, p);
+
+            __ImportId(ipdata_id, p);
+
+            __ImportField(datasize, p);
+            __ImportField(datasize_retry, p);
+            __ImportField(num_fragments, p);
+            __ImportField(num_retries, p);
+
+            __ImportId(location_id, p);
+
+            reserve_fields(nullptr);
+        }
+
     virtual uint32_t get_signature() const override {
         return adler32_checksum("dot11_client");
     }
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -922,19 +1098,92 @@ public:
         reserve_fields(e);
     }
 
+    dot11_tracked_device(const dot11_tracked_device *p) :
+        tracker_component{p} {
+
+        last_adv_ie_csum = 0;
+        last_bss_invalid = 0;
+        bss_invalid_count = 0;
+        snapshot_next_beacon = false;
+
+        __ImportField(type_set, p);
+
+        __ImportId(client_map_id, p);
+        __ImportId(client_map_entry_id, p);
+        __ImportField(num_client_aps, p);
+
+        __ImportId(advertised_ssid_map_id, p);
+        __ImportId(advertised_ssid_map_entry_id, p);
+        __ImportField(num_advertised_ssids, p);
+
+        __ImportId(responded_ssid_map_id, p);
+        __ImportId(responded_ssid_map_entry_id, p);
+        __ImportField(num_responded_ssids, p);
+
+        __ImportId(probed_ssid_map_id, p);
+        __ImportId(probed_ssid_map_entry_id, p);
+        __ImportField(num_probed_ssids, p);
+
+        __ImportId(associated_client_map_id, p);
+        __ImportId(associated_client_map_entry_id, p);
+        __ImportField(num_associated_clients, p);
+        __ImportField(client_disconnects, p);
+        __ImportField(client_disconnects_last, p);
+
+        __ImportField(last_sequence, p);
+        __ImportField(bss_timestamp, p);
+
+        __ImportField(num_fragments, p);
+        __ImportField(num_retries, p);
+
+        __ImportField(datasize, p);
+        __ImportField(datasize_retry, p);
+
+        __ImportId(last_bssid_id, p);
+
+        __ImportField(last_beacon_timestamp, p);
+
+        __ImportField(wps_m3_count, p);
+        __ImportField(wps_m3_last, p);
+
+        __ImportId(wpa_key_vec_id, p);
+        __ImportId(wpa_key_entry_id, p);
+        __ImportId(wpa_nonce_vec_id, p);
+        __ImportId(wpa_nonce_entry_id, p);
+        __ImportId(wpa_anonce_vec_id, p);
+
+        __ImportField(wpa_present_handshake, p);
+
+        __ImportId(ssid_beacon_packet_id, p);
+        __ImportId(pmkid_packet_id, p);
+
+        __ImportField(min_tx_power, p);
+        __ImportField(max_tx_power, p);
+
+        __ImportId(supported_channels_id, p);
+
+        __ImportField(link_measurement_capable, p);
+        __ImportField(neighbor_report_capable, p);
+
+        __ImportId(extended_capabilities_list_id, p);
+
+        __ImportField(beacon_fingerprint, p);
+        __ImportField(probe_fingerprint, p);
+        __ImportField(response_fingerprint, p);
+
+        __ImportId(last_beaconed_ssid_record_id, p);
+        __ImportId(last_probed_ssid_record_id, p);
+
+        reserve_fields(nullptr);
+        }
+
     virtual uint32_t get_signature() const override {
         return adler32_checksum("dot11_tracked_device");
     }
 
     virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t());
-        return std::move(dup);
-    }
-
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
-        using this_t = std::remove_pointer<decltype(this)>::type;
-        auto dup = std::unique_ptr<this_t>(new this_t(in_id));
+        auto dup = std::unique_ptr<this_t>(new this_t(this));
         return std::move(dup);
     }
 
@@ -953,20 +1202,31 @@ public:
     }
     __Proxy(num_client_aps, uint64_t, uint64_t, uint64_t, num_client_aps);
 
-
-    __ProxyDynamicTrackableFunc(advertised_ssid_map, tracker_element_int_map, advertised_ssid_map, 
+    __ProxyDynamicTrackableFunc(advertised_ssid_map, tracker_element_hashkey_map, advertised_ssid_map, 
             advertised_ssid_map_id, {advertised_ssid_map->set_as_vector(true);});
 
     std::shared_ptr<dot11_advertised_ssid> new_advertised_ssid() {
         return std::make_shared<dot11_advertised_ssid>(advertised_ssid_map_entry_id);
     }
+
     __Proxy(num_advertised_ssids, uint64_t, uint64_t, uint64_t, num_advertised_ssids);
 
-    __ProxyDynamicTrackableFunc(probed_ssid_map, tracker_element_int_map, probed_ssid_map, 
+    __ProxyDynamicTrackableFunc(responded_ssid_map, tracker_element_hashkey_map, responded_ssid_map, 
+            responded_ssid_map_id, {responded_ssid_map->set_as_vector(true);});
+
+    std::shared_ptr<dot11_advertised_ssid> new_responded_ssid() {
+        return std::make_shared<dot11_advertised_ssid>(responded_ssid_map_entry_id);
+    }
+
+    __Proxy(num_responded_ssids, uint64_t, uint64_t, uint64_t, num_responded_ssids);
+
+    __ProxyDynamicTrackableFunc(probed_ssid_map, tracker_element_hashkey_map, probed_ssid_map, 
             probed_ssid_map_id, {probed_ssid_map->set_as_vector(true);});
+
     std::shared_ptr<dot11_probed_ssid> new_probed_ssid() {
         return std::make_shared<dot11_probed_ssid>(probed_ssid_map_entry_id);
     }
+
     __Proxy(num_probed_ssids, uint64_t, uint64_t, uint64_t, num_probed_ssids);
 
     __ProxyDynamicTrackable(associated_client_map, tracker_element_mac_map, 
@@ -1042,6 +1302,11 @@ public:
         else
             set_num_advertised_ssids(0);
 
+        if (responded_ssid_map != nullptr)
+            set_num_responded_ssids(responded_ssid_map->size());
+        else
+            set_num_responded_ssids(0);
+
         if (probed_ssid_map != nullptr)
             set_num_probed_ssids(probed_ssid_map->size());
         else
@@ -1106,6 +1371,20 @@ protected:
 
         register_field("dot11.device.num_advertised_ssids", 
                 "number of advertised SSIDs", &num_advertised_ssids);
+
+
+        // Responded SSIDs keyed by ssid checksum, using the same structure as advertised
+        responded_ssid_map_id = 
+            register_dynamic_field("dot11.device.responded_ssid_map", "responded SSIDs", &responded_ssid_map);
+
+        responded_ssid_map_entry_id =
+            register_field("dot11.device.responded_ssid",
+                    tracker_element_factory<dot11_advertised_ssid>(),
+                    "responded SSID");
+
+        register_field("dot11.device.num_responded_ssids", 
+                "number of responded SSIDs", &num_responded_ssids);
+
 
         // Probed SSIDs keyed by int checksum
         probed_ssid_map_id =
@@ -1288,12 +1567,17 @@ protected:
     int client_map_entry_id;
     std::shared_ptr<tracker_element_uint64> num_client_aps;
 
-    std::shared_ptr<tracker_element_int_map> advertised_ssid_map;
+    std::shared_ptr<tracker_element_hashkey_map> advertised_ssid_map;
     int advertised_ssid_map_id;
     int advertised_ssid_map_entry_id;
     std::shared_ptr<tracker_element_uint64> num_advertised_ssids;
 
-    std::shared_ptr<tracker_element_int_map> probed_ssid_map;
+    std::shared_ptr<tracker_element_hashkey_map> responded_ssid_map;
+    int responded_ssid_map_id;
+    int responded_ssid_map_entry_id;
+    std::shared_ptr<tracker_element_uint64> num_responded_ssids;
+
+    std::shared_ptr<tracker_element_hashkey_map> probed_ssid_map;
     int probed_ssid_map_id;
     int probed_ssid_map_entry_id;
     std::shared_ptr<tracker_element_uint64> num_probed_ssids;

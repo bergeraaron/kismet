@@ -60,6 +60,94 @@ exports.ConfigureAjax = function() {
 
 exports.ConfigureAjax();
 
+var eventbus_ws_listeners = [];
+
+exports.eventbus_ws = null;
+
+exports.SubscribeEventbus = function(topic, fields, callback) {
+    var sub = {
+        "topic": topic,
+        "callback": callback
+    }
+
+    if (fields.length > 0)
+        sub["fields"] = fields;
+
+    eventbus_ws_listeners.push(sub);
+
+    if (exports.eventbus_ws != null && exports.eventbus_ws.readyState == 1) {
+        var sub_req = {
+            "SUBSCRIBE": sub["topic"],
+        };
+
+        if ("fields" in sub)
+            sub_req["fields"] = sub["fields"]
+
+        exports.eventbus_ws.send(JSON.stringify(sub_req));
+    }
+}
+
+exports.OpenEventbusWs = function() {
+    var proto = "";
+
+    if (document.location.protocol == "https:")
+        proto = "wss"
+    else
+        proto = "ws"
+
+    var user = kismet.getStorage('kismet.base.login.username', 'kismet');
+    var pw =  kismet.getStorage('kismet.base.login.password', '');
+
+    var host = new URL(document.URL);
+
+    var ws_url = `${proto}://${host.host}/${local_uri_prefix}eventbus/events.ws?user=${encodeURIComponent(user)}&password=${encodeURIComponent(pw)}`
+
+    exports.eventbus_ws = new WebSocket(ws_url);
+    
+    exports.eventbus_ws.onclose = function(event) {
+        console.log("eventbus ws closed");
+
+        setTimeout(function() { exports.OpenEventbusWs(); }, 500);
+    };
+
+    exports.eventbus_ws.onmessage = function(event) {
+        try {
+            var json = JSON.parse(event.data);
+
+            for (var x in json) {
+                for (var sub of eventbus_ws_listeners) {
+                    if (sub["topic"] === x) {
+                        sub["callback"](json[x]);
+                    }
+                }
+            }
+        } catch (e) {
+            console.log(e);
+        }
+    }
+
+    exports.eventbus_ws.onopen = function(event) {
+        for (var sub of eventbus_ws_listeners) {
+            var sub_req = {
+                "SUBSCRIBE": sub["topic"],
+            };
+
+            if ("fields" in sub)
+                sub_req["fields"] = sub["fields"]
+
+            exports.eventbus_ws.send(JSON.stringify(sub_req));
+        }
+    }
+};
+
+exports.SubscribeEventbus("TIMESTAMP", [], function(data) {
+    data = kismet.sanitizeObject(data);
+    kismet.timestamp_sec = data['kismet.system.timestamp.sec'];
+    kismet.timestamp_usec = data['ksimet.system.timestamp.usec'];
+});
+
+// exports.SubscribeEventbus("MESSAGE", [], function(e) { console.log(e); });
+
 /* Define some callback functions for the table */
 
 exports.renderLastTime = function(data, type, row, meta) {
@@ -77,7 +165,8 @@ exports.renderMac = function(data, type, row, meta) {
     if (typeof(data) === 'undefined') {
         return "<i>n/a</i>";
     }
-    return data;
+
+    return kismet.censorMAC(data);
 }
 
 exports.renderSignal = function(data, type, row, meta) {
@@ -135,11 +224,8 @@ exports.drawPackets = function(dyncolumn, table, row) {
     // We use the aliased field names we extracted from just the minute
     // component of the per-device packet RRD
     var simple_rrd =
-        kismet.RecalcRrdData(
-            data['packet.rrd.last_time'],
-            data['packet.rrd.last_time'],
-            kismet.RRD_SECOND,
-            data['packet.rrd.minute_vec'], {
+        kismet.RecalcRrdData2(data, kismet.RRD_SECOND,
+            {
                 transform: function(data, opt) {
                     var slices = 3;
                     var peak = 0;
@@ -174,6 +260,10 @@ kismet_ui.AddDeviceColumn('column_name', {
     sTitle: 'Name',
     field: 'kismet.device.base.commonname',
     description: 'Device name',
+    renderfunc: function(d, t, r, m) {
+        var dname = kismet.censorMAC(d);
+        return (dname.length > 24) ? dname.substr(0, 23) + '&hellip;' : dname;
+    }
 });
 
 kismet_ui.AddDeviceColumn('column_type', {
@@ -270,8 +360,7 @@ kismet_ui.AddDeviceColumn('column_datasize', {
 // rrd records along with it.
 kismet_ui.AddDeviceColumn('column_packet_rrd', {
     sTitle: 'Packets',
-    field: ['kismet.device.base.packets.rrd/kismet.common.rrd.last_time',
-            'packet.rrd.last_time'],
+    field: ['kismet.device.base.packets.rrd/kismet.common.rrd.last_time', 'packet.rrd.last_time'],
     name: 'packets',
     description: 'Packet history graph',
     renderfunc: function(d, t, r, m) {
@@ -285,10 +374,15 @@ kismet_ui.AddDeviceColumn('column_packet_rrd', {
 });
 
 // Hidden col for packet minute rrd data
+// We MUST define ONE FIELD and then multiple additional fields are permitted
 kismet_ui.AddDeviceColumn('column_rrd_minute_hidden', {
     sTitle: 'packets_rrd_min_data',
-    field: ['kismet.device.base.packets.rrd/kismet.common.rrd.minute_vec',
-            'packet.rrd.minute_vec'],
+    field: 
+        ['kismet.device.base.packets.rrd/kismet.common.rrd.serial_time', 'kismet.common.rrd.serial_time'],
+    fields: [
+        ['kismet.device.base.packets.rrd/kismet.common.rrd.minute_vec', 'kismet.common.rrd.minute_vec'],
+        ['kismet.device.base.packets.rrd/kismet.common.rrd.last_time', 'kismet.common.rrd.last_time'],
+    ],
     name: 'packets_rrd_min_data',
     searchable: false,
     visible: false,
@@ -369,6 +463,9 @@ kismet_ui.AddDeviceColumn('column_manuf', {
     searchable: true,
     visible: false,
     orderable: true,
+    renderfunc: function(d, t, r, m) {
+        return (d.length > 32) ? d.substr(0, 31) + '&hellip;' : d;
+    }
 });
 
 
@@ -398,6 +495,8 @@ kismet_ui.AddDeviceDetail("base", "Device Info", -1000, {
 
                     if (typeof(name) == 'undefined' || name == "")
                         name = opts['data']['kismet.device.base.macaddr'];
+
+                    name = kismet.censorMAC(name);
 
                     var nameobj = 
                         $('<a>', {
@@ -463,6 +562,9 @@ kismet_ui.AddDeviceDetail("base", "Device Info", -1000, {
                 field: "kismet.device.base.macaddr",
                 title: "MAC Address",
                 help: "Unique per-phy address of the transmitting device, when available.  Not all phy types provide MAC addresses, however most do.",
+                draw: function(opts) {
+                    return kismet.censorMAC(opts['value']);
+                }
             },
             {
                 field: "kismet.device.base.manuf",
@@ -953,9 +1055,9 @@ kismet_ui.AddDeviceDetail("packets", "Packet Graphs", 10, {
         var ddata = [];
 
         if (('kismet.device.base.packets.rrd' in data)) {
-            mdata = kismet.RecalcRrdData(data['kismet.device.base.packets.rrd']['kismet.common.rrd.last_time'], kismet_ui.last_timestamp, kismet.RRD_SECOND, data['kismet.device.base.packets.rrd']['kismet.common.rrd.minute_vec'], {});
-            hdata = kismet.RecalcRrdData(data['kismet.device.base.packets.rrd']['kismet.common.rrd.last_time'], kismet_ui.last_timestamp, kismet.RRD_MINUTE, data['kismet.device.base.packets.rrd']['kismet.common.rrd.hour_vec'], {});
-            ddata = kismet.RecalcRrdData(data['kismet.device.base.packets.rrd']['kismet.common.rrd.last_time'], kismet_ui.last_timestamp, kismet.RRD_HOUR, data['kismet.device.base.packets.rrd']['kismet.common.rrd.day_vec'], {});
+            mdata = kismet.RecalcRrdData2(data['kismet.device.base.packets.rrd'], kismet.RRD_SECOND);
+            hdata = kismet.RecalcRrdData2(data['kismet.device.base.packets.rrd'], kismet.RRD_MINUTE);
+            ddata = kismet.RecalcRrdData2(data['kismet.device.base.packets.rrd'], kismet.RRD_HOUR);
 
             m.sparkline(mdata, { type: "bar",
                     height: 12,
@@ -985,9 +1087,10 @@ kismet_ui.AddDeviceDetail("packets", "Packet Graphs", 10, {
             
 
         if ('kismet.device.base.datasize.rrd' in data) {
-            var dmdata = kismet.RecalcRrdData(data['kismet.device.base.datasize.rrd']['kismet.common.rrd.last_time'], kismet_ui.last_timestamp, kismet.RRD_SECOND, data['kismet.device.base.datasize.rrd']['kismet.common.rrd_minute_vec'], {});
-            var dhdata = kismet.RecalcRrdData(data['kismet.device.base.datasize.rrd']['kismet.common.rrd.last_time'], kismet_ui.last_timestamp, kismet.RRD_MINUTE, data['kismet.device.base.datasize.rrd']['kismet.common.rrd.hour_vec'], {});
-            var dddata = kismet.RecalcRrdData(data['kismet.device.base.datasize.rrd']['kismet.common.rrd.last_time'], kismet_ui.last_timestamp, kismet.RRD_HOUR, data['kismet.device.base.datasize.rrd']['kismet.common.rrd_day_vec'], {});
+            var dmdata = kismet.RecalcRrdData2(data['kismet.device.base.datasize.rrd'], kismet.RRD_SECOND);
+            var dhdata = kismet.RecalcRrdData2(data['kismet.device.base.datasize.rrd'], kismet.RRD_MINUTE);
+            var dddata = kismet.RecalcRrdData2(data['kismet.device.base.datasize.rrd'], kismet.RRD_HOUR);
+
         dm.sparkline(dmdata,
             { type: "bar",
                 height: 12,
@@ -1102,6 +1205,34 @@ exports.MemoryMonitor = function() {
 
     memory_chart = null;
 
+    var content = 
+        $('<div>', {
+            'style': 'width: 100%; height: 100%;'
+        })
+        .append(
+            $('<div>', {
+                "style": "position: absolute; top: 0px; right: 10px; float: right;"
+            })
+            .append(
+                $('<span>', {
+                    'id': 'k_mm_devs',
+                    'class': 'padded',
+                }).html('#devices')
+            )
+            .append(
+                $('<span>', {
+                    'id': 'k_mm_ram',
+                    'class': 'padded',
+                }).html('#ram')
+            )
+        )
+        .append(
+            $('<canvas>', {
+                'id': 'k-mm-canvas',
+                'style': 'k-mm-canvas'
+            })
+        );
+
     memory_panel = $.jsPanel({
         id: 'memory',
         headerTitle: '<i class="fa fa-tasks" /> Memory use',
@@ -1109,7 +1240,7 @@ exports.MemoryMonitor = function() {
             controls: 'closeonly',
             iconfont: 'jsglyph',
         },
-        content: '<canvas id="k-mm-canvas" style="k-mm-canvas" />',
+        content: content,
         onclosed: function() {
             clearTimeout(memoryupdate_tid);
         }
@@ -1137,7 +1268,6 @@ function memorydisplay_refresh() {
 
     $.get(local_uri_prefix + "system/status.json")
     .done(function(data) {
-        console.log(data);
         // Common rrd type and source field
         var rrdtype = kismet.RRD_MINUTE;
         var rrddata = 'kismet.common.rrd.hour_vec';
@@ -1154,22 +1284,17 @@ function memorydisplay_refresh() {
         }
 
         var mem_linedata =
-            kismet.RecalcRrdData(
-                data['kismet.system.memory.rrd']['kismet.common.rrd.last_time'],
-                data['kismet.system.timestamp.sec'],
-                rrdtype,
-                data['kismet.system.memory.rrd'][rrddata]);
+            kismet.RecalcRrdData2(data['kismet.system.memory.rrd'], rrdtype);
 
         for (var p in mem_linedata) {
             mem_linedata[p] = Math.round(mem_linedata[p] / 1024);
         }
 
         var dev_linedata =
-            kismet.RecalcRrdData(
-                data['kismet.system.devices.rrd']['kismet.common.rrd.last_time'],
-                data['kismet.system.timestamp.sec'],
-                rrdtype,
-                data['kismet.system.devices.rrd'][rrddata]);
+            kismet.RecalcRrdData2(data['kismet.system.devices.rrd'], rrdtype);
+
+        $('#k_mm_devs', memory_panel.content).html(`${dev_linedata[dev_linedata.length - 1]} devices`);
+        $('#k_mm_ram', memory_panel.content).html(`${mem_linedata[mem_linedata.length - 1]} MB`);
 
         var datasets = [
             {
@@ -1232,6 +1357,377 @@ function memorydisplay_refresh() {
     })
     .always(function() {
         memoryupdate_tid = setTimeout(memorydisplay_refresh, 5000);
+    });
+};
+
+
+/* Sidebar:  Packet queue display
+ *
+ * Packet queue display graphs the amount of packets in the queue, the amount dropped, 
+ * the # of duplicates, and so on
+ */
+kismet_ui_sidebar.AddSidebarItem({
+    id: 'packetqueue_sidebar',
+    listTitle: '<i class="fa fa-area-chart"></i> Packet Rates',
+    clickCallback: function() {
+        exports.PacketQueueMonitor();
+    },
+});
+
+var packetqueueupdate_tid;
+var packetqueue_panel = null;
+
+exports.PacketQueueMonitor = function() {
+    var w = $(window).width() * 0.75;
+    var h = $(window).height() * 0.5;
+    var offty = 20;
+
+    if ($(window).width() < 450 || $(window).height() < 450) {
+        w = $(window).width() - 5;
+        h = $(window).height() - 5;
+        offty = 0;
+    }
+
+    var content =
+        $('<div class="k-pqm-contentdiv">')
+        .append(
+            $('<div id="pqm-tabs" class="tabs-min">')
+        );
+
+    packetqueue_panel = $.jsPanel({
+        id: 'packetqueue',
+        headerTitle: '<i class="fa fa-area-chart" /> Packet Rates',
+        headerControls: {
+            controls: 'closeonly',
+            iconfont: 'jsglyph',
+        },
+        content: content,
+        onclosed: function() {
+            clearTimeout(packetqueue_panel.packetqueueupdate_tid);
+        }
+    }).resize({
+        width: w,
+        height: h
+    }).reposition({
+        my: 'center-top',
+        at: 'center-top',
+        of: 'window',
+        offsetY: offty
+    });
+
+    packetqueue_panel.packetqueue_chart = null;
+    packetqueue_panel.datasource_chart = null;
+
+    var f_pqm_packetqueue = function(div) {
+        packetqueue_panel.pq_content = div;
+    };
+
+    var f_pqm_ds = function(div) {
+        packetqueue_panel.ds_content = div;
+    };
+
+    kismet_ui_tabpane.AddTab({
+        id: 'packetqueue',
+        tabTitle: 'Processing Queue',
+        createCallback: f_pqm_packetqueue,
+        priority: -1001
+    }, 'pqm-tabs');
+
+    kismet_ui_tabpane.AddTab({
+        id: 'datasources-graph',
+        tabTitle: 'Per Datasource',
+        createCallback: f_pqm_ds,
+        priority: -1000
+    }, 'pqm-tabs');
+
+    kismet_ui_tabpane.MakeTabPane($('#pqm-tabs', content), 'pqm-tabs');
+
+    packetqueuedisplay_refresh();
+    datasourcepackets_refresh();
+}
+
+function packetqueuedisplay_refresh() {
+    if (packetqueue_panel == null)
+        return;
+
+    clearTimeout(packetqueue_panel.packetqueueupdate_tid);
+
+    if (packetqueue_panel.is(':hidden'))
+        return;
+
+    $.get(local_uri_prefix + "packetchain/packet_stats.json")
+    .done(function(data) {
+        // Common rrd type and source field
+        var rrdtype = kismet.RRD_MINUTE;
+
+        // Common point titles
+        var pointtitles = new Array();
+
+        for (var x = 60; x > 0; x--) {
+            if (x % 5 == 0) {
+                pointtitles.push(x + 'm');
+            } else {
+                pointtitles.push(' ');
+            }
+        }
+
+        var peak_linedata =
+            kismet.RecalcRrdData2(data['kismet.packetchain.peak_packets_rrd'], rrdtype);
+        var rate_linedata =
+            kismet.RecalcRrdData2(data['kismet.packetchain.packets_rrd'], rrdtype);
+        var queue_linedata =
+            kismet.RecalcRrdData2(data['kismet.packetchain.queued_packets_rrd'], rrdtype);
+        var drop_linedata =
+            kismet.RecalcRrdData2(data['kismet.packetchain.dropped_packets_rrd'], rrdtype);
+        var dupe_linedata =
+            kismet.RecalcRrdData2(data['kismet.packetchain.dupe_packets_rrd'], rrdtype);
+
+        var datasets = [
+            {
+                label: 'Incoming packets (peak)',
+                fill: 'false',
+                borderColor: 'black',
+                backgroundColor: 'rgba(100, 100, 100, 0.33)',
+                data: peak_linedata,
+            },
+            {
+                label: 'Incoming packets (1 min avg)',
+                fill: 'false',
+                borderColor: 'purple',
+                backgroundColor: 'transparent',
+                data: rate_linedata,
+                pointStyle: 'rect',
+            },
+            {
+                label: 'Processing queue',
+                fill: 'false',
+                borderColor: 'blue',
+                backgroundColor: 'transparent',
+                data: queue_linedata,
+                pointStyle: 'cross',
+            },
+            {
+                label: 'Dropped / lost packets',
+                fill: 'false',
+                borderColor: 'red',
+                backgroundColor: 'transparent',
+                data: drop_linedata,
+                pointStyle: 'star',
+            },
+            {
+                label: 'Ignored duplicates',
+                fill: 'false',
+                borderColor: 'green',
+                backgroundColor: 'transparent',
+                data: dupe_linedata,
+                pointStyle: 'triangle',
+            },
+        ];
+
+        if (packetqueue_panel.packetqueue_chart == null) {
+            packetqueue_panel.pq_content.append(
+                $('<canvas>', {
+                    "id": "pq-canvas",
+                    "width": "100%",
+                    "height": "100%",
+                    "class": "k-mm-canvas",
+                })
+            );
+
+            var canvas = $('#pq-canvas', packetqueue_panel.pq_content);
+
+            packetqueue_panel.packetqueue_chart = new Chart(canvas, {
+                type: 'line',
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        yAxes: [
+                            {
+                                position: "left",
+                                "id": "mem-axis",
+                                ticks: {
+                                    beginAtZero: true,
+                                }
+                            },
+                        ]
+                    },
+                },
+                data: {
+                    labels: pointtitles,
+                    datasets: datasets
+                }
+            });
+
+        } else {
+            packetqueue_panel.packetqueue_chart.data.datasets = datasets;
+            packetqueue_panel.packetqueue_chart.data.labels = pointtitles;
+            packetqueue_panel.packetqueue_chart.update(0);
+        }
+    })
+    .always(function() {
+        packetqueue_panel.packetqueueupdate_tid = setTimeout(packetqueuedisplay_refresh, 5000);
+    });
+};
+
+function datasourcepackets_refresh() {
+    if (packetqueue_panel == null)
+        return;
+
+    clearTimeout(packetqueue_panel.datasourceupdate_tid);
+
+    if (packetqueue_panel.is(':hidden'))
+        return;
+
+    $.get(local_uri_prefix + "datasource/all_sources.json")
+    .done(function(data) {
+        var datasets = [];
+        var num = 0;
+
+        // Common point titles
+        var pointtitles = new Array();
+
+        var rval = $('#pq_ds_range', packetqueue_panel.ds_content).val();
+        var range = kismet.RRD_SECOND;
+
+        if (rval == "hour")
+            range = kismet.RRD_MINUTE;
+        if (rval == "day")
+            range = kismet.RRD_HOUR;
+
+        if (range == kismet.RRD_SECOND || range == kismet.RRD_MINUTE) {
+            for (var x = 60; x > 0; x--) {
+                if (x % 5 == 0) {
+                    if (range == kismet.RRD_SECOND)
+                        pointtitles.push(x + 's');
+                    else
+                        pointtitles.push(x + 'm');
+                } else {
+                    pointtitles.push(' ');
+                }
+            }
+        } else {
+            for (var x = 23; x > 0; x--) {
+                pointtitles.push(x + 'h');
+            }
+        }
+
+        for (var source of data) {
+            var color = parseInt(255 * (num / data.length))
+
+            var linedata;
+
+            if ($('#pq_ds_type', packetqueue_panel.ds_content).val() == "bps")
+                linedata =
+                    kismet.RecalcRrdData2(source['kismet.datasource.packets_datasize_rrd'], 
+                    range,
+                    {
+                        transform: function(data, opt) {
+                            var ret = [];
+
+                            for (var d of data)
+                                ret.push(d / 1024);
+
+                            return ret;
+                        }
+                    });
+            else
+                linedata =
+                    kismet.RecalcRrdData2(source['kismet.datasource.packets_rrd'], range);
+
+            datasets.push({
+                "label": source['kismet.datasource.name'],
+                "borderColor": `hsl(${color}, 100%, 50%)`,
+                "data": linedata,
+                "fill": false,
+            });
+
+            num = num + 1;
+
+        }
+
+        if (packetqueue_panel.datasource_chart == null) {
+            packetqueue_panel.ds_content.append(
+                $('<div>', {
+                    "style": "position: absolute; top: 0px; right: 10px; float: right;"
+                })
+                .append(
+                    $('<select>', {
+                        "id": "pq_ds_type",
+                    })
+                    .append(
+                        $('<option>', {
+                            "value": "pps",
+                            "selected": "selected",
+                        }).text("Packets")
+                    )
+                    .append(
+                        $('<option>', {
+                            "value": "bps",
+                        }).text("Data (kB)")
+                    )
+                )
+                .append(
+                    $('<select>', {
+                        "id": "pq_ds_range",
+                    })
+                    .append(
+                        $('<option>', {
+                            "value": "second",
+                            "selected": "selected",
+                        }).text("Past Minute")
+                    )
+                    .append(
+                        $('<option>', {
+                            "value": "hour",
+                        }).text("Past Hour")
+                    )
+                    .append(
+                        $('<option>', {
+                            "value": "day",
+                        }).text("Past Day")
+                    )
+                )
+            ).append(
+                $('<canvas>', {
+                    "id": "dsg-canvas",
+                    "width": "100%",
+                    "height": "100%",
+                    "class": "k-mm-canvas",
+                })
+            );
+
+            packetqueue_panel.datasource_chart = 
+                new Chart($('#dsg-canvas', packetqueue_panel.ds_content), {
+                "type": "line",
+                "options": {
+                    "responsive": true,
+                    "maintainAspectRatio": false,
+                    "scales": {
+                        "yAxes": [
+                            {
+                                "position": "left",
+                                "id": "pkts-axis",
+                                "ticks": {
+                                    "beginAtZero": true,
+                                }
+                            },
+                        ],
+                    },
+                },
+                "data": {
+                    "labels": pointtitles,
+                    "datasets": datasets,
+                }
+            });
+        } else {
+            packetqueue_panel.datasource_chart.data.datasets = datasets;
+            packetqueue_panel.datasource_chart.data.labels = pointtitles;
+            packetqueue_panel.datasource_chart.update(0);
+        }
+    })
+    .always(function() {
+        packetqueue_panel.datasourceupdate_tid = setTimeout(datasourcepackets_refresh, 1000);
     });
 };
 
@@ -1613,6 +2109,446 @@ kismet_ui_settings.AddSettingsPane({
         kismet.putStorage('kismet.base.login.password', $('#password', elem).val());
     },
 });
+
+function show_role_help(role) {
+    var rolehelp = `Unknown role ${role}; this could be assigned as a custom role for a Kismet plugin.`;
+
+    if (role === "admin")
+        rolehelp = "The admin role is assigned to the primary web interface, external API plugins which automatically request API access, and other privileged instances.  The admin role has access to all endpoints.";
+    else if (role === "readonly")
+        rolehelp = "The readonly role has access to any endpoint which does not modify data.  It can not issue commands to the Kismet server, configure sources, or alter devices.  The readonly role is well suited for external data gathering from a Kismet server.";
+    else if (role === "datasource")
+        rolehelp = "The datasource role allows remote capture over websockets.  This role only has access to the remote capture datasource endpoint.";
+    else if (role === "scanreport")
+        rolehelp = "The scanreport role allows device scan reports.  This role only has access to the scan report endpoint."
+    else if (role === "ADSB")
+        rolehelp = "The ADSB role allows access to the combined and device-specific ADSB feeds."
+    else if (role === "__explain__") {
+        rolehelp = "<p>Kismet uses a basic role system to restrict access to API endpoints.  The default roles are:";
+        rolehelp += "<p>&quot;admin&quot; which has access to all API endpoints.";
+        rolehelp += "<p>&quot;readonly&quot; which only has access to endpoints which do not alter devices or change the configuration of the server";
+        rolehelp += "<p>&quot;datasource&quot; which is used for websockets based remote capture and may not access any other endpoints";
+        rolehelp += "<p>&quot;scanreport&quot; which is used for reporting scanning-mode devices";
+        rolehelp += "<p>&quot;ADSB&quot; which is used for sharing ADSB feeds";
+        rolehelp += "<p>Plugins or other code may define other roles.";
+
+        role = "Kismet API Roles";
+    }
+
+    var h = $(window).height() / 4;
+    var w = $(window).width() / 2;
+
+    if (w < 450) 
+        w = $(window).width() - 5;
+
+    if (h < 200)
+        h = $(window).height() - 5;
+
+    $.jsPanel({
+        id: "item-help",
+        headerTitle: `Role: ${role}`,
+        headerControls: {
+            controls: 'closeonly',
+            iconfont: 'jsglyph',
+        },
+        contentSize: `${w} auto`,
+        paneltype: 'modal',
+        content: `<div style="padding: 10px;"><h3>${role}</h3><p>${rolehelp}`,
+    })
+    .reposition({
+        my: 'center',
+        at: 'center',
+        of: 'window'
+    });
+}
+
+function delete_role(rolename, elem) {
+    var deltd = $('.deltd', elem);
+
+    var delbt = 
+        $('<button>', {
+            'style': 'background-color: #DDAAAA',
+        })
+        .html(`Delete role &quot;${rolename}&quot;`)
+        .button()
+        .on('click', function() {
+            var pd = {
+                'name': rolename,
+            };
+
+            var postdata = "json=" + encodeURIComponent(JSON.stringify(pd));
+
+            $.post(local_uri_prefix + "auth/apikey/revoke.cmd", postdata)
+            .done(function(data) {
+                var delt = elem.parent();
+
+                elem.remove();
+
+                if ($('tr', delt).length == 1) {
+                    delt.append(
+                        $('<tr>', {
+                            'class': 'noapi'
+                        })
+                        .append(
+                            $('<td>', {
+                                'colspan': 4
+                            })
+                            .html("<i>No API keys defined...</i>")
+                        )
+                    );
+                }
+            })
+        });
+
+    deltd.empty();
+    deltd.append(delbt);
+
+}
+
+function make_role_help_closure(role) {
+    return function() { show_role_help(role); };
+}
+
+function make_role_delete_closure(rolename, elem) {
+    return function() { delete_role(rolename, elem); };
+}
+
+kismet_ui_settings.AddSettingsPane({
+    id: 'base_api_logins',
+    listTitle: "API Keys",
+    create: function(elem) {
+        elem.append($("p").html("Fetching API data..."));
+
+        $.get(local_uri_prefix + "auth/apikey/list.json")
+        .done(function(data) {
+            data = kismet.sanitizeObject(data);
+            elem.empty();
+
+            var tb = $('<table>', {
+                'class': 'apitable',
+                'id': 'apikeytable',
+            })
+
+            .append(
+                $('<tr>')
+                .append(
+                    $('<th>', {
+                        'class': 'apith',
+                        'style': 'width: 16em;',
+                    }).html("Name")
+                )
+                .append(
+                    $('<th>', {
+                        'class': 'apith',
+                        'style': 'width: 8em;',
+                    }).html("Role")
+                )
+                .append(
+                    $('<th>', {
+                        'class': 'apith',
+                        'style': 'width: 30em;',
+                    }).html("Key")
+                )
+                .append(
+                    $('<th>')
+                )
+            );
+
+            elem.append(tb);
+
+            if (data.length == 0) {
+                tb.append(
+                    $('<tr>', {
+                        'class': 'noapi'
+                    })
+                    .append(
+                        $('<td>', {
+                            'colspan': 4
+                        })
+                        .html("<i>No API keys defined...</i>")
+                    )
+                );
+            }
+
+            for (var user of data) {
+                var name = user['kismet.httpd.auth.name'];
+                var role = user['kismet.httpd.auth.role'];
+
+                var key;
+
+                if ('kismet.httpd.auth.token' in user) {
+                    key = user['kismet.httpd.auth.token'];
+                } else {
+                    key = "<i>Viewing auth tokens is disabled in the Kismet configuration.</i>";
+                }
+
+                var tr = 
+                    $('<tr>', {
+                        'class': 'apihover'
+                    });
+
+                tr
+                    .append(
+                        $('<td>').html(name)
+                    )
+                    .append(
+                        $('<td>').html(role)
+                        .append(
+                            $('<i>', {
+                                'class': 'pseudolink fa fa-question-circle',
+                                'style': 'padding-left: 5px;',
+                            })
+                            .on('click', make_role_help_closure(role))
+                        )
+                    )
+                    .append(
+                        $('<td>')
+                        .append(
+                            $('<input>', {
+                                'type': 'text',
+                                'value': key,
+                                'readonly': 'true',
+                                'size': 34,
+                                'id': name.replace(" ", "_"),
+                            })
+                        )
+                        .append(
+                            $('<i>', {
+                                'class': 'copyuri pseudolink fa fa-copy',
+                                'style': 'padding-left: 5px;',
+                                'data-clipboard-target': `#${name.replace(" ", "_")}`, 
+                            })
+                        )
+                    )
+                    .append(
+                        $('<td>', {
+                            'class': 'deltd'
+                        })
+                        .append(
+                            $('<i>', {
+                                'class': 'pseudolink fa fa-trash',
+                            })
+                            .on('click', make_role_delete_closure(name, tr))
+                        )
+                    )
+
+                tb.append(
+                    tr
+                )
+            }
+
+            var adddiv = 
+                $('<div>', {
+                    'id': 'addapidiv'
+                })
+                .append(
+                    $('<fieldset>')
+                    .append(
+                        $('<button>', {
+                            'id': 'addapikeybutton',
+                            'class': 'padded',
+                        }).html(`<i class="fa fa-plus"> Create API Key`)
+                    )
+                    .append(
+                        $('<label>', {
+                            'for': 'addapiname',
+                            'class': 'padded',
+                        }).html("Name")
+                    )
+                    .append(
+                        $('<input>', {
+                        'name': 'addapiname',
+                        'id': 'addapiname',
+                        'type': 'text',
+                        'size': 16,
+                        })
+                    )
+                    .append(
+                        $('<label>', {
+                            'for': 'addapirole',
+                            'class': 'padded',
+                        }).html("Role")
+                    )
+                    .append(
+                        $('<select>', {
+                            'name': 'addapirole',
+                            'id': 'addapirole'
+                        })
+                        .append(
+                            $('<option>', {
+                                'value': 'readonly',
+                                'selected': 'true',
+                            }).html("readonly")
+                        )
+                        .append(
+                            $('<option>', {
+                                'value': 'datasource',
+                            }).html("datasource")
+                        )
+                        .append(
+                            $('<option>', {
+                                'value': 'scanreport',
+                            }).html("scanreport")
+                        )
+                        .append(
+                            $('<option>', {
+                                'value': 'admin',
+                            }).html("admin")
+                        )
+                        .append(
+                            $('<option>', {
+                                'value': 'ADSB',
+                            }).html("ADSB")
+                        )
+                        .append(
+                            $('<option>', {
+                                'value': 'custom',
+                            }).html("<i>custom</i>")
+                        )
+                    )
+                    .append(
+                        $('<input>', {
+                            'name': 'addapiroleother',
+                            'id': 'addapiroleother',
+                            'type': 'text',
+                            'size': 16,
+                        }).hide()
+                    )
+                    .append(
+                        $('<i>', {
+                            'class': 'pseudolink fa fa-question-circle',
+                            'style': 'padding-left: 5px;',
+                        })
+                        .on('click', make_role_help_closure("__explain__"))
+                    )
+                    .append(
+                        $('<div>', {
+                            'id': 'addapierror',
+                            'style': 'color: red;'
+                        }).hide()
+                    )
+                );
+
+            $('#addapikeybutton', adddiv)
+                .button()
+                .on('click', function() {
+                    var name = $('#addapiname').val();
+                    var role_select = $('#addapirole option:selected').text();
+                    var role_input = $('#addapiroleother').val();
+
+                    if (name.length == 0) {
+                        $('#addapierror').show().html("Missing name.");
+                        return;
+                    }
+
+                    if (role_select === "custom" && role_input.length == 0) {
+                        $('#addapierror').show().html("Missing custom role.");
+                        return;
+                    }
+
+                    $('#addapierror').hide();
+
+                    var role = role_select;
+
+                    if (role_select === "custom")
+                        role = role_input;
+
+                    var pd = {
+                        'name': name,
+                        'role': role,
+                        'duration': 0,
+                    };
+
+                    var postdata = "json=" + encodeURIComponent(JSON.stringify(pd));
+
+                    $.post(local_uri_prefix + "auth/apikey/generate.cmd", postdata)
+                    .fail(function(response) {
+                        var rt = kismet.sanitizeObject(response.responseText);
+                        $('#addapierror').show().html(`Failed to add API key: ${rt}`);
+                    })
+                    .done(function(data) {
+                        var key = kismet.sanitizeObject(data);
+
+                        var tr = 
+                            $('<tr>', {
+                                'class': 'apihover'
+                            });
+
+                        tr
+                            .append(
+                                $('<td>').html(name)
+                            )
+                            .append(
+                                $('<td>').html(role)
+                                .append(
+                                    $('<i>', {
+                                        'class': 'pseudolink fa fa-question-circle',
+                                        'style': 'padding-left: 5px;',
+                                    })
+                                    .on('click', make_role_help_closure(role))
+                                )
+                            )
+                            .append(
+                                $('<td>')
+                                .append(
+                                    $('<input>', {
+                                        'type': 'text',
+                                        'value': key,
+                                        'readonly': 'true',
+                                        'size': 34,
+                                        'id': name.replace(" ", "_"),
+                                    })
+                                )
+                                .append(
+                                    $('<i>', {
+                                        'class': 'copyuri pseudolink fa fa-copy',
+                                        'style': 'padding-left: 5px;',
+                                        'data-clipboard-target': `#${name.replace(" ", "_")}`, 
+                                    })
+                                )
+                            )
+                            .append(
+                                $('<td>', {
+                                    'class': 'deltd'
+                                })
+                                .append(
+                                    $('<i>', {
+                                        'class': 'pseudolink fa fa-trash',
+                                    })
+                                    .on('click', make_role_delete_closure(name, tr))
+                                )
+                            );
+
+                        $('#apikeytable').append(tr);
+
+                        $('#addapiname').val('');
+                        $("#addapirole").prop("selectedIndex", 0);
+                        $("#addapirole").show();
+                        $("#addapiroleother").val('').hide();
+                    });
+                });
+
+            $('#addapirole', adddiv).on('change', function(e) {
+                var val = $("#addapirole option:selected" ).text();
+
+                if (val === "custom") {
+                    $(this).hide();
+                    $('#addapiroleother').show();
+                }
+
+            });
+
+            elem.append(adddiv);
+
+            new ClipboardJS('.copyuri');
+        });
+    },
+    save: function(elem) {
+        return true;
+    },
+});
+
+
 
 /* Add the messages and channels tabs */
 kismet_ui_tabpane.AddTab({
@@ -2375,7 +3311,7 @@ exports.FirstLoginCheck = function(first_login_done_cb) {
                     first_login_done_cb();
                 }
             });
-        } else if (code != 200) {
+        } else if (code == 500) {
             loginpanel = $.jsPanel({
                 id: "login-alert",
                 headerTitle: '<i class="fa fa-exclamation-triangle"></i> Set Login',
@@ -2389,6 +3325,20 @@ exports.FirstLoginCheck = function(first_login_done_cb) {
             });
 
             return true;
+        } else {
+            loginpanel = $.jsPanel({
+                id: "login-alert",
+                headerTitle: '<i class="fa fa-exclamation-triangle"></i> Error connecting',
+                headerControls: {
+                    controls: 'closeonly',
+                    iconfont: 'jsglyph',
+                },
+                contentSize: w + " auto",
+                paneltype: 'modal',
+                content: "Error connecting to Kismet and checking provisioning; try reloading the page!",
+            });
+
+
         }
    });
 
@@ -2496,6 +3446,33 @@ kismet_ui.AddDeviceRowHighlight({
         var ts = data['kismet.device.base.last_time'];
 
         return (kismet.timestamp_sec - ts < 10);
+    }
+});
+
+/* Bodycam hardware of various types */
+kismet_ui.AddDeviceRowHighlight({
+    name: "Bodycams",
+    description: "Body camera devices",
+    priority: 500,
+    defaultcolor: "#0089FF",
+    defaultenable: true,
+    fields: [
+        'kismet.device.base.macaddr',
+        'kismet.device.base.commonname',
+    ],
+    selector: function(data) {
+        try {
+            if (data['kismet.device.base.macaddr'].match("^00:25:DF") != null)
+                return true;
+            if (data['kismet.device.base.macaddr'].match("^12:20:13") != null)
+                return true;
+            if (data['kismet.device.base.common_name'].match("^Axon-X") != null)
+                return true;
+        } catch (e) {
+            return false;
+        }
+
+        return false;
     }
 });
 

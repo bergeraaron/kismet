@@ -74,7 +74,7 @@ public:
         return adler32_checksum("eventbus_event");
     }
 
-    virtual std::unique_ptr<tracker_element> clone_type(int in_id) override {
+    virtual std::unique_ptr<tracker_element> clone_type() override {
         using this_t = std::remove_pointer<decltype(this)>::type;
         auto dup = std::unique_ptr<this_t>(new this_t());
         return std::move(dup);
@@ -94,7 +94,7 @@ protected:
     }
 };
 
-class event_bus : public lifetime_global {
+class event_bus : public lifetime_global, public deferred_startup {
 public:
     using cb_func = std::function<void (std::shared_ptr<eventbus_event>)>;
 
@@ -103,6 +103,7 @@ public:
     static std::shared_ptr<event_bus> create_eventbus() {
         std::shared_ptr<event_bus> mon(new event_bus());
         Globalreg::globalreg->register_lifetime_global(mon);
+        Globalreg::globalreg->register_deferred_global(mon);
         Globalreg::globalreg->insert_global(global_name(), mon);
         return mon;
     }
@@ -113,6 +114,8 @@ private:
 public:
 	virtual ~event_bus();
 
+    void trigger_deferred_startup() override;
+
     unsigned long register_listener(const std::string& channel, cb_func cb);
     unsigned long register_listener(const std::list<std::string>& channels, cb_func cb);
     void remove_listener(unsigned long id);
@@ -121,7 +124,7 @@ public:
 
     template<typename T>
     void publish(T event) {
-        local_locker l(&mutex);
+        kis_lock_guard<kis_mutex> lk(mutex, "eventbus publish");
 
         auto evt_cast = 
             std::static_pointer_cast<eventbus_event>(event);
@@ -134,7 +137,7 @@ protected:
     // We need 2 mutexes - we have to block removing a callback while we're dispatching
     // an event, because we need to not lock up the entire event bus while we're 
     // sending out events
-    kis_recursive_timed_mutex mutex, handler_mutex;
+    kis_mutex mutex, handler_mutex;
 
     int eventbus_event_id;
 

@@ -87,11 +87,9 @@ class KismetRtladsb(object):
             self.have_librtl = False
 
         parser = argparse.ArgumentParser(description='RTLadsb to Kismet bridge - Creates a rtladsb data source on a Kismet server and passes JSON-based records from the rtladsb binary')
-        
-        parser.add_argument('--in-fd', action="store", type=int, dest="infd")
-        parser.add_argument('--out-fd', action="store", type=int, dest="outfd")
-        parser.add_argument('--connect', action="store", dest="connect")
-        parser.add_argument("--source", action="store", dest="source")
+      
+        # Append the default args
+        parser = kismetexternal.ExternalInterface.common_getopt(parser)
         
         self.config = parser.parse_args()
 
@@ -109,7 +107,7 @@ class KismetRtladsb(object):
             self.proberet = self.datasource_probesource(source, options)
 
             if self.proberet == None:
-                print("Could not configure local source {}, check your source options and config.")
+                print(f"Could not configure local source {self.config.source}, check your source options and config.")
                 sys.exit(0)
 
             if not "success" in self.proberet:
@@ -127,7 +125,7 @@ class KismetRtladsb(object):
             print("Connecting to remote server {}".format(self.config.connect))
 
     def run(self):
-        self.kismet = kismetexternal.Datasource(self.config.infd, self.config.outfd, remote = self.config.connect)
+        self.kismet = kismetexternal.Datasource(self.config)
 
         self.kismet.set_configsource_cb(self.datasource_configure)
         self.kismet.set_listinterfaces_cb(self.datasource_listinterfaces)
@@ -279,7 +277,8 @@ class KismetRtladsb(object):
                     dev_index = serial
 
                 intf = kismetexternal.datasource_pb2.SubInterface()
-                intf.interface = "rtladsb-{}".format(dev_index)
+                intf.interface = f"rtladsb-{dev_index}"
+                intf.capinterface = f"rtl-{dev_index}"
                 intf.flags = ""
                 intf.hardware = self.rtlsdr.rtl_get_device_name(i)
                 interfaces.append(intf)
@@ -340,7 +339,7 @@ class KismetRtladsb(object):
         ret = {}
 
         # Does the source look like 'rtladsb-XYZ'?
-        if not source[:8] == "rtladsb-":
+        if not source[:8] == "rtladsb-" and not source[:4] == "rtl-":
             ret["success"] = False
             ret["message"] = "Could not parse which rtlsdr device to use"
             return ret
@@ -409,6 +408,8 @@ class KismetRtladsb(object):
             ret['uuid'] = options['uuid']
         else:
             ret['uuid'] = self.__get_rtlsdr_uuid(intnum)
+
+        ret['capture_interface'] = f"rtl-{devselector}"
 
         self.opts['device'] = intnum
 
@@ -593,7 +594,13 @@ class KismetRtladsb(object):
 
     def __async_radio_thread(self):
         # This function blocks forever until cancelled
-        self.rtlsdr.read_samples(self.rtl_data_cb, 12, self.usb_buf_sz)
+        try:
+            self.rtlsdr.read_samples(self.rtl_data_cb, 12, self.usb_buf_sz)
+        except rtlsdr.RadioOperationalError as e:
+            if not self.kismet.inSpindown():
+                self.kismet.send_datasource_error_report(message = f"Error reading from RTLSDR: {e}")
+        except Exception as e:
+            self.kismet.send_datasource_error_report(message = f"Error reading from RTLSDR: {e}")
 
         # Always make sure we die
         self.kill_adsb()

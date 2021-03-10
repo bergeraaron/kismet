@@ -21,9 +21,8 @@
 #include "datasource_rtladsb.h"
 #include "phy_rtladsb.h"
 
-kis_datasource_rtladsb::kis_datasource_rtladsb(shared_datasource_builder in_builder, 
-        std::shared_ptr<kis_recursive_timed_mutex> mutex) :
-    kis_datasource(in_builder, mutex) {
+kis_datasource_rtladsb::kis_datasource_rtladsb(shared_datasource_builder in_builder) :
+    kis_datasource(in_builder) {
 
     std::string devnum = munge_to_printable(get_definition_opt("device"));
     if (devnum != "") {
@@ -45,44 +44,4 @@ void kis_datasource_rtladsb::open_interface(std::string in_definition, unsigned 
         open_callback_t in_cb) {
     kis_datasource::open_interface(in_definition, in_transaction, in_cb);
 }
-
-#if 0
-int kis_datasource_rtladsb::httpd_post_complete(kis_net_httpd_connection *concls) {
-    std::string stripped = httpd_strip_suffix(concls->url);
-    std::vector<std::string> tokenurl = str_tokenize(stripped, "/");
-
-    // Anything involving POST here requires a login
-    if (!httpd->has_valid_session(concls, true)) {
-        return 1;
-    }
-
-    if (tokenurl.size() < 5)
-        return MHD_NO;
-
-    if (tokenurl[1] != "datasource")
-        return MHD_NO;
-
-    if (tokenurl[2] != "by-uuid")
-        return MHD_NO;
-
-    if (tokenurl[3] != get_source_uuid().uuid_to_string())
-        return MHD_NO;
-
-    if (tokenurl[4] == "update") {
-
-        packetchain_comp_datasource *datasrcinfo = new packetchain_comp_datasource();
-        datasrcinfo->ref_source = this;
-        packet->insert(pack_comp_datasrc, datasrcinfo);
-
-        inc_source_num_packets(1);
-        get_source_packet_rrd()->add_sample(1, time(0));
-
-        packetchain->process_packet(packet);
-    }
-
-    return MHD_NO;
-}
-#endif
-
-
 

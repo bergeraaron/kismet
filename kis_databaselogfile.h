@@ -48,7 +48,7 @@
 #include "alertracker.h"
 #include "logtracker.h"
 #include "packetchain.h"
-#include "pcapng_stream_ringbuf.h"
+#include "pcapng_stream_futurebuf.h"
 #include "sqlite3_cpp11.h"
 #include "class_filter.h"
 #include "packet_filter.h"
@@ -58,8 +58,7 @@
 // to exist as a global record; we build it like we do any other global record;
 // then the builder hooks it, sets the internal builder record, and passed it to
 // the logtracker
-class kis_database_logfile : public kis_logfile, public kis_database, public lifetime_global,
-    public kis_net_httpd_ringbuf_stream_handler, public message_client, public deferred_startup {
+class kis_database_logfile : public kis_logfile, public kis_database, public lifetime_global, public deferred_startup {
 public:
     static std::string global_name() { return "DATABASELOG"; }
 
@@ -122,19 +121,6 @@ public:
 
     static void usage(const char *argv0);
 
-    // HTTP handlers
-    virtual bool httpd_verify_path(const char *path, const char *method) override;
-
-    virtual KIS_MHD_RETURN httpd_create_stream_response(kis_net_httpd *httpd,
-            kis_net_httpd_connection *connection,
-            const char *url, const char *method, const char *upload_data,
-            size_t *upload_data_size) override;
-
-    virtual KIS_MHD_RETURN httpd_post_complete(kis_net_httpd_connection *concls) override;
-
-    // Messagebus API
-    virtual void process_message(std::string in_msg, int in_flags) override;
-
     // Direct access to the filters for setting programmatically
     std::shared_ptr<packet_filter_mac_addr> get_packet_filter() { 
         return packet_mac_filter;
@@ -172,40 +158,19 @@ protected:
             fmt::print(stderr, "FATAL: kismetdb log couldn't finish a database transaction within the " \
                     "timeout window for threads ({} seconds).  Usually this happens when " \
                     "the disk you are logging to can not perform adequately, such as a " \
-                    "micro-sd.  Try moving logging to a USB device.", KIS_THREAD_DEADLOCK_TIMEOUT); \
+                    "micro SD.  Try moving logging to a USB device.", KIS_THREAD_TIMEOUT); \
             Globalreg::globalreg->fatal_condition = 1; \
-            throw std::runtime_error("disk too slow for logging"); \
+            throw; \
+        } else { \
+            throw; \
         } \
-        throw(e); \
     }
 
-    // Prebaked parameterized statements
-    sqlite3_stmt *device_stmt;
-    const char *device_pz;
-
-    sqlite3_stmt *packet_stmt;
-    const char *packet_pz;
-
-    sqlite3_stmt *datasource_stmt;
-    const char *datasource_pz;
-
-    sqlite3_stmt *data_stmt;
-    const char *data_pz;
-    
-    sqlite3_stmt *alert_stmt;
-    const char *alert_pz;
-
-    sqlite3_stmt *msg_stmt;
-    const char *msg_pz;
-    
-    sqlite3_stmt *snapshot_stmt;
-    const char *snapshot_pz;
-
-    static int packet_handler(CHAINCALL_PARMS);
+    int packet_handler_id;
 
     // Keep track of our commit cycles; to avoid thrashing the filesystem with
     // commit state we run a 10 second tranasction commit loop
-    kis_recursive_timed_mutex transaction_mutex;
+    kis_mutex transaction_mutex;
     int transaction_timer;
 
     // Packet time limit
@@ -229,23 +194,28 @@ protected:
     int alert_timeout_timer;
 
     // Packet clearing API
-    std::shared_ptr<kis_net_httpd_simple_post_endpoint> packet_drop_endp;
-    unsigned int packet_drop_endpoint_handler(std::ostream& stream, const std::string& uri,
-            const Json::Value& json, kis_net_httpd_connection::variable_cache_map& postvars);
+    void packet_drop_endpoint_handler(std::shared_ptr<kis_net_beast_httpd_connection> con);
 
     // POI API
-    std::shared_ptr<kis_net_httpd_simple_post_endpoint> make_poi_endp;
-    unsigned int make_poi_endp_handler(std::ostream& stream, const std::string& uri,
-            const Json::Value& json, kis_net_httpd_connection::variable_cache_map& postvars);
+    void make_poi_endp_handler(std::shared_ptr<kis_net_beast_httpd_connection> con);
+    std::shared_ptr<tracker_element> list_poi_endp_handler(std::shared_ptr<kis_net_beast_httpd_connection> con);
 
-    std::shared_ptr<kis_net_httpd_simple_tracked_endpoint> list_poi_endp;
-    std::shared_ptr<tracker_element> list_poi_endp_handler();
+    // Pcap streaming api
+    void pcapng_endp_handler(std::shared_ptr<kis_net_beast_httpd_connection> con);
 
     // Device log filter
     std::shared_ptr<class_filter_mac_addr> device_mac_filter;
 
     // Packet log filter
     std::shared_ptr<packet_filter_mac_addr> packet_mac_filter;
+
+    // Eventbus listeners
+    std::shared_ptr<event_bus> eventbus;
+    void handle_message(std::shared_ptr<tracked_message> msg);
+    unsigned long message_evt_id;
+
+    void handle_alert(std::shared_ptr<tracked_alert> msg);
+    unsigned long alert_evt_id;
 };
 
 class kis_database_logfile_builder : public kis_logfile_builder {
@@ -294,14 +264,14 @@ public:
     }
 };
 
-class pcap_stream_database : public pcap_stream_ringbuf {
+class pcapng_stream_database : public pcapng_stream_futurebuf {
 public:
-    pcap_stream_database(global_registry *in_globalreg, 
-            std::shared_ptr<buffer_handler_generic> in_handler);
+    pcapng_stream_database(future_chainbuf& buffer);
 
-    virtual ~pcap_stream_database();
+    virtual ~pcapng_stream_database();
 
-    virtual void stop_stream(std::string in_reason);
+    virtual void start_stream() override;
+    virtual void stop_stream(std::string in_reason) override;
 
     // Write packet using database metadata, doing a lookup on the interface UUID.  This is more expensive
     // than the numerical lookup but we need to search by UUID regardless and for many single-source feeds
@@ -336,7 +306,6 @@ protected:
 
     std::map<std::string, std::shared_ptr<db_interface>> db_uuid_intf_map;
     int next_pcap_intf_id;
-
 };
 
 

@@ -27,7 +27,7 @@
 /* Named mutex debugging */
 #undef DEBUG_MUTEX_NAME
 
-/* cannot support backtrace dumping */
+/* disabled by configure arguments */
 #undef DISABLE_BACKWARD
 
 /* Remove mutex deadlock timeout protection */
@@ -54,13 +54,13 @@
 /* kernel capability support */
 #undef HAVE_CAPABILITY
 
-/* define if the compiler supports basic C++11 syntax */
+/* cpp11 available */
 #undef HAVE_CXX11
 
-/* define if the compiler supports basic C++14 syntax */
+/* cpp14 available */
 #undef HAVE_CXX14
 
-/* define if the compiler supports basic C++17 syntax */
+/* cpp17 available */
 #undef HAVE_CXX17
 
 /* Define to 1 if you have the <dwarf.h> header file. */
@@ -80,6 +80,9 @@
 
 /* inttypes.h is present */
 #undef HAVE_INTTYPES_H
+
+/* libbladerf */
+#undef HAVE_LIBBLADERF
 
 /* Define to 1 if you have the `cap' library (-lcap). */
 #undef HAVE_LIBCAP
@@ -120,6 +123,9 @@
 /* Define to 1 if you have the <libutil.h> header file. */
 #undef HAVE_LIBUTIL_H
 
+/* libwebsockets */
+#undef HAVE_LIBWEBSOCKETS
+
 /* Linux wireless iwfreq.flag */
 #undef HAVE_LINUX_IWFREQFLAG
 
@@ -135,29 +141,14 @@
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
 
-/* microhttpd is present */
-#undef HAVE_MICROHTTPD_H
-
 /* pcap/pcap.h */
 #undef HAVE_PCAPPCAP_H
-
-/* pcapfileno-capable libwpcap */
-#undef HAVE_PCAP_FILENO
-
-/* Selectablefd-capable libpcap */
-#undef HAVE_PCAP_GETSELFD
 
 /* libpcap header */
 #undef HAVE_PCAP_H
 
-/* Nonblocking-capable libpcap */
-#undef HAVE_PCAP_NONBLOCK
-
 /* System has pipe2 */
 #undef HAVE_PIPE2
-
-/* libpcap supports PPI */
-#undef HAVE_PPI
 
 /* Define to 1 if you have the `pstat' function. */
 #undef HAVE_PSTAT
@@ -198,7 +189,7 @@
 /* Define to 1 if you have the <ubertooth.h> header file. */
 #undef HAVE_UBERTOOTH_H
 
-/* Define to 1 if you have the <ubertooth/ubertooth.h> header file. */
+/* ubertooth.h in ubertooth dir */
 #undef HAVE_UBERTOOTH_UBERTOOTH_H
 
 /* Define to 1 if you have the <unistd.h> header file. */
@@ -215,9 +206,6 @@
 
 /* system state directory */
 #undef LOCALSTATE_DIR
-
-/* Able to use MHD_quiesce_daemon to shut down */
-#undef MHD_QUIESCE
 
 /* we need to shim isnan */
 #undef MISSING_STD_ISNAN
@@ -334,3 +322,6 @@
 #define _(x) x
 #endif
 
+/* asio global defs */
+#define ASIO_HAS_STD_CHRONO
+#define ASIO_HAS_MOVE

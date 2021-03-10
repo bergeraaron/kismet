@@ -7,7 +7,7 @@
     (at your option) any later version.
 
     Kismet is distributed in the hope that it will be useful,
-      but WITHOUT ANY WARRANTY; without even the implied warranty of
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
@@ -25,6 +25,7 @@
 #include "macaddr.h"
 #include "kis_httpd_registry.h"
 #include "manuf.h"
+#include "messagebus.h"
 
 Kis_RTL433_Phy::Kis_RTL433_Phy(global_registry *in_globalreg, int in_phyid) :
     kis_phy_handler(in_globalreg, in_phyid) {
@@ -193,7 +194,11 @@ bool Kis_RTL433_Phy::json_to_rtl(Json::Value json, kis_packet *packet) {
                 (UCD_UPDATE_FREQUENCIES | UCD_UPDATE_PACKETS | UCD_UPDATE_LOCATION |
                  UCD_UPDATE_SEENBY), "RTL433 Sensor");
 
-    local_locker bssidlock(&(basedev->device_mutex));
+
+    kis_unique_lock<kis_mutex> lk_list(devicetracker->get_devicelist_mutex(), std::defer_lock, 
+            "rtl433 json_to_rtl");
+    kis_unique_lock<kis_mutex> lk_device(basedev->device_mutex, std::defer_lock, "rtl433 json_to_rtl");
+    std::lock(lk_list, lk_device);
 
     std::string dn = "Sensor";
 
