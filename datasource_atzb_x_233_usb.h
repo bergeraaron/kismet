@@ -25,6 +25,7 @@
 
 #include "kis_datasource.h"
 #include "dlttracker.h"
+#include "tap_802_15_4.h"
 
 #define CHECK_BIT(var,pos) ((var) & (1<<(pos)))
 
@@ -41,9 +42,8 @@ typedef std::shared_ptr<kis_datasource_atzbx233usb> shared_datasource_atzbx233us
 
 class kis_datasource_atzbx233usb : public kis_datasource {
 public:
-    kis_datasource_atzbx233usb(shared_datasource_builder in_builder,
-            std::shared_ptr<kis_recursive_timed_mutex> mutex) :
-        kis_datasource(in_builder, mutex) {
+    kis_datasource_atzbx233usb(shared_datasource_builder in_builder) :
+        kis_datasource(in_builder) {
 
         // Set the capture binary
         set_int_source_ipc_binary("kismet_cap_atzb_x_233_usb");
@@ -94,9 +94,8 @@ public:
 
     virtual ~datasource_atzbx233usb_builder() { }
 
-    virtual shared_datasource build_datasource(shared_datasource_builder in_sh_this,
-            std::shared_ptr<kis_recursive_timed_mutex> mutex) override {
-        return shared_datasource_atzbx233usb(new kis_datasource_atzbx233usb(in_sh_this, mutex));
+    virtual shared_datasource build_datasource(shared_datasource_builder in_sh_this) override {
+        return shared_datasource_atzbx233usb(new kis_datasource_atzbx233usb(in_sh_this));
     }
 
     virtual void initialize() override {
