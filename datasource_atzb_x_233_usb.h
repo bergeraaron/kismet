@@ -49,7 +49,8 @@ public:
         set_int_source_ipc_binary("kismet_cap_atzb_x_233_usb");
 
         // We synthesize ZIGBEE headers
-        set_int_source_dlt(KDLT_IEEE802_15_4_NOFCS);
+        //set_int_source_dlt(KDLT_IEEE802_15_4_NOFCS);
+        set_int_source_dlt(KDLT_IEEE802_15_4_TAP);
 
         pack_comp_decap =
             packetchain->register_packet_component("DECAP");

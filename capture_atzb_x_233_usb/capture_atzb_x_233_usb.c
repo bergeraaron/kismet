@@ -520,10 +520,13 @@ printf("chancontrol_callback channel:%d\n",channel->channel);
             localatzb->ready = true;
             localatzb->prevchannel = channel->channel;
         }
+        localatzb->channel = channel->channel;
     } else {
 	    r = 0;
     }
     
+
+
     return r;
 }
 
@@ -555,6 +558,10 @@ void capture_thread(kis_capture_handler_t *caph) {
                 break;
             }
         }
+
+        /* insert the channel into the packet header*/
+        buf[3] = (uint8_t)localatzb->channel;
+
         if (buf_rx_len > 0) {
             while (1) {
                 struct timeval tv;
