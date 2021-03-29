@@ -138,6 +138,9 @@ BUILD_CAPTURE_NXP_KW41Z = @BUILD_CAPTURE_NXP_KW41Z@
 CAPTURE_ATZB_233 = capture_atzb_x_233_usb/kismet_cap_atzb_x_233_usb
 BUILD_CAPTURE_ATZB_233 = @BUILD_CAPTURE_ATZB_233@
 
+CAPTURE_ATZB_212b = capture_atzb_x_212b_usb/kismet_cap_atzb_x_212b_usb
+BUILD_CAPTURE_ATZB_212b = @BUILD_CAPTURE_ATZB_212b@
+
 CAPTURE_NRF_52840 = capture_nrf_52840/kismet_cap_nrf_52840
 BUILD_CAPTURE_NRF_52840 = @BUILD_CAPTURE_NRF_52840@
 
@@ -215,7 +218,7 @@ PSO	= util.cc.o macaddr.cc.o uuid.cc.o xxhash.cc.o boost_like_hash.cc.o sqlite3_
 	dlttracker.cc.o antennatracker.cc.o datasourcetracker.cc.o kis_datasource.cc.o \
 	datasource_linux_bluetooth.cc.o datasource_rtl433.cc.o datasource_rtlamr.cc.o datasource_rtladsb.cc.o \
 	datasource_ti_cc_2540.cc.o datasource_ti_cc_2531.cc.o datasource_ubertooth_one.cc.o datasource_nrf_51822.cc.o \
-	datasource_nxp_kw41z.cc.o datasource_nrf_52840.cc.o datasource_rz_killerbee.cc.o datasource_atzb_x_233_usb.cc.o \
+	datasource_nxp_kw41z.cc.o datasource_nrf_52840.cc.o datasource_rz_killerbee.cc.o datasource_atzb_x_233_usb.cc.o datasource_atzb_x_212b_usb.cc.o \
 	datasource_scan.cc.o \
 	kis_net_beast_httpd.cc.o kis_httpd_registry.cc.o \
 	system_monitor.cc.o \
@@ -365,6 +368,9 @@ $(CAPTURE_NXP_KW41Z): $(PROTOBUF_C_H) $(DATASOURCE_COMMON_A) FORCE
 $(CAPTURE_ATZB_233): $(PROTOBUF_C_H) $(DATASOURCE_COMMON_A) FORCE
 	(cd capture_atzb_x_233_usb && $(MAKE))
 
+$(CAPTURE_ATZB_212b): $(PROTOBUF_C_H) $(DATASOURCE_COMMON_A) FORCE
+	(cd capture_atzb_x_212b_usb && $(MAKE))
+
 $(CAPTURE_NRF_52840): $(PROTOBUF_C_H) $(DATASOURCE_COMMON_A) FORCE
 	(cd capture_nrf_52840 && $(MAKE))
 
@@ -429,6 +435,10 @@ binsuidinstall: $(DATASOURCE_BINS)
 
 	@if test "$(BUILD_CAPTURE_ATZB_233)"x = "1"x; then \
 		$(INSTALL) -o $(INSTUSR) -g $(SUIDGROUP) -m 4550 $(CAPTURE_ATZB_233) $(BIN)/`basename $(CAPTURE_ATZB_233)`; \
+	fi;
+
+	@if test "$(BUILD_CAPTURE_ATZB_212b)"x = "1"x; then \
+		$(INSTALL) -o $(INSTUSR) -g $(SUIDGROUP) -m 4550 $(CAPTURE_ATZB_212b) $(BIN)/`basename $(CAPTURE_ATZB_212b)`; \
 	fi;
 
 	@if test "$(BUILD_CAPTURE_RZ_KILLERBEE)"x = "1"x; then \
@@ -517,6 +527,10 @@ commoninstall: $(INSTBINS)
 
 	@if test "$(BUILD_CAPTURE_ATZB_233)"x = "1"x; then \
 		$(INSTALL) -o $(INSTUSR) -g $(INSTGRP) $(CAPTURE_ATZB_233) $(BIN)/`basename $(CAPTURE_ATZB_233)`; \
+	fi;
+
+	@if test "$(BUILD_CAPTURE_ATZB_212b)"x = "1"x; then \
+		$(INSTALL) -o $(INSTUSR) -g $(INSTGRP) $(CAPTURE_ATZB_212b) $(BIN)/`basename $(CAPTURE_ATZB_212b)`; \
 	fi;
 
 	@if test "$(BUILD_CAPTURE_RZ_KILLERBEE)"x = "1"x; then \
@@ -740,6 +754,7 @@ clean: all-plugins-clean depclean
 	@(cd capture_nrf_52840 && make clean)
 	@(cd capture_nxp_kw41z && make clean)
 	@(cd capture_atzb_x_233_usb && make clean)
+	@(cd capture_atzb_x_212b_usb && make clean)
 	@(cd capture_rz_killerbee && make clean)
 
 	@-rm -f $(DATASOURCE_COMMON_A)

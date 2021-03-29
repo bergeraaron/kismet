@@ -79,6 +79,7 @@
 #include "datasource_nxp_kw41z.h"
 #include "datasource_ti_cc_2531.h"
 #include "datasource_atzb_x_233_usb.h"
+#include "datasource_atzb_x_212b_usb.h"
 #include "datasource_rz_killerbee.h"
 #include "datasource_virtual.h"
 #include "datasource_dot11_scan.h"
@@ -906,6 +907,7 @@ int main(int argc, char *argv[], char *envp[]) {
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_rzkillerbee_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_ticc2531_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_atzbx233usb_builder()));
+    datasourcetracker->register_datasource(shared_datasource_builder(new datasource_atzbx212busb_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_bladerf_wiphy_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_adsbproxy_builder()));
 
