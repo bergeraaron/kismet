@@ -1,7 +1,7 @@
 (
   typeof define === "function" ? function (m) { define("kismet-ui-dot11-js", m); } :
   typeof exports === "object" ? function (m) { module.exports = m(); } :
-  function(m){ this.kismet_ui_dot11 = m(); }
+  function(m){ this.kismet_ui_alerts = m(); }
 )(function () {
 
 "use strict";
@@ -29,6 +29,24 @@ function severity_to_string(sev) {
         default:
             return "UNKNOWN";
     }
+}
+
+function severity_to_color(sev) {
+    switch (sev) {
+        case 0:
+            return "#03e3fc";
+        case 5:
+            return "#fbff00";
+        case 10:
+            return "#fce303";
+        case 15:
+            return "#fcba03";
+        case 20:
+            return "#fc031c";
+        default:
+            return "UNKNOWN";
+    }
+
 }
 
 var alertTid = -1;
@@ -336,6 +354,8 @@ function InitializeAlertTable() {
                             ;
                         }
                     }
+
+                    $('td', this.node()).css('background-color', severity_to_color(this.data()['kismet.alert.severity']));
                 });
             },
         });
@@ -353,11 +373,9 @@ function InitializeAlertTable() {
         alert_dt.search(JSON.parse(saved_search));
 
     // Set an onclick handler to spawn the device details dialog
-    /*
-    $('tbody', ssid_element).on('click', 'tr', function () {
-        exports.SsidDetailWindow(this.id);
+    $('tbody', alert_element).on('click', 'tr', function () {
+        exports.AlertDetailWindow(this.id);
     } );
-    */
 
     $('tbody', alert_element)
         .on( 'mouseenter', 'td', function () {
@@ -484,6 +502,245 @@ exports.AddAlertColumn('content', {
         return kismet.censorMAC(d);
     }
 });
+
+exports.AddAlertColumn('hash_hidden', {
+    sTitle: 'Hash key',
+    field: 'kismet.alert.hash',
+    searchable: false,
+    visible: false,
+    orderable: false,
+});
+
+exports.AlertDetails = new Array();
+
+exports.AddAlertDetail = function(id, title, pos, options) {
+    kismet_ui.AddDetail(exports.AlertDetails, id, title, pos, options);
+}
+
+exports.AlertDetailWindow = function(key) {
+    kismet_ui.DetailWindow(key, "Alert Details", 
+        {
+            storage: {},
+        },
+
+        function(panel, options) {
+            var content = panel.content;
+
+            panel.active = true;
+
+            window['storage_detail_' + key] = {};
+            window['storage_detail_' + key]['foobar'] = 'bar';
+
+            panel.updater = function() {
+                if (kismet_ui.window_visible) {
+                    $.get(local_uri_prefix + "alerts/by-id/" + key + "/alert.json")
+                        .done(function(fulldata) {
+                            fulldata = kismet.sanitizeObject(fulldata);
+
+                            $('.loadoops', panel.content).hide();
+
+                            panel.headerTitle(`Alert: ${fulldata['kismet.alert.header']}`);
+
+                            var accordion = $('div#accordion', content);
+
+                            if (accordion.length == 0) {
+                                accordion = $('<div />', {
+                                    id: 'accordion'
+                                });
+
+                                content.append(accordion);
+                            }
+
+                            var detailslist = exports.AlertDetails;
+
+                            for (var dii in detailslist) {
+                                var di = detailslist[dii];
+
+                                // Do we skip?
+                                if ('filter' in di.options &&
+                                    typeof(di.options.filter) === 'function') {
+                                    if (di.options.filter(fulldata) == false) {
+                                        continue;
+                                    }
+                                }
+
+                                var vheader = $('h3#header_' + di.id, accordion);
+
+                                if (vheader.length == 0) {
+                                    vheader = $('<h3>', {
+                                        id: "header_" + di.id,
+                                    })
+                                        .html(di.title);
+
+                                    accordion.append(vheader);
+                                }
+
+                                var vcontent = $('div#' + di.id, accordion);
+
+                                if (vcontent.length == 0) {
+                                    vcontent = $('<div>', {
+                                        id: di.id,
+                                    });
+                                    accordion.append(vcontent);
+                                }
+
+                                // Do we have pre-rendered content?
+                                if ('render' in di.options &&
+                                    typeof(di.options.render) === 'function') {
+                                    vcontent.html(di.options.render(fulldata));
+                                }
+
+                                if ('draw' in di.options && typeof(di.options.draw) === 'function') {
+                                    di.options.draw(fulldata, vcontent, options, 'storage_alert_' + key);
+                                }
+
+                                if ('finalize' in di.options &&
+                                    typeof(di.options.finalize) === 'function') {
+                                    di.options.finalize(fulldata, vcontent, options, 'storage_alert_' + key);
+                                }
+                            }
+                            accordion.accordion({ heightStyle: 'fill' });
+                        })
+                        .fail(function(jqxhr, texterror) {
+                            content.html("<div class=\"loadoops\" style=\"padding: 10px;\"><h1>Oops!</h1><p>An error occurred loading alert details for key <code>" + key + 
+                                "</code>: HTTP code <code>" + jqxhr.status + "</code>, " + texterror + "</div>");
+                        })
+                        .always(function() {
+                            panel.timerid = setTimeout(function() { panel.updater(); }, 1000);
+                        })
+                } else {
+                    panel.timerid = setTimeout(function() { panel.updater(); }, 1000);
+                }
+
+            };
+
+            panel.updater();
+        },
+
+        function(panel, options) {
+            clearTimeout(panel.timerid);
+            panel.active = false;
+            window['storage_alert_' + key] = {};
+        });
+};
+
+exports.AddAlertDetail("alert", "Alert", 0, {
+    draw: function(data, target, options, storage) {
+        target.devicedata(data, {
+            id: "alertdetails",
+            fields: [
+                {
+                    field: 'kismet.alert.header',
+                    title: 'Alert',
+                    liveupdate: false,
+                    help: 'Alert type / identifier; each alert has a unique type name.',
+                },
+                {
+                    field: 'kismet.alert.class',
+                    title: 'Class',
+                    liveupdate: false,
+                    help: 'Each alert has a class, such as spoofing, denial of service, known exploit, etc.',
+                },
+                {
+                    field: 'kismet.alert.severity',
+                    title: 'Severity',
+                    liveupdate: false,
+                    draw: function(opts) {
+                        return severity_to_string(opts['value']);
+                    },
+                    help: 'General severity of alert; in increasing severity, alerts are categorized as info, low, medium, high, and critical.',
+                },
+                {
+                    field: 'kismet.alert.timestamp',
+                    title: 'Time',
+                    liveupdate: false,
+                    draw: function(opts) {
+                        console.log(Math.floor(opts['value']));
+                        return kismet_ui.RenderTrimmedTime({'value': Math.floor(opts['value'])});
+                    }
+                },
+                {
+                    field: 'kismet.alert.location/kismet.common.location.geopoint',
+                    filter: function(opts) {
+                        return opts['data']['kismet.alert.location']['kismet.common.location.fix'] >= 2;
+                    },
+                    title: 'Location',
+                    draw: function(opts) {
+                        try {
+                            if (opts['value'][1] == 0 || opts['value'][0] == 0)
+                                return "<i>Unknown</i>";
+
+                            return opts['value'][1] + ", " + opts['value'][0]
+                        } catch (error) {
+                            return "<i>Unknown</i>";
+                        }
+                    },
+                    help: 'Location where alert occurred, either as the location of the Kismet server at the time of the alert or as the location of the packet, if per-packet location was available.',
+                },
+                {
+                    field: 'kismet.alert.text',
+                    title: 'Alert content',
+                    draw: function(opts) {
+                        return kismet.censorMAC(opts['value']);
+                    },
+                    help: 'Human-readable alert content',
+                },
+                {
+                    groupTitle: 'Addresses',
+                    id: 'addresses',
+                    filter: function(opts) {
+                        return opts['data']['kismet.alert.transmitter_mac'] != '00:00:00:00:00:00' ||
+                            opts['data']['kismet.alert.source_mac'] != '00:00:00:00:00:00' ||
+                            opts['data']['kismet.alert.dest_mac'] != '00:00:00:00:00:00';
+                    },
+                    fields: [
+                        {
+                            field: 'kismet.alert.source_mac',
+                            title: 'Source',
+                            filter: function(opts) {
+                                return opts['value'] !== '00:00:00:00:00:00';
+                            },
+                            draw: function(opts) {
+                                return kismet.censorMAC(opts['value']);
+                            },
+                            help: 'MAC address of the source of the packet triggering this alert.',
+                        },
+                        {
+                            field: 'kismet.alert.transmitter_mac',
+                            title: 'Transmitter',
+                            filter: function(opts) {
+                                return opts['value'] !== '00:00:00:00:00:00' &&
+                                    opts['data']['kismet.alert.source_mac'] !== opts['value'];
+                            },
+                            draw: function(opts) {
+                                return kismet.censorMAC(opts['value']);
+                            },
+                            help: 'MAC address of the transmitter of the packet triggering this alert, if not the same as the source.  On Wi-Fi this is typically the BSSID of the AP',
+                        },
+                        {
+                            field: 'kismet.alert.dest_mac',
+                            title: 'Destination',
+                            filter: function(opts) {
+                                return opts['value'] !== '00:00:00:00:00:00';
+                            },
+                            draw: function(opts) {
+                                if (opts['value'] === 'FF:FF:FF:FF:FF:FF')
+                                    return '<i>All / Broadcast</i>'
+                                return kismet.censorMAC(opts['value']);
+                            },
+                            help: 'MAC address of the destionation the packet triggering this alert.',
+                        },
+                    ]
+                },
+            ]
+        })
+    }
+});
+
+exports.AddAlertDetail("devel", "Dev/Debug Options", 10000, {
+    render: function(data) {
+        return 'Alert JSON: <a href="alerts/by-id/' + data['kismet.alert.hash'] + '/alert.prettyjson" target="_new">link</a><br />';
+    }});
 
 exports.load_complete = 1;
 
