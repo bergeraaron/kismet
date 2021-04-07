@@ -87,78 +87,65 @@ int get_baud(int baud)
     }
 }
 
-bool ping_check(kis_capture_handler_t *caph) {
-    local_acc_uzb3_u_sta_t *localacc_uzb3_u_sta = (local_acc_uzb3_u_sta_t *) caph->userdata;
-/**
-PING_REQ = 0x0D
-PING_RESP = 0x0E
-**/
+int acc_uzb3_u_sta_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len, uint8_t *resp,
+                  size_t resp_len, uint8_t *rx_buf, size_t rx_max) {
+
     uint8_t buf[255];
-    buf[0] = 0x0D;
     uint16_t ctr = 0;
     int8_t res = 0;
-    int8_t resp_len = 1;
     bool found = false;
+    local_acc_uzb3_u_sta_t *localacc_uzb3_u_sta = (local_acc_uzb3_u_sta_t *) caph->userdata;
     pthread_mutex_lock(&(localacc_uzb3_u_sta->serial_mutex));
 
-    /* lets flush the buffer */
-    tcflush(localacc_uzb3_u_sta->fd, TCIOFLUSH);
-    /* we are transmitting something */
-    res = write(localacc_uzb3_u_sta->fd, buf, 1);
-    if (res < 0) {
-        found = false;
-    }
-    if (resp_len > 0) {
-        /* looking for a response */
-        while (ctr < 5000) {
-            usleep(25);
-            memset(buf,0x00,255);
-            found = false;
-            res = read(localacc_uzb3_u_sta->fd, buf, 255);
-            /* currently if we get something back that is fine and continue */
-            if (res > 0) {
-                found = true;
-                break;
+    if (tx_len > 0) {
+        /* lets flush the buffer */
+        tcflush(localacc_uzb3_u_sta->fd, TCIOFLUSH);
+        /* we are transmitting something */
+	    res = write(localacc_uzb3_u_sta->fd, tx_buf, tx_len);
+        if (res < 0) {
+            return res;
+        }
+        if (resp_len > 0) {
+            /* looking for a response */
+            while (ctr < 5000) {
+                usleep(25);
+                memset(buf,0x00,255);
+                found = false;
+                res = read(localacc_uzb3_u_sta->fd, buf, 255);
+                /* currently if we get something back that is fine and continue */
+                if (res > 0 && memcmp(buf, resp, resp_len) == 0) {
+                    found = true;
+                    break;
+                } else if (res > 0) {
+                    if (buf[0] == 0x02) {
+                        /* we got something from the device */
+                        res = -1;  // we fell through
+                        tcflush(localacc_uzb3_u_sta->fd,TCIOFLUSH);
+                        break;
+                    }
+                }
+                ctr++;
             }
-            ctr++;
+            if (!found) {
+                res = -1;  // we fell through
+            }
+        } else {
+            res = 1;  // no response requested
+        }
+    } else if (rx_max > 0) {
+        res = read(localacc_uzb3_u_sta->fd, rx_buf, rx_max);
+	    if (res < 0) {
+            usleep(25);
+            res = 0;
         }
     }
+
     pthread_mutex_unlock(&(localacc_uzb3_u_sta->serial_mutex));
-    return found;
+    return res;
 }
 
 int acc_uzb3_u_sta_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_t rx_max) {
-    local_acc_uzb3_u_sta_t *localacc_uzb3_u_sta = (local_acc_uzb3_u_sta_t *) caph->userdata;
-
-    int actual_len = 0;
-    
-    pthread_mutex_lock(&(localacc_uzb3_u_sta->serial_mutex));
-    actual_len = read(localacc_uzb3_u_sta->fd,rx_buf,rx_max);
-    pthread_mutex_unlock(&(localacc_uzb3_u_sta->serial_mutex));
-
-    if(actual_len == 0) {
-        localacc_uzb3_u_sta->error_ctr++;
-        if(localacc_uzb3_u_sta->error_ctr > 1000000) {
-            //try to send a ping packet to verify we are actually talking to the correct device
-            if(ping_check(caph)) {
-                localacc_uzb3_u_sta->error_ctr = 0;
-                localacc_uzb3_u_sta->ping_ctr = 0;
-            }
-            else {
-                //we have an error, or possibly the incorrect serial port
-                localacc_uzb3_u_sta->ping_ctr++;
-                if(localacc_uzb3_u_sta->ping_ctr > 1000000) {
-                    return -1;
-                }
-            }
-        }
-    }
-    else {
-        localacc_uzb3_u_sta->error_ctr = 0;
-        localacc_uzb3_u_sta->ping_ctr = 0;
-    }
-
-    return actual_len;
+    return nxp_write_cmd(caph, NULL, 0, NULL, 0, rx_buf, rx_max);
 }
 
 int probe_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
