@@ -63,22 +63,27 @@ typedef struct {
     unsigned int channel;
 } local_channel_t;
 
-bool checksum(uint8_t *payload, uint8_t len) {
-    uint8_t chk = 0;
-    uint8_t checksum = payload[len - 1];
-    chk = payload[1];
-
-    for (int xp = 2; xp < len - 1; xp++) {
-        chk ^= payload[xp];
-    }
-
-    return checksum == chk;
-}
-
 int ti_cc26x2r1lp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len, uint8_t *resp,
                   size_t resp_len, uint8_t *rx_buf, size_t rx_max) {
+if(tx_len > 0)
+{
+    printf("ti_cc26x2r1lp_write_cmd\n");
+    printf("tx_buf:");
+    for(int re=0;re<tx_len;re++)
+        printf("%02X",tx_buf[re]);
+    printf("\n");
+    printf("resp:");
+    for(int re=0;re<resp_len;re++)
+        printf("%02X",resp[re]);
+    printf("\n");
+}
 
-    uint8_t buf[255];
+    unsigned char buf[256];memset(buf,0x00,256);
+    unsigned char pkt[256];memset(pkt,0x00,256);
+    int actual_len = 0;
+    bool endofpkt=false;
+    int pkt_ctr = 0;
+    unsigned int loop_ctr = 0;
     uint16_t ctr = 0;
     int8_t res = 0;
     bool found = false;
@@ -102,15 +107,15 @@ int ti_cc26x2r1lp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t
                 res = read(localti_cc26x2r1lp->fd, buf, 255);
                 /* currently if we get something back that is fine and continue */
                 if (res > 0 && memcmp(buf, resp, resp_len) == 0) {
+                    printf("found response\n");
                     found = true;
                     break;
                 } else if (res > 0) {
-                    if (buf[0] == 0x02) {
-                        /* we got something from the device */
-                        res = -1;  // we fell through
-                        tcflush(localti_cc26x2r1lp->fd,TCIOFLUSH);
-                        break;
-                    }
+                    printf("got a different response\n");
+printf("resp:");
+for(int re=0;re<res;re++)
+    printf("%02X",buf[re]);
+printf("\n");
                 }
                 ctr++;
             }
@@ -121,151 +126,123 @@ int ti_cc26x2r1lp_write_cmd(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t
             res = 1;  // no response requested
         }
     } else if (rx_max > 0) {
-        res = read(localti_cc26x2r1lp->fd, rx_buf, rx_max);
-	    if (res < 0) {
-            usleep(25);
-            res = 0;
+        while(1) {
+            res = read(localti_cc26x2r1lp->fd, buf, 256);
+            if(res > 0)
+            {
+                loop_ctr = 0;
+                //printf("payload-- %s:%d\n", buf, res);
+                for(int xp = 0;xp < res;xp++)
+                {
+                    if(buf[xp] == 0x40 && buf[xp+1] == 0x53) {
+                            memset(pkt,0x00,256);
+                            pkt_ctr = 0;//start over
+                            //printf("start over\n");
+                    }
+
+                    pkt[pkt_ctr] = buf[xp];
+
+                    //printf("pkt[%d]:%02X buf[%d]:%02X\n",pkt_ctr,pkt[pkt_ctr],xp,buf[xp]);
+
+                    pkt_ctr++;
+                    if(pkt_ctr > 254)
+                            break;
+                    if(buf[xp-1] == 0x40 && buf[xp] == 0x45)
+                    {
+                        //printf("end of packet\n");
+                        endofpkt = true;
+                        break;
+                    }
+                }
+                if(pkt_ctr > 0 && endofpkt)
+                {
+                    //printf("end of packet and copy\n");
+                    memcpy(rx_buf,pkt,pkt_ctr);
+                    rx_max = pkt_ctr;
+                    res = rx_max;
+                    break;
+                }
+            }
+            else
+            {
+                // to keep us from looking for a packet when we only got a partial
+                loop_ctr++;
+                if(loop_ctr > 100000)
+                {
+                    //printf("stop looking\n");
+                    break;
+                }
+                    
+            }
         }
     }
 
     pthread_mutex_unlock(&(localti_cc26x2r1lp->serial_mutex));
+
     return res;
 }
 
 int ti_cc26x2r1lp_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_t rx_max) {
+//printf("ti_cc26x2r1lp_receive_payload\n");
     return ti_cc26x2r1lp_write_cmd(caph, NULL, 0, NULL, 0, rx_buf, rx_max);
 }
 
 int ti_cc26x2r1lp_reset(kis_capture_handler_t *caph) {
+//printf("ti_cc26x2r1lp_reset\n");
+/**
     uint8_t cmd_1[6] = {0x02, 0xA3, 0x08, 0x00, 0x00, 0xAB};
     uint8_t buf[256];
 
     ti_cc26x2r1lp_write_cmd(caph, cmd_1, 6, NULL, 0, NULL, 0);
     usleep(100);
-    /* lets do some reads, to maybe clear the buffer */
+    // lets do some reads, to maybe clear the buffer
     for (int i = 0; i < 100; i++) 
         ti_cc26x2r1lp_receive_payload(caph, buf, 256);
-
+/**/
     return 1;
 }
 
 int ti_cc26x2r1lp_enter_promisc_mode(kis_capture_handler_t *caph, uint8_t chan) {
-    /* first byte is header, last byte is checksum
-     * checksum is basic xor of other bits
-     * for these we can just used precomputed packets
-     */
+printf("ti_cc26x2r1lp_enter_promisc_mode\n");
     int res = 0;
+    //chan = 11;
     if (chan < 30) {
-        uint8_t cmd_1[14] = {0x02, 0x85, 0x09, 0x08, 0x00, 0x52, 0x00,
-                             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD6};
-        uint8_t rep_1[8] = {0x02, 0x84, 0x0D, 0x02, 0x00, 0x00, 0x52, 0xD9};
-        res = ti_cc26x2r1lp_write_cmd(caph, cmd_1, 14, rep_1, 8, NULL, 0);
-        if (res < 0)
+        /* zigbee */
+
+        // set the phy
+        cfg_phy[3] = 1;
+        //usleep(100);
+        res = ti_cc26x2r1lp_write_cmd(caph, cfg_phy, 9, cmd_resp, 9, NULL, 0);
+        if(res < 0)
             return res;
-
-        uint8_t cmd_2[14] = {0x02, 0x85, 0x09, 0x08, 0x00, 0x21, 0x0B,
-                             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAE};
-        uint8_t rep_2[8] = {0x02, 0x84, 0x0D, 0x02, 0x00, 0x00, 0x21, 0xAA};
-
-        /* channel */
-        cmd_2[6] = chan;
-
-        if (chan == 12)
-            cmd_2[13] = 0xA9;
-        else if (chan == 13)
-            cmd_2[13] = 0xA8;
-        else if (chan == 14)
-            cmd_2[13] = 0xAB;
-        else if (chan == 15)
-            cmd_2[13] = 0xAA;
-        else if (chan == 16)
-            cmd_2[13] = 0xB5;
-        else if (chan == 17)
-            cmd_2[13] = 0xB4;
-        else if (chan == 18)
-            cmd_2[13] = 0xB7;
-        else if (chan == 19)
-            cmd_2[13] = 0xB6;
-        else if (chan == 20)
-            cmd_2[13] = 0xB1;
-        else if (chan == 21)
-            cmd_2[13] = 0xB0;
-        else if (chan == 22)
-            cmd_2[13] = 0xB3;
-        else if (chan == 23)
-            cmd_2[13] = 0xB2;
-        else if (chan == 24)
-            cmd_2[13] = 0xBD;
-        else if (chan == 25)
-            cmd_2[13] = 0xBC;
-        else if (chan == 26)
-            cmd_2[13] = 0xBF;
-
-        res = ti_cc26x2r1lp_write_cmd(caph, cmd_2, 14, rep_2, 8, NULL, 0);
-        if (res < 0)
-            return res;
-
-        uint8_t cmd_3[14] = {0x02, 0x85, 0x09, 0x08, 0x00, 0x51, 0x01,
-                             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD4};
-        uint8_t rep_3[8] = {0x02, 0x84, 0x0D, 0x02, 0x00, 0x00, 0x51, 0xDA};
-        res = ti_cc26x2r1lp_write_cmd(caph, cmd_3, 14, rep_3, 8, NULL, 0);
-        if (res < 0)
-            return res;
-
-        uint8_t cmd_4[14] = {0x02, 0x85, 0x09, 0x08, 0x00, 0x52, 0x01,
-                             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD7};
-        uint8_t rep_4[8] = {0x02, 0x84, 0x0D, 0x02, 0x00, 0x00, 0x52, 0xD9};
-        res = ti_cc26x2r1lp_write_cmd(caph, cmd_4, 14, rep_4, 8, NULL, 0);
-        if (res < 0)
+        //usleep(100);
+        cfg_freq[5] = 0x65 + ((chan - 11) * 0x05);
+        cfg_freq[9] = 0xB7 + ((chan - 11) * 0x05);
+        // set the channel
+        res = ti_cc26x2r1lp_write_cmd(caph, cfg_freq, 12, cmd_resp, 9, NULL, 0);
+        if(res < 0)
             return res;
     } else {
         /* bluetooth */
-        uint8_t cmd_1[6] = {0x02, 0x52, 0x00, 0x00, 0x00, 0x52};
-        uint8_t rep_1[6] = {0x02, 0x52, 0x02, 0x00, 0x00, 0x50};
-        res = ti_cc26x2r1lp_write_cmd(caph, cmd_1, 6, rep_1, 6, NULL, 0);
-        if (res < 0)
+
+        // set the phy
+        //cfg_phy[3] = 0;
+        res = ti_cc26x2r1lp_write_cmd(caph, cfg_phy, 9, cmd_resp, 9, NULL, 0);
+        if(res < 0)
             return res;
-
-        uint8_t cmd_2[7] = {0x02, 0x4E, 0x00, 0x01, 0x00, 0x00, 0x4F};
-        uint8_t rep_2[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
-        res = ti_cc26x2r1lp_write_cmd(caph, cmd_2, 7, rep_2, 7, NULL, 0);
-        if (res < 0)
-            return res;
-
-        /* chan 37 by default */
-        uint8_t cmd_3[7] = {0x02, 0x4E, 0x02, 0x01, 0x00, 0x01, 0x4C};
-        uint8_t rep_3[7] = {0x02, 0x4E, 0x82, 0x01, 0x00, 0x00, 0xCD};
-        if (chan == 38) {
-            cmd_3[5] = 0x02;
-            cmd_3[6] = 0x4F;
-        }
-        if (chan == 39) {
-            cmd_3[5] = 0x04;
-            cmd_3[6] = 0x49;
-        }
-
-        res = ti_cc26x2r1lp_write_cmd(caph, cmd_3, 7, rep_3, 7, NULL, 0);
-        if (res < 0) return res;
-
-        uint8_t cmd_4[7] = {0x02, 0x4E, 0x01, 0x01, 0x00, 0x00, 0x4E};
-        uint8_t rep_4[7] = {0x02, 0x4E, 0x81, 0x01, 0x00, 0x00, 0xCE};
-        res = ti_cc26x2r1lp_write_cmd(caph, cmd_4, 7, rep_4, 7, NULL, 0);
-
-        if (res < 0)
-            return res;
-
-        uint8_t cmd_5[7] = {0x02, 0x4E, 0x00, 0x01, 0x00, 0x01, 0x4E};
-        uint8_t rep_5[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
-        res = ti_cc26x2r1lp_write_cmd(caph, cmd_5, 7, rep_5, 7, NULL, 0);
-        if (res < 0)
+        // set the channel
+        res = ti_cc26x2r1lp_write_cmd(caph, cfg_freq, 12, cmd_resp, 9, NULL, 0);
+        if(res < 0)
             return res;
     }
-
+    //usleep(100);
+    res = ti_cc26x2r1lp_write_cmd(caph, cmd_start, 8, cmd_resp, 9, NULL, 0);
     return res;
 }
 
 int ti_cc26x2r1lp_write_cmd_retry(kis_capture_handler_t *caph, uint8_t *tx_buf, size_t tx_len,
                         uint8_t *resp, size_t resp_len, uint8_t *rx_buf, size_t rx_max) {
+printf("ti_cc26x2r1lp_write_cmd_retry\n");
     int ret = 0;
     int retries = 3;
     int reset = 0;
@@ -293,29 +270,29 @@ int ti_cc26x2r1lp_write_cmd_retry(kis_capture_handler_t *caph, uint8_t *tx_buf, 
 }
 
 int ti_cc26x2r1lp_exit_promisc_mode(kis_capture_handler_t *caph) {
-    uint8_t cmd[7] = {0x02, 0x4E, 0x00, 0x01, 0x00, 0x00, 0x4F};
-    uint8_t rep[7] = {0x02, 0x4E, 0x80, 0x01, 0x00, 0x00, 0xCF};
     int res = 0;
 
-    res = ti_cc26x2r1lp_write_cmd_retry(caph, cmd, 7, rep, 7, NULL, 0);
+    res = ti_cc26x2r1lp_write_cmd_retry(caph, cmd_stop, 8, cmd_resp, 9, NULL, 0);
 
     return res;
 }
 
 int ti_cc26x2r1lp_set_channel(kis_capture_handler_t *caph, uint8_t channel) {
-    int res = 0;
 
+    printf("ti_cc26x2r1lp_set_channel:%d\n",channel);
+    int res = 0;
     res = ti_cc26x2r1lp_exit_promisc_mode(caph);
 
-    //printf("ti_cc26x2r1lp_exit_promisc_mode res:%d \n",res);
+    printf("ti_cc26x2r1lp_exit_promisc_mode res:%d \n",res);
 
     if (res < 0) 
         return res;
 
     res = ti_cc26x2r1lp_enter_promisc_mode(caph, channel);
 
-    //printf("ti_cc26x2r1lp_enter_promisc_mode:%d res:%d \n",channel,res);
+    printf("ti_cc26x2r1lp_enter_promisc_mode:%d res:%d \n",channel,res);
 
+    res = 1;
     return res;
 }
 
@@ -324,6 +301,7 @@ int probe_callback(kis_capture_handler_t *caph, uint32_t seqno,
                    KismetExternal__Command *frame,
                    cf_params_interface_t **ret_interface,
                    cf_params_spectrum_t **ret_spectrum) {
+
     char *placeholder = NULL;
     int placeholder_len;
     char *interface;
@@ -375,7 +353,7 @@ int probe_callback(kis_capture_handler_t *caph, uint32_t seqno,
     /* ti_cc26x2r1lp supports 11-26 for zigbee and 37-39 for ble */
     char chstr[4];
     int ctr = 0;
-
+/**
     (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 3);
     for (int i = 37; i < 40; i++) {
         snprintf(chstr, 4, "%d", i);
@@ -384,6 +362,16 @@ int probe_callback(kis_capture_handler_t *caph, uint32_t seqno,
     }
 
     (*ret_interface)->channels_len = 3;// 19
+**/
+    (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 16);
+
+    for (int i = 11; i < 27; i++) {
+        snprintf(chstr, 4, "%d", i);
+        (*ret_interface)->channels[ctr] = strdup(chstr);
+        ctr++;
+    }
+
+    (*ret_interface)->channels_len = 16;
 
     return 1;
 }
@@ -476,6 +464,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     /* ti_cc26x2r1lp supports 11-26 for zigbee and 37-39 for ble */
     char chstr[4];
     int ctr = 0;
+/**
     if (strcmp(phy, "btle") == 0) {
         (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 3);
 
@@ -491,6 +480,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         }
     }
     else if (strcmp(phy, "zigbee") == 0) {
+/**/
         (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 16);
 
         for (int i = 11; i < 27; i++) {
@@ -503,6 +493,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         if (*localchan > 26) {
             *localchan = 11;
         }
+/**
     } else {
         (*ret_interface)->channels = (char **) malloc(sizeof(char *) * 19);
 
@@ -520,7 +511,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
 
         (*ret_interface)->channels_len = 19;
     }
-
+/**/
     pthread_mutex_lock(&(localti_cc26x2r1lp->serial_mutex));
     /* open for r/w but no tty */
     localti_cc26x2r1lp->fd = open(device, O_RDWR | O_NOCTTY);
@@ -554,8 +545,10 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     localti_cc26x2r1lp->ready = false;
  
     /* ti_cc26x2r1lp_reset(caph); */
-
+    printf("ti_cc26x2r1lp_exit_promisc_mode\n");
     res = ti_cc26x2r1lp_exit_promisc_mode(caph);
+    printf("ti_cc26x2r1lp_exit_promisc_mode res:%d\n",res);
+
     if (res < 0) {
         snprintf(msg, STATUS_MAX, "%s failed to send ti_cc26x2r1lp exit_promisc command (%d)\n", localti_cc26x2r1lp->name, res);
         return -1;
@@ -575,6 +568,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
 }
 
 void *chantranslate_callback(kis_capture_handler_t *caph, char *chanstr) {
+
     local_channel_t *ret_localchan;
     unsigned int parsechan;
     char errstr[STATUS_MAX];
@@ -602,14 +596,13 @@ void *chantranslate_callback(kis_capture_handler_t *caph, char *chanstr) {
 int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *privchan, char *msg) {
     local_ti_cc26x2r1lp_t *localti_cc26x2r1lp = (local_ti_cc26x2r1lp_t *) caph->userdata;
     local_channel_t *channel = (local_channel_t *) privchan;
-    int r;
-
-    //printf("chancontrol_callback\n");
+    int r = 1;
 
     if (privchan == NULL) {
         return 0;
     }
     /* crossing the phy layer */
+/**/
     if ( (localti_cc26x2r1lp->prevchannel >= 37 && localti_cc26x2r1lp->prevchannel <= 39) &&
        (channel->channel >= 11 && channel->channel <= 26) ) {
         ti_cc26x2r1lp_reset(caph);
@@ -639,7 +632,7 @@ int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *priv
     } else {
 	    r = 0;
     }
-    
+/**/
     return r;
 }
 
@@ -671,12 +664,14 @@ void capture_thread(kis_capture_handler_t *caph) {
                 break;
             }
         }
-        //check the checksum
-        if (!checksum(buf,buf_rx_len)) {
-            printf("back checksum\n");
-            buf_rx_len = 0;
-        }
+
         if (buf_rx_len > 0) {
+/**
+printf("buf_rx_len:%d\n",buf_rx_len);
+for(int re=0;re<buf_rx_len;re++)
+printf("%02X",buf[re]);
+printf("\n");
+**/
             //printf("channel:%d prevchannel:%d\n",(uint8_t)localti_cc26x2r1lp->channel,(uint8_t)localti_cc26x2r1lp->prevchannel);
             /* btle channel is part of the packet, zigbee is not*/
             if((uint8_t)localti_cc26x2r1lp->prevchannel == 0){

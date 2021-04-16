@@ -78,6 +78,7 @@
 #include "datasource_ubertooth_one.h"
 #include "datasource_nxp_kw41z.h"
 #include "datasource_ti_cc_2531.h"
+#include "datasource_ti_cc26x2r1lp.h"
 #include "datasource_rz_killerbee.h"
 #include "datasource_virtual.h"
 #include "datasource_dot11_scan.h"
@@ -904,6 +905,7 @@ int main(int argc, char *argv[], char *envp[]) {
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_nrf52840_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_rzkillerbee_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_ticc2531_builder()));
+    datasourcetracker->register_datasource(shared_datasource_builder(new datasource_ti_cc26x2r1lp_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_bladerf_wiphy_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_adsbproxy_builder()));
 
