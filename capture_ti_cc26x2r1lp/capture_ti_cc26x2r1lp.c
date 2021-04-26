@@ -100,7 +100,7 @@ if(tx_len > 0)
         }
         if (resp_len > 0) {
             /* looking for a response */
-            while (ctr < 5000) {
+            while (ctr < 10) {
                 usleep(25);
                 memset(buf,0x00,255);
                 found = false;
@@ -167,7 +167,7 @@ printf("\n");
             {
                 // to keep us from looking for a packet when we only got a partial
                 loop_ctr++;
-                if(loop_ctr > 100000)
+                if(loop_ctr > 1)
                 {
                     //printf("stop looking\n");
                     break;
@@ -535,6 +535,9 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     localti_cc26x2r1lp->newtio.c_oflag = 0;
 
     /* newtio.c_lflag = ICANON; */
+
+    localti_cc26x2r1lp->newtio.c_lflag &= ~ICANON; /* Set non-canonical mode */
+    localti_cc26x2r1lp->newtio.c_cc[VTIME] = 1; /* Set timeout in deciseconds */
 
     /* flush and set up */
     tcflush(localti_cc26x2r1lp->fd, TCIFLUSH);
