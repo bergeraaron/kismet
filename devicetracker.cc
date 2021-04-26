@@ -981,7 +981,7 @@ void device_tracker::macdevice_timer_event() {
                         "seconds.", k->get_macaddr(), k->get_commonname(),
                         devicelost_timeout);
             alertracker->raise_alert(alert_macdevice_lost_ref,
-                    nullptr, k->get_macaddr(), mac_addr{0}, 
+                    nullptr, mac_addr{0}, k->get_macaddr(), 
                     mac_addr{0}, mac_addr{0}, k->get_channel(), 
                     alrt);
         } else {
@@ -1219,6 +1219,9 @@ std::shared_ptr<kis_tracked_device_base>
 	packetchain_comp_datasource *pack_datasrc =
 		(packetchain_comp_datasource *) in_pack->fetch(pack_comp_datasrc);
 
+    auto common_info =
+        in_pack->fetch<kis_common_info>(pack_comp_common);
+
     std::shared_ptr<kis_tracked_device_base> device = NULL;
     device_key key;
 
@@ -1262,23 +1265,6 @@ std::shared_ptr<kis_tracked_device_base>
 
     }
 
-#if 0
-    // XXX
-    // Retain exclusive lock on device list from above so we don't let anything else
-    // execute... so we dont' have to do the lock shuffle.
-
-
-    // If we're updating an existing device release the devicelist exclusive lock and reacquire it
-    // as a write lock and device lock
-    std::unique_lock<kis_tristate_mutex_view> ul_dl(get_devicelist_write(), std::defer_lock);
-    std::unique_lock<kis_recursive_timed_mutex> ul_d(device->device_mutex, std::defer_lock);
-
-    if (!new_device) {
-        ul_list.unlock();
-        std::lock(ul_dl, ul_d);
-    }
-#endif
-
     // Tag the packet with the base device
     auto devinfo = in_pack->fetch<kis_tracked_device_info>(pack_comp_device);
 
@@ -1301,13 +1287,20 @@ std::shared_ptr<kis_tracked_device_base>
             in_pack->ts.tv_sec - device->get_last_time() > devicefound_timeout))) {
 
             if (k->second & 0x1) {
+                mac_addr dstmac, netmac, transmac;
+
+                if (common_info != nullptr) {
+                    dstmac = common_info->dest;
+                    netmac = common_info->network;
+                    transmac = common_info->transmitter;
+                }
+
                 auto alrt =
-                fmt::format("Monitored device {} ({}) has been found.",
-                        device->get_macaddr(), device->get_commonname());
-                alertracker->raise_alert(alert_macdevice_found_ref,
-                        in_pack, device->get_macaddr(), mac_addr{0}, 
-                        mac_addr{0}, mac_addr{0}, device->get_channel(), 
-                        alrt);
+                    fmt::format("Monitored device {} ({}) has been found.",
+                            device->get_macaddr(), device->get_commonname());
+                   alertracker->raise_alert(alert_macdevice_found_ref,
+                           in_pack, netmac, device->get_macaddr(), dstmac, transmac, 
+                           device->get_channel(), alrt);
             }
             if (k->second & 0x2) {
                 macdevice_flagged_vec.push_back(device);
@@ -1895,9 +1888,13 @@ void device_tracker::load_stored_tags(std::shared_ptr<kis_tracked_device_base> i
 void device_tracker::set_device_user_name(std::shared_ptr<kis_tracked_device_base> in_dev,
         std::string in_username) {
 
+    /*
     kis_unique_lock<kis_mutex> lk_devicelist(get_devicelist_mutex(), std::defer_lock, "device_tracker set_device_user_name");
     kis_unique_lock<kis_mutex> lk_device(in_dev->device_mutex, std::defer_lock, "device_tracker set_device_user_name");
     std::lock(lk_device, lk_devicelist);
+    */
+
+    kis_lock_guard<kis_mutex> lk(get_devicelist_mutex(), "set_device_user_name");
 
     in_dev->set_username(in_username);
 
@@ -1947,9 +1944,13 @@ void device_tracker::set_device_user_name(std::shared_ptr<kis_tracked_device_bas
 void device_tracker::set_device_tag(std::shared_ptr<kis_tracked_device_base> in_dev,
         std::string in_tag, std::string in_content) {
 
+    /*
     kis_unique_lock<kis_mutex> lk_devicelist(get_devicelist_mutex(), std::defer_lock, "device_tracker set_device_tag");
     kis_unique_lock<kis_mutex> lk_device(in_dev->device_mutex, std::defer_lock, "device_tracker set_device_tag");
     std::lock(lk_device, lk_devicelist);
+    */
+
+    kis_lock_guard<kis_mutex> lk(get_devicelist_mutex(), "set_device_tag");
 
     auto e = std::make_shared<tracker_element_string>();
     e->set(in_content);

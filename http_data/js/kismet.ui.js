@@ -813,7 +813,7 @@ exports.GetPhyConvertedChannel = function(phyname, frequency) {
     return kismet.HumanReadableFrequency(frequency);
 }
 
-exports.connection_error = false;
+exports.connection_error = 0;
 exports.connection_error_panel = null;
 
 exports.HealthCheck = function() {
@@ -824,16 +824,21 @@ exports.HealthCheck = function() {
             .done(function(data) {
                 data = kismet.sanitizeObject(data);
 
-                if (exports.connection_error) {
-                    exports.connection_error_panel.close();
+                if (exports.connection_error && exports.connection_error_panel) {
+                    try {
+                        exports.connection_error_panel.close();
+                        exports.connection_error_panel = null;
+                    } catch (e) {
+                        ;
+                    }
                 }
 
-                exports.connection_error = false;
+                exports.connection_error = 0;
 
                 exports.last_timestamp = data['kismet.system.timestamp.sec'];
             })
             .fail(function() {
-                if (!exports.connection_error) {
+                if (exports.connection_error >= 3 && exports.connection_error_panel == null) {
                     exports.connection_error_panel = $.jsPanel({
                         id: "connection-alert",
                         headerTitle: 'Cannot Connect to Kismet',
@@ -847,7 +852,7 @@ exports.HealthCheck = function() {
                     });
                 }
 
-                exports.connection_error = true;
+                exports.connection_error++;
             })
             .always(function() {
                 if (exports.connection_error)

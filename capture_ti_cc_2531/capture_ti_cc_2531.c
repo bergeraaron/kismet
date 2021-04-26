@@ -33,9 +33,11 @@
 #include "../capture_framework.h"
 
 /* Unique instance data passed around by capframework */
+#define TICC2531_RX_MAX         256
 typedef struct {
     libusb_context *libusb_ctx;
     libusb_device_handle *ticc2531_handle;
+    libusb_device *matched_dev; 
 
     unsigned int devno, busno;
 
@@ -51,88 +53,96 @@ typedef struct {
     /* keep track of the soft resets */
     unsigned int soft_reset;
 
-    /* flag to let use know when we are ready to capture */
-    bool ready;
+    /* USB xfer */
+    struct libusb_transfer *usbxfr;
+
+    /* RX buffer */
+    uint8_t rx_buf[TICC2531_RX_MAX];
 
     kis_capture_handler_t *caph;
 } local_ticc2531_t;
+
+#define TICC_USB_ERROR          -1
+#define TICC_USB_UNRESPONSIVE   -5
 
 /* Most basic of channel definitions */
 typedef struct {
     unsigned int channel;
 } local_channel_t;
 
-#define TICC_USB_ERROR          -1
-#define TICC_USB_UNRESPONSIVE   -5
-
 int ticc2531_set_channel(kis_capture_handler_t *caph, uint8_t channel) {
+
     local_ticc2531_t *localticc2531 = (local_ticc2531_t *) caph->userdata;
     int ret;
     uint8_t data;
+
     /* two step channel process*/
     data = channel & 0xFF;
-    pthread_mutex_lock(&(localticc2531->usb_mutex));
-    ret = libusb_control_transfer(localticc2531->ticc2531_handle, TICC2531_DIR_OUT, TICC2531_SET_CHAN, 0x00, 0x00, &data, 1, TICC2531_TIMEOUT);
-    pthread_mutex_unlock(&(localticc2531->usb_mutex));
+
+    ret = libusb_control_transfer(localticc2531->ticc2531_handle, TICC2531_DIR_OUT, TICC2531_SET_CHAN, 
+            0x00, 0x00, &data, 1, TICC2531_TIMEOUT);
 
     if (ret < 0)
-        return ret;
+        return TICC_USB_UNRESPONSIVE;
 
     data = (channel >> 8) & 0xFF;
-    pthread_mutex_lock(&(localticc2531->usb_mutex));
-    ret = libusb_control_transfer(localticc2531->ticc2531_handle, TICC2531_DIR_OUT, TICC2531_SET_CHAN, 0x00, 0x01, &data, 1, TICC2531_TIMEOUT);
-    pthread_mutex_unlock(&(localticc2531->usb_mutex));
-    if (ret < 0)
-        printf("setting channel (LSB) failed!\n");
+
+    ret = libusb_control_transfer(localticc2531->ticc2531_handle, TICC2531_DIR_OUT, TICC2531_SET_CHAN, 
+            0x00, 0x01, &data, 1, TICC2531_TIMEOUT);
+
+    if (ret < 0) {
+        return TICC_USB_UNRESPONSIVE;
+    }
 
     return ret;
 }
 
 int ticc2531_set_power(kis_capture_handler_t *caph,uint8_t power, int retries) {
+
     int ret;
     local_ticc2531_t *localticc2531 = (local_ticc2531_t *) caph->userdata;
     int i;
 
-    pthread_mutex_lock(&(localticc2531->usb_mutex));
     /* set power */
-
-    ret = libusb_control_transfer(localticc2531->ticc2531_handle, TICC2531_DIR_OUT, TICC2531_SET_POWER, 0x00, power, NULL, 0, TICC2531_TIMEOUT);
+    ret = libusb_control_transfer(localticc2531->ticc2531_handle, TICC2531_DIR_OUT, 
+            TICC2531_SET_POWER, 0x00, power, NULL, 0, TICC2531_TIMEOUT);
 
     /* get power until it is the same as configured in set_power */
     for (i = 0; i < retries; i++) {
         uint8_t data;
-        ret = libusb_control_transfer(localticc2531->ticc2531_handle, 0xC0, TICC2531_GET_POWER, 0x00, 0x00, &data, 1, TICC2531_TIMEOUT);
+        ret = libusb_control_transfer(localticc2531->ticc2531_handle, 0xC0, TICC2531_GET_POWER, 
+                0x00, 0x00, &data, 1, TICC2531_TIMEOUT);
+
         if (ret < 0) {
-            pthread_mutex_unlock(&(localticc2531->usb_mutex));
             return ret;
         }
+
         if (data == power) {
-            pthread_mutex_unlock(&(localticc2531->usb_mutex));
             return 0;
         }
     }
-    pthread_mutex_unlock(&(localticc2531->usb_mutex));
+
     return ret;
 }
 
 int ticc2531_enter_promisc_mode(kis_capture_handler_t *caph) {
+
     int ret;
     local_ticc2531_t *localticc2531 = (local_ticc2531_t *) caph->userdata;
 
-    pthread_mutex_lock(&(localticc2531->usb_mutex));
-    ret = libusb_control_transfer(localticc2531->ticc2531_handle, TICC2531_DIR_OUT, TICC2531_SET_START, 0x00, 0x00, NULL, 0, TICC2531_TIMEOUT);
-    pthread_mutex_unlock(&(localticc2531->usb_mutex));
+    ret = libusb_control_transfer(localticc2531->ticc2531_handle, TICC2531_DIR_OUT, 
+            TICC2531_SET_START, 0x00, 0x00, NULL, 0, TICC2531_TIMEOUT);
 
     return ret;
 }
 
 int ticc2531_exit_promisc_mode(kis_capture_handler_t *caph) {
+
     int ret;
     local_ticc2531_t *localticc2531 = (local_ticc2531_t *) caph->userdata;
 
-    pthread_mutex_lock(&(localticc2531->usb_mutex));
-    ret = libusb_control_transfer(localticc2531->ticc2531_handle, TICC2531_DIR_OUT, TICC2531_SET_END, 0x00, 0x00, NULL, 0, TICC2531_TIMEOUT);
-    pthread_mutex_unlock(&(localticc2531->usb_mutex));
+    ret = libusb_control_transfer(localticc2531->ticc2531_handle, TICC2531_DIR_OUT, 
+            TICC2531_SET_END, 0x00, 0x00, NULL, 0, TICC2531_TIMEOUT);
 
     return ret;
 }
@@ -140,20 +150,18 @@ int ticc2531_exit_promisc_mode(kis_capture_handler_t *caph) {
 int ticc2531_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_t rx_max) {
     local_ticc2531_t *localticc2531 = (local_ticc2531_t *) caph->userdata;
     int actual_len, r;
-    
-    pthread_mutex_lock(&(localticc2531->usb_mutex));
-
+   
     r = libusb_bulk_transfer(localticc2531->ticc2531_handle, TICC2531_DATA_EP, rx_buf, 
             rx_max, &actual_len, TICC2531_DATA_TIMEOUT);
-
-    pthread_mutex_unlock(&(localticc2531->usb_mutex));
 
     if (r < 0) {
         localticc2531->error_ctr++;
         if (localticc2531->error_ctr >= 5000) {
+            pthread_mutex_unlock(&(localticc2531->usb_mutex));
             return TICC_USB_UNRESPONSIVE;
         } else {
             /*continue on for now*/
+            pthread_mutex_unlock(&(localticc2531->usb_mutex));
             return 1;
         }
     }
@@ -163,6 +171,7 @@ int ticc2531_receive_payload(kis_capture_handler_t *caph, uint8_t *rx_buf, size_
 
     return actual_len;
 }
+
 
 int probe_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         char *msg, char **uuid, KismetExternal__Command *frame,
@@ -209,10 +218,13 @@ int probe_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition
     if (x != -1 && x != 2) {
         return 0;
     }
+
     pthread_mutex_lock(&(localticc2531->usb_mutex));
+
     libusb_devices_cnt = libusb_get_device_list(localticc2531->libusb_ctx, &libusb_devs);
 
     if (libusb_devices_cnt < 0) {
+        pthread_mutex_unlock(&(localticc2531->usb_mutex));
         return 0;
     }
 
@@ -292,13 +304,12 @@ int list_callback(kis_capture_handler_t *caph, uint32_t seqno, char *msg,
     local_ticc2531_t *localticc2531 = (local_ticc2531_t *) caph->userdata;
     pthread_mutex_lock(&(localticc2531->usb_mutex));
     libusb_devices_cnt = libusb_get_device_list(localticc2531->libusb_ctx, &libusb_devs);
-    pthread_mutex_unlock(&(localticc2531->usb_mutex));
 
     if (libusb_devices_cnt < 0) {
+        pthread_mutex_unlock(&(localticc2531->usb_mutex));
         return 0;
     }
 
-    pthread_mutex_lock(&(localticc2531->usb_mutex));
     for (ssize_t i = 0; i < libusb_devices_cnt; i++) {
         struct libusb_device_descriptor dev;
 
@@ -325,6 +336,7 @@ int list_callback(kis_capture_handler_t *caph, uint32_t seqno, char *msg,
 
     if (num_devs == 0) {
         *interfaces = NULL;
+        pthread_mutex_unlock(&(localticc2531->usb_mutex));
         return 0;
     }
 
@@ -348,6 +360,8 @@ int list_callback(kis_capture_handler_t *caph, uint32_t seqno, char *msg,
 
         i++;
     }
+
+    pthread_mutex_unlock(&(localticc2531->usb_mutex));
 
     return num_devs;
 }
@@ -376,6 +390,78 @@ void *chantranslate_callback(kis_capture_handler_t *caph, char *chanstr) {
     return ret_localchan;
 }
 
+int open_usb_device(kis_capture_handler_t *caph, char *errstr) {
+    int r;
+    local_ticc2531_t *localticc2531 = (local_ticc2531_t *) caph->userdata;
+
+    pthread_mutex_lock(&(localticc2531->usb_mutex));
+
+    /* Try to open it */
+    r = libusb_open(localticc2531->matched_dev, &localticc2531->ticc2531_handle);
+
+    localticc2531->error_ctr = 0;
+
+    if (r < 0) {
+        snprintf(errstr, STATUS_MAX, "Unable to open ticc2531 USB interface: %s", 
+                libusb_strerror((enum libusb_error) r));
+        pthread_mutex_unlock(&(localticc2531->usb_mutex));
+        return -1;
+    }
+
+    if (libusb_kernel_driver_active(localticc2531->ticc2531_handle, 0)) {
+        r = libusb_detach_kernel_driver(localticc2531->ticc2531_handle, 0); 
+
+        if (r < 0) {
+            snprintf(errstr, STATUS_MAX, "Unable to open ticc2531 USB interface, "
+                    "could not disconnect kernel drivers: %s",
+                    libusb_strerror((enum libusb_error) r));
+            pthread_mutex_unlock(&(localticc2531->usb_mutex));
+            return -1;
+        }
+    }
+
+    /* config */
+    r = libusb_set_configuration(localticc2531->ticc2531_handle, 1);
+    if (r < 0) {
+        snprintf(errstr, STATUS_MAX,
+                 "Unable to open ticc2531 USB interface; could not set USB configuration.  Has "
+                 "your device been flashed with the sniffer firmware?");
+        pthread_mutex_unlock(&(localticc2531->usb_mutex));
+        return -1;
+    }
+
+    /* Try to claim it */
+    r = libusb_claim_interface(localticc2531->ticc2531_handle, 0);
+    if (r < 0) {
+        if (r == LIBUSB_ERROR_BUSY) {
+            /* Try to detach the kernel driver */
+            r = libusb_detach_kernel_driver(localticc2531->ticc2531_handle, 0);
+            if (r < 0) {
+                snprintf(errstr, STATUS_MAX, "Unable to open ticc2531 USB interface, and unable "
+                        "to disconnect existing driver: %s", 
+                        libusb_strerror((enum libusb_error) r));
+                pthread_mutex_unlock(&(localticc2531->usb_mutex));
+                return -1;
+            }
+        } else {
+            snprintf(errstr, STATUS_MAX, "Unable to open ticc2531 USB interface: %s",
+                    libusb_strerror((enum libusb_error) r));
+            pthread_mutex_unlock(&(localticc2531->usb_mutex));
+            return -1;
+        }
+    }
+
+    ticc2531_set_power(caph, 0x04, TICC2531_POWER_RETRIES);
+
+    ticc2531_set_channel(caph, localticc2531->channel);
+
+    ticc2531_enter_promisc_mode(caph);
+
+    pthread_mutex_unlock(&(localticc2531->usb_mutex));
+
+    return 1;
+}
+
 int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
         char *msg, uint32_t *dlt, char **uuid, KismetExternal__Command *frame,
         cf_params_interface_t **ret_interface,
@@ -393,7 +479,6 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
     int busno = -1, devno = -1;
 
     libusb_device **libusb_devs = NULL;
-    libusb_device *matched_dev = NULL;
     ssize_t libusb_devices_cnt = 0;
     int r;
 
@@ -435,14 +520,13 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
 
     pthread_mutex_lock(&(localticc2531->usb_mutex));
     libusb_devices_cnt = libusb_get_device_list(localticc2531->libusb_ctx, &libusb_devs);
-    pthread_mutex_unlock(&(localticc2531->usb_mutex));
 
     if (libusb_devices_cnt < 0) {
         snprintf(msg, STATUS_MAX, "Unable to iterate USB devices"); 
+        pthread_mutex_unlock(&(localticc2531->usb_mutex));
         return -1;
     }
     
-    pthread_mutex_lock(&(localticc2531->usb_mutex));
     for (i = 0; i < libusb_devices_cnt; i++) {
         struct libusb_device_descriptor dev;
 
@@ -457,26 +541,26 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
                 if (busno == libusb_get_bus_number(libusb_devs[i]) &&
                         devno == libusb_get_device_address(libusb_devs[i])) {
                     matched_device = 1;
-                    matched_dev = libusb_devs[i];
+                    localticc2531->matched_dev = libusb_devs[i];
                     break;
                 }
             } else {
                 matched_device = 1;
                 busno = libusb_get_bus_number(libusb_devs[i]);
                 devno = libusb_get_device_address(libusb_devs[i]);
-                matched_dev = libusb_devs[i];
+                localticc2531->matched_dev = libusb_devs[i];
                 break;
             }
         }
     }
 
     if (!matched_device) {
+        pthread_mutex_unlock(&(localticc2531->usb_mutex));
         snprintf(msg, STATUS_MAX, "Unable to find ticc2531 USB device");
         return -1;
     }
 
     libusb_free_device_list(libusb_devs, 1);
-    pthread_mutex_unlock(&(localticc2531->usb_mutex));
 
     snprintf(cap_if, 32, "ticc2531-%u-%u", busno, devno);
 
@@ -491,6 +575,7 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
             snprintf(msg, STATUS_MAX,
                     "ticc2531 could not parse channel= option provided in source "
                     "definition");
+            pthread_mutex_unlock(&(localticc2531->usb_mutex));
             return -1;
         }
     } else {
@@ -527,69 +612,15 @@ int open_callback(kis_capture_handler_t *caph, uint32_t seqno, char *definition,
 
     (*ret_interface)->channels_len = 16;
 
-    pthread_mutex_lock(&(localticc2531->usb_mutex));
+    localticc2531->channel = *localchan;
 
-    /* Try to open it */
-    r = libusb_open(matched_dev, &localticc2531->ticc2531_handle);
-
-    if (r < 0) {
-        snprintf(errstr, STATUS_MAX, "Unable to open ticc2531 USB interface: %s", 
-                libusb_strerror((enum libusb_error) r));
-        pthread_mutex_unlock(&(localticc2531->usb_mutex));
-        return -1;
-    }
-
-    if (libusb_kernel_driver_active(localticc2531->ticc2531_handle, 0)) {
-        r = libusb_detach_kernel_driver(localticc2531->ticc2531_handle, 0); 
-
-        if (r < 0) {
-            snprintf(errstr, STATUS_MAX, "Unable to open ticc2531 USB interface, "
-                    "could not disconnect kernel drivers: %s",
-                    libusb_strerror((enum libusb_error) r));
-            pthread_mutex_unlock(&(localticc2531->usb_mutex));
-            return -1;
-        }
-    }
-    /* config */
-    r = libusb_set_configuration(localticc2531->ticc2531_handle, 1);
-    if (r < 0) {
-        snprintf(errstr, STATUS_MAX,
-                 "Unable to open ticc2531 USB interface; could not set USB configuration.  Has "
-                 "your device been flashed with the sniffer firmware?");
-        pthread_mutex_unlock(&(localticc2531->usb_mutex));
-        return -1;
-    }
-
-    /* Try to claim it */
-    r = libusb_claim_interface(localticc2531->ticc2531_handle, 0);
-    if (r < 0) {
-        if (r == LIBUSB_ERROR_BUSY) {
-            /* Try to detach the kernel driver */
-            r = libusb_detach_kernel_driver(localticc2531->ticc2531_handle, 0);
-            if (r < 0) {
-                snprintf(errstr, STATUS_MAX, "Unable to open ticc2531 USB interface, and unable "
-                        "to disconnect existing driver: %s", 
-                        libusb_strerror((enum libusb_error) r));
-                pthread_mutex_unlock(&(localticc2531->usb_mutex));
-                return -1;
-            }
-        } else {
-            snprintf(errstr, STATUS_MAX, "Unable to open ticc2531 USB interface: %s",
-                    libusb_strerror((enum libusb_error) r));
-            pthread_mutex_unlock(&(localticc2531->usb_mutex));
-            return -1;
-        }
-    }
-  
     pthread_mutex_unlock(&(localticc2531->usb_mutex));
 
-    ticc2531_set_power(caph, 0x04, TICC2531_POWER_RETRIES);
-    ticc2531_set_channel(caph, *localchan);
-    
-    localticc2531->channel = *localchan;
-    ticc2531_enter_promisc_mode(caph);
+    /* Try to open it */
+    r = open_usb_device(caph, msg);
 
-    localticc2531->ready = true;
+    if (r < 0)
+        return -1;
 
     return 1;
 }
@@ -599,25 +630,50 @@ int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *priv
     local_channel_t *channel = (local_channel_t *) privchan;
     int r;
 
+    char errstr[STATUS_MAX];
+    char open_errstr[STATUS_MAX];
+
     if (privchan == NULL) {
         return 0;
     }
-    
-    localticc2531->ready = false;
+   
+    if (localticc2531->ticc2531_handle == NULL) {
+        pthread_mutex_unlock(&(localticc2531->usb_mutex));
+        return 0;
+    }
 
     ticc2531_exit_promisc_mode(caph);
 
     r = ticc2531_set_channel(caph, channel->channel);
 
-    if (r < 0)
-        return -1;
+    if (r == TICC_USB_UNRESPONSIVE) {
+        snprintf(errstr, STATUS_MAX, "TI CC 2531 interface 'ticc2531-%u-%u' channel unable to be set"
+        ", re-opening the datasource as a precaution", 
+                localticc2531->busno, localticc2531->devno);
+
+        cf_send_warning(caph, errstr);
+
+        /* close usb */
+        pthread_mutex_lock(&(localticc2531->usb_mutex));
+        if (localticc2531->ticc2531_handle) {
+            libusb_close(localticc2531->ticc2531_handle);
+            localticc2531->ticc2531_handle = NULL;
+        }
+        pthread_mutex_unlock(&(localticc2531->usb_mutex));
+
+        if (open_usb_device(caph, open_errstr) < 0) {
+            snprintf(errstr, STATUS_MAX, "TI CC 2531 interface 'ticc2531-%u-%u' could not be "
+                    "re-opened: %s", localticc2531->busno, localticc2531->devno, open_errstr);
+            cf_send_error(caph, 0, errstr);
+            cf_handler_spindown(caph);
+        }
+        return 1;
+    }
 
     localticc2531->channel = channel->channel;
 
     ticc2531_enter_promisc_mode(caph);
 
-    localticc2531->ready = true;
-   
     return 1;
 }
 
@@ -625,6 +681,7 @@ int chancontrol_callback(kis_capture_handler_t *caph, uint32_t seqno, void *priv
 void capture_thread(kis_capture_handler_t *caph) {
     local_ticc2531_t *localticc2531 = (local_ticc2531_t *) caph->userdata;
     char errstr[STATUS_MAX];
+    char open_errstr[STATUS_MAX];
 
     uint8_t usb_buf[256];
 
@@ -641,57 +698,77 @@ void capture_thread(kis_capture_handler_t *caph) {
             break;
         }
 
-        if (localticc2531->ready) {
-            buf_rx_len = ticc2531_receive_payload(caph, usb_buf, 256);
-            if (buf_rx_len < 0) {
-                if (buf_rx_len == TICC_USB_UNRESPONSIVE) {
-                    snprintf(errstr, STATUS_MAX, "TI CC 2531 interface 'ticc2531-%u-%u' has not seen "
-                            "any data in a prolonged period of time; sometimes the device "
-                            "sniffer firmware crashes, re-opening the datasource as a precaution", 
-                            localticc2531->busno, localticc2531->devno);
-                } else {
-                    snprintf(errstr, STATUS_MAX, "TI CC 2531 interface 'ticc2531-%u-%u' closed "
-                            "unexpectedly", localticc2531->busno, localticc2531->devno);
+        buf_rx_len = ticc2531_receive_payload(caph, usb_buf, 256);
+
+        if (buf_rx_len < 0) {
+            if (buf_rx_len == TICC_USB_UNRESPONSIVE) {
+                snprintf(errstr, STATUS_MAX, "TI CC 2531 interface 'ticc2531-%u-%u' has not seen "
+                        "any data in a prolonged period of time; sometimes the device "
+                        "sniffer firmware crashes, re-opening the datasource as a precaution", 
+                        localticc2531->busno, localticc2531->devno);
+
+                cf_send_warning(caph, errstr);
+
+                /* close usb */
+                pthread_mutex_lock(&(localticc2531->usb_mutex));
+                if (localticc2531->ticc2531_handle) {
+                    libusb_close(localticc2531->ticc2531_handle);
+                    localticc2531->ticc2531_handle = NULL;
                 }
+                pthread_mutex_unlock(&(localticc2531->usb_mutex));
+
+                if (open_usb_device(caph, open_errstr) < 0) {
+                    snprintf(errstr, STATUS_MAX, "TI CC 2531 interface 'ticc2531-%u-%u' could not be "
+                            "re-opened: %s", localticc2531->busno, localticc2531->devno, open_errstr);
+                    cf_send_error(caph, 0, errstr);
+                    cf_handler_spindown(caph);
+                    break;
+                }
+
+                continue;
+
+            } else {
+                snprintf(errstr, STATUS_MAX, "TI CC 2531 interface 'ticc2531-%u-%u' closed "
+                        "unexpectedly", localticc2531->busno, localticc2531->devno);
                 cf_send_error(caph, 0, errstr);
                 cf_handler_spindown(caph);
                 break;
             }
+        }
 
-            /* Skip runt packets caused by timeouts */
-            if (buf_rx_len == 1)
+        /* Skip runt packets caused by timeouts */
+        if (buf_rx_len == 1)
+            continue;
+
+        /* the devices look to report a 4 byte counter/heartbeat, skip it */
+        if (buf_rx_len <= 7)
+            continue;
+
+        if(usb_buf[0] != 0x00) {
+            //printf("invalid 2531 packet?\n");
+            continue;
+        }
+
+        /* insert the channel into the packet header*/
+        usb_buf[2] = (uint8_t)localticc2531->channel;
+
+        while (1) {
+            struct timeval tv;
+
+            gettimeofday(&tv, NULL);
+
+            if ((r = cf_send_data(caph,
+                            NULL, NULL, NULL,
+                            tv,
+                            0,
+                            buf_rx_len, usb_buf)) < 0) {
+                cf_send_error(caph, 0, "unable to send DATA frame");
+                cf_handler_spindown(caph);
+            } else if (r == 0) {
+                cf_handler_wait_ringbuffer(caph);
                 continue;
-
-            /* the devices look to report a 4 byte counter/heartbeat, skip it */
-            if (buf_rx_len <= 7)
-                continue;
-
-            if(usb_buf[0] != 0x00) {
-                //printf("invalid 2531 packet?\n");
-                continue;
-            }
-
-            /* insert the channel into the packet header*/
-            usb_buf[2] = (uint8_t)localticc2531->channel;
-
-            while (1) {
-                struct timeval tv;
-
-                gettimeofday(&tv, NULL);
-
-                if ((r = cf_send_data(caph,
-                                NULL, NULL, NULL,
-                                tv,
-                                0,
-                                buf_rx_len, usb_buf)) < 0) {
-                    cf_send_error(caph, 0, "unable to send DATA frame");
-                    cf_handler_spindown(caph);
-                } else if (r == 0) {
-                    cf_handler_wait_ringbuffer(caph);
-                    continue;
-                } else {
-                    break;
-                }
+            } else {
+                break;
             }
         }
     }
@@ -704,9 +781,11 @@ int main(int argc, char *argv[]) {
     local_ticc2531_t localticc2531 = {
         .libusb_ctx = NULL,
         .ticc2531_handle = NULL,
+        .matched_dev = NULL,
         .caph = NULL,
         .error_ctr = 0,
-	.soft_reset = 0,
+        .soft_reset = 0,
+        .usbxfr = NULL,
     };
 
     pthread_mutex_init(&(localticc2531.usb_mutex), NULL);

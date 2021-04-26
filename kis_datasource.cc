@@ -291,14 +291,15 @@ void kis_datasource::open_interface(std::string in_definition, unsigned int in_t
     // If we got here we're valid; start a PING timer
     timetracker->remove_timer(ping_timer_id);
     ping_timer_id = timetracker->register_timer(std::chrono::seconds(5), true, [this](int) -> int {
-        kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource ping_timer lambda");
-        
+        // kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource ping_timer lambda");
+
         if (!get_source_running()) {
             ping_timer_id = -1;
             return 0;
         }
        
         send_ping();
+
         return 1;
     });
 
@@ -514,6 +515,8 @@ void kis_datasource::resume_source() {
 }
 
 void kis_datasource::handle_error(const std::string& in_error) {
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource handle_error");
+
     if (!quiet_errors && in_error.length()) {
         _MSG_ERROR("Data source '{} / {}' ('{}') encountered an error: {}",
                 get_source_name(), get_source_definition(), get_source_interface(), in_error);
@@ -718,8 +721,6 @@ void kis_datasource::cancel_command(uint32_t in_transaction, std::string in_erro
             cmd->configure_cb = NULL;
             cb(cmd->transaction, false, in_error);
         }
-
-        cmd.reset();
     }
 }
 

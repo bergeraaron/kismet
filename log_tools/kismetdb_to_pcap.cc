@@ -356,6 +356,106 @@ void write_pcapng_interface(FILE *pcapng_file, unsigned int ngindex, const std::
 void write_pcapng_gps(FILE *pcapng_file, unsigned long ts_sec, unsigned long ts_usec, 
         double lat, double lon, double alt) {
 
+    if (lat == 0 || lon == 0)
+        return;
+
+    pcapng_custom_block cb;
+
+    auto gps_sz = sizeof(kismet_pcapng_gps_chunk_t);
+
+    // lat, lon, and timesttamps
+    gps_sz += 16;
+
+    if (alt != 0)
+        gps_sz += 4;
+
+    auto data_sz = sizeof(pcapng_custom_block) + PAD_TO_32BIT(gps_sz) + sizeof(pcapng_option_t);
+
+    cb.block_type = PCAPNG_CB_BLOCK_TYPE;
+    cb.block_length = data_sz + 4;
+    cb.custom_pen = KISMET_IANA_PEN;
+
+    if (fwrite(&cb, sizeof(pcapng_custom_block_t), 1, pcapng_file) != 1)
+        throw std::runtime_error(fmt::format("error writing pcapng gps packet header: {} (errno {})",
+                strerror(errno), errno));
+
+    kismet_pcapng_gps_chunk_t gps;
+
+    gps.gps_magic = PCAPNG_GPS_MAGIC;
+    gps.gps_verison = PCAPNG_GPS_VERSION;
+    gps.gps_len = 16; // lat, lon, tsh, tsl
+    gps.gps_fields_present = PCAPNG_GPS_FLAG_LON | PCAPNG_GPS_FLAG_LAT |
+        PCAPNG_GPS_TS_HIGH | PCAPNG_GPS_TS_LOW;
+
+    if (alt != 0) {
+        gps.gps_len += 4;
+        gps.gps_fields_present |= PCAPNG_GPS_FLAG_ALT;
+    }
+
+    // GPS header
+    if (fwrite(&gps, sizeof(kismet_pcapng_gps_chunk_t), 1, pcapng_file) != 1)
+        throw std::runtime_error(fmt::format("error writing packet gps options: {} (errno {})",
+                    strerror(errno), errno));
+
+    union block {
+        uint8_t u8;
+        uint16_t u16;
+        uint32_t u32;
+    } u;
+
+    // Lon, lat, [alt]
+    u.u32 = double_to_fixed3_7(lon);
+    if (fwrite(&u, sizeof(uint32_t), 1, pcapng_file) != 1) 
+        throw std::runtime_error(fmt::format("error writing packet gps: {} (errno {})",
+                    strerror(errno), errno));
+
+    u.u32 = double_to_fixed3_7(lat);
+    if (fwrite(&u, sizeof(uint32_t), 1, pcapng_file) != 1) 
+        throw std::runtime_error(fmt::format("error writing packet gps: {} (errno {})",
+                    strerror(errno), errno));
+
+    if (alt != 0) {
+        u.u32 = double_to_fixed6_4(alt);
+        if (fwrite(&u, sizeof(uint32_t), 1, pcapng_file) != 1) 
+            throw std::runtime_error(fmt::format("error writing packet gps: {} (errno {})",
+                        strerror(errno), errno));
+    }
+
+    // TS high and low
+    uint64_t conv_ts = ((uint64_t) ts_sec * 1'000'000L) + ts_usec;
+
+    u.u32 = (conv_ts >> 32);
+    if (fwrite(&u, sizeof(uint32_t), 1, pcapng_file) != 1) 
+        throw std::runtime_error(fmt::format("error writing packet gps: {} (errno {})",
+                    strerror(errno), errno));
+
+    u.u32 = conv_ts;
+    if (fwrite(&u, sizeof(uint32_t), 1, pcapng_file) != 1) 
+        throw std::runtime_error(fmt::format("error writing packet gps: {} (errno {})",
+                    strerror(errno), errno));
+
+    uint32_t pad = 0;
+    auto pad_sz = PAD_TO_32BIT(gps.gps_len) - gps.gps_len;
+
+    if (pad_sz > 0)
+        if (fwrite(&pad, pad_sz, 1, pcapng_file) != 1)
+            throw std::runtime_error(fmt::format("error writing pcapng packet option: {} (errno {})",
+                        strerror(errno), errno));
+
+    // No options
+    pcapng_option_t opt;
+    opt.option_code = PCAPNG_OPT_ENDOFOPT;
+    opt.option_length = 0;
+
+    if (fwrite(&opt, sizeof(pcapng_option_t), 1, pcapng_file) != 1) 
+        throw std::runtime_error(fmt::format("error writing packet end-of-options: {} (errno {})",
+                    strerror(errno), errno));
+
+    data_sz += 4;
+
+    if (fwrite(&data_sz, 4, 1, pcapng_file) != 1)
+        throw std::runtime_error(fmt::format("error writing packet end-of-packet: {} (errno {})",
+                    strerror(errno), errno));
 
 }
 
@@ -448,10 +548,10 @@ void write_pcapng_packet(FILE *pcapng_file, const std::string& packet,
         copt.option_code = PCAPNG_OPT_CUSTOM_BINARY;
         copt.option_pen = KISMET_IANA_PEN;
 
-        // Lat, lon
+        // lon, lat
         size_t gps_len = 8;
 
-        gps_fields = PCAPNG_GPS_FLAG_LAT | PCAPNG_GPS_FLAG_LON;
+        gps_fields = PCAPNG_GPS_FLAG_LON | PCAPNG_GPS_FLAG_LAT;
 
         // Altitude
         if (alt != 0) {
@@ -486,13 +586,13 @@ void write_pcapng_packet(FILE *pcapng_file, const std::string& packet,
             uint32_t u32;
         } u;
 
-        // Lat, lon, alt, in that order
-        u.u32 = double_to_fixed3_7(lat);
+        // Lon, lat, [alt]
+        u.u32 = double_to_fixed3_7(lon);
         if (fwrite(&u, sizeof(uint32_t), 1, pcapng_file) != 1) 
             throw std::runtime_error(fmt::format("error writing packet gps: {} (errno {})",
                         strerror(errno), errno));
 
-        u.u32 = double_to_fixed3_7(lon);
+        u.u32 = double_to_fixed3_7(lat);
         if (fwrite(&u, sizeof(uint32_t), 1, pcapng_file) != 1) 
             throw std::runtime_error(fmt::format("error writing packet gps: {} (errno {})",
                         strerror(errno), errno));
@@ -524,7 +624,6 @@ void write_pcapng_packet(FILE *pcapng_file, const std::string& packet,
     if (fwrite(&data_sz, 4, 1, pcapng_file) != 1)
         throw std::runtime_error(fmt::format("error writing packet end-of-packet: {} (errno {})",
                     strerror(errno), errno));
-
 }
     
 
@@ -902,176 +1001,235 @@ int main(int argc, char *argv[]) {
             {"ts_sec", "ts_usec", "dlt", "datasource", "packet", "tags", "lat", "lon", "alt"},
             packet_filter_q);
 
+    auto gps_q = _SELECT(db, "snapshots",
+            {"ts_sec", "ts_usec", "json"},
+            _WHERE("snaptype", EQ, "GPS"));
+
+    auto pkt = packets_q.begin();
+    auto gps = gps_q.begin();
+
+    if (skip_gps_track)
+        gps = gps_q.end();
+
+    uint64_t pkt_time = 0, pkt_time_us = 0;
+    uint64_t gps_time = 0, gps_time_us = 0;
+
     try {
-        for (auto pkt : packets_q) {
-            auto ts_sec = sqlite3_column_as<unsigned long>(pkt, 0);
-            auto ts_usec = sqlite3_column_as<unsigned long>(pkt, 1);
-            auto pkt_dlt = sqlite3_column_as<unsigned int>(pkt, 2);
-            auto datasource = sqlite3_column_as<std::string>(pkt, 3);
-            auto bytes = sqlite3_column_as<std::string>(pkt, 4);
-            auto tags = sqlite3_column_as<std::string>(pkt, 5);
-            auto lat = sqlite3_column_as<double>(pkt, 6);
-            auto lon = sqlite3_column_as<double>(pkt, 7);
-            auto alt = sqlite3_column_as<double>(pkt, 8);
+        while (pkt != packets_q.end() || gps != gps_q.end()) {
+            if (pkt_time == 0 && pkt != packets_q.end()) {
+                pkt_time = sqlite3_column_as<unsigned long>(*pkt, 0);
+                pkt_time_us = sqlite3_column_as<unsigned long>(*pkt, 1);
+            }
 
-            if (!pcapng) {
-                std::shared_ptr<log_file> log_interface;
+            if (!skip_gps_track && gps_time == 0 && gps != gps_q.end()) {
+                gps_time = sqlite3_column_as<unsigned long>(*gps, 0);
+                gps_time_us = sqlite3_column_as<unsigned long>(*gps, 1);
+            }
 
-                if (split_interface) {
-                    auto log_index = per_interface_logs.find(datasource);
+            if (pkt_time != 0 && (gps_time == 0 || (pkt_time < gps_time || 
+                            ((pkt_time == gps_time && pkt_time_us < gps_time_us))))) {
+                auto ts_sec = sqlite3_column_as<unsigned long>(*pkt, 0);
+                auto ts_usec = sqlite3_column_as<unsigned long>(*pkt, 1);
+                auto pkt_dlt = sqlite3_column_as<unsigned int>(*pkt, 2);
+                auto datasource = sqlite3_column_as<std::string>(*pkt, 3);
+                auto bytes = sqlite3_column_as<std::string>(*pkt, 4);
+                auto tags = sqlite3_column_as<std::string>(*pkt, 5);
+                auto lat = sqlite3_column_as<double>(*pkt, 6);
+                auto lon = sqlite3_column_as<double>(*pkt, 7);
+                auto alt = sqlite3_column_as<double>(*pkt, 8);
 
-                    if (log_index == per_interface_logs.end()) {
-                        log_interface = std::make_shared<log_file>();
-                        per_interface_logs[datasource] = log_interface;
-                    } else {
-                        log_interface = log_index->second;
-                    }
+                if (!pcapng) {
+                    std::shared_ptr<log_file> log_interface;
 
-                } else {
-                    log_interface = single_log;
-                }
+                    if (split_interface) {
+                        auto log_index = per_interface_logs.find(datasource);
 
-                if (log_interface->file == nullptr) {
-                    int file_dlt = dlt;
-
-                    if (file_dlt < 0)
-                        file_dlt = pkt_dlt;
-
-                    auto fname = out_fname;
-
-                    if (split_interface)
-                        fname = fmt::format("{}-{}", fname, datasource);
-
-                    if (split_packets || split_size) {
-                        fname = fmt::format("{}-{:06}", fname, log_interface->number);
-                        log_interface->number++;
-                    }
-
-                    if (verbose)
-                        fmt::print(stderr, "* Opening legacy pcap file {}\n", fname);
-
-                    log_interface->name = fname;
-
-                    log_interface->file = open_pcap_file(fname, force, file_dlt);
-                }
-
-                write_pcap_packet(log_interface->file, bytes, ts_sec, ts_usec);
-
-                log_interface->sz += bytes.size();
-                log_interface->count++;
-
-                if (split_packets && log_interface->count >= split_packets) {
-                    if (verbose)
-                        fmt::print(stderr, "* Closing pcap file {} after {} packets\n",
-                                log_interface->name, log_interface->count);
-
-                    fclose(log_interface->file);
-                    log_interface->file = nullptr;
-                    log_interface->count = 0;
-                } else if (split_size && log_interface->sz >= split_size * 1024) {
-                    if (verbose)
-                        fmt::print(stderr, "* Closing pcap file {} after {}kb\n",
-                                log_interface->name, log_interface->sz / 1024);
-                    fclose(log_interface->file);
-                    log_interface->file = nullptr;
-                    log_interface->sz = 0;
-                }
-            } else {
-                // pcapng
-
-                std::shared_ptr<log_file> log_interface;
-
-                if (split_interface) {
-                    auto log_index = per_interface_logs.find(datasource);
-
-                    if (log_index == per_interface_logs.end()) {
-                        log_interface = std::make_shared<log_file>();
-                        per_interface_logs[datasource] = log_interface;
-                    } else {
-                        log_interface = log_index->second;
-                    }
-
-                } else {
-                    log_interface = single_log;
-                }
-
-                if (log_interface->file == nullptr) {
-                    int file_dlt = dlt;
-
-                    if (file_dlt < 0)
-                        file_dlt = pkt_dlt;
-
-                    auto fname = out_fname;
-
-                    if (split_interface)
-                        fname = fmt::format("{}-{}", fname, datasource);
-
-                    if (split_packets || split_size) {
-                        fname = fmt::format("{}-{:06}", fname, log_interface->number);
-                        log_interface->number++;
-                    }
-
-                    if (verbose)
-                        fmt::print(stderr, "* Opening pcapng file {}\n", fname);
-
-                    log_interface->name = fname;
-
-                    log_interface->file = open_pcapng_file(fname, force);
-                }
-
-                auto source_combo = fmt::format("{}-{}", datasource, pkt_dlt);
-                auto source_key = log_interface->ng_interface_map.find(source_combo);
-                unsigned int ngindex = 0;
-
-                if (source_key == log_interface->ng_interface_map.end()) {
-                    std::shared_ptr<db_interface> dbinterface;
-
-                    for (auto dbi : interface_vec) {
-                        if (dbi->uuid == datasource) {
-                            auto desc = fmt::format("Kismet datasource {} ({} - {})",
-                                    dbi->name, dbi->interface, dbi->definition);
-                            ngindex = log_interface->ng_interface_map.size();
-
-                            log_interface->ng_interface_map[source_combo] = ngindex;
-
-                            write_pcapng_interface(log_interface->file, ngindex,
-                                    dbi->interface, pkt_dlt, desc);
-
-                            break;
+                        if (log_index == per_interface_logs.end()) {
+                            log_interface = std::make_shared<log_file>();
+                            per_interface_logs[datasource] = log_interface;
+                        } else {
+                            log_interface = log_index->second;
                         }
+
+                    } else {
+                        log_interface = single_log;
+                    }
+
+                    if (log_interface->file == nullptr) {
+                        int file_dlt = dlt;
+
+                        if (file_dlt < 0)
+                            file_dlt = pkt_dlt;
+
+                        auto fname = out_fname;
+
+                        if (split_interface)
+                            fname = fmt::format("{}-{}", fname, datasource);
+
+                        if (split_packets || split_size) {
+                            fname = fmt::format("{}-{:06}", fname, log_interface->number);
+                            log_interface->number++;
+                        }
+
+                        if (verbose)
+                            fmt::print(stderr, "* Opening legacy pcap file {}\n", fname);
+
+                        log_interface->name = fname;
+
+                        log_interface->file = open_pcap_file(fname, force, file_dlt);
+                    }
+
+                    write_pcap_packet(log_interface->file, bytes, ts_sec, ts_usec);
+
+                    log_interface->sz += bytes.size();
+                    log_interface->count++;
+
+                    if (split_packets && log_interface->count >= split_packets) {
+                        if (verbose)
+                            fmt::print(stderr, "* Closing pcap file {} after {} packets\n",
+                                    log_interface->name, log_interface->count);
+
+                        fclose(log_interface->file);
+                        log_interface->file = nullptr;
+                        log_interface->count = 0;
+                    } else if (split_size && log_interface->sz >= split_size * 1024) {
+                        if (verbose)
+                            fmt::print(stderr, "* Closing pcap file {} after {}kb\n",
+                                    log_interface->name, log_interface->sz / 1024);
+                        fclose(log_interface->file);
+                        log_interface->file = nullptr;
+                        log_interface->sz = 0;
                     }
                 } else {
-                    ngindex = source_key->second;
+                    // pcapng
+
+                    std::shared_ptr<log_file> log_interface;
+
+                    if (split_interface) {
+                        auto log_index = per_interface_logs.find(datasource);
+
+                        if (log_index == per_interface_logs.end()) {
+                            log_interface = std::make_shared<log_file>();
+                            per_interface_logs[datasource] = log_interface;
+                        } else {
+                            log_interface = log_index->second;
+                        }
+
+                    } else {
+                        log_interface = single_log;
+                    }
+
+                    if (log_interface->file == nullptr) {
+                        int file_dlt = dlt;
+
+                        if (file_dlt < 0)
+                            file_dlt = pkt_dlt;
+
+                        auto fname = out_fname;
+
+                        if (split_interface)
+                            fname = fmt::format("{}-{}", fname, datasource);
+
+                        if (split_packets || split_size) {
+                            fname = fmt::format("{}-{:06}", fname, log_interface->number);
+                            log_interface->number++;
+                        }
+
+                        if (verbose)
+                            fmt::print(stderr, "* Opening pcapng file {}\n", fname);
+
+                        log_interface->name = fname;
+
+                        log_interface->file = open_pcapng_file(fname, force);
+                    }
+
+                    auto source_combo = fmt::format("{}-{}", datasource, pkt_dlt);
+                    auto source_key = log_interface->ng_interface_map.find(source_combo);
+                    unsigned int ngindex = 0;
+
+                    if (source_key == log_interface->ng_interface_map.end()) {
+                        std::shared_ptr<db_interface> dbinterface;
+
+                        for (auto dbi : interface_vec) {
+                            if (dbi->uuid == datasource) {
+                                auto desc = fmt::format("Kismet datasource {} ({} - {})",
+                                        dbi->name, dbi->interface, dbi->definition);
+                                ngindex = log_interface->ng_interface_map.size();
+
+                                log_interface->ng_interface_map[source_combo] = ngindex;
+
+                                write_pcapng_interface(log_interface->file, ngindex,
+                                        dbi->interface, pkt_dlt, desc);
+
+                                break;
+                            }
+                        }
+                    } else {
+                        ngindex = source_key->second;
+                    }
+
+                    if (skip_gps) {
+                        lat = 0;
+                        lon = 0;
+                        alt = 0;
+                    }
+
+                    write_pcapng_packet(log_interface->file, bytes, ts_sec, ts_usec, tags, ngindex,
+                            lat, lon, alt);
+
+                    log_interface->sz += bytes.size();
+                    log_interface->count++;
+
+                    if (split_packets && log_interface->count >= split_packets) {
+                        if (verbose)
+                            fmt::print(stderr, "* Closing pcapng file {} after {} packets\n",
+                                    log_interface->name, log_interface->count);
+
+                        fclose(log_interface->file);
+                        log_interface->file = nullptr;
+                        log_interface->count = 0;
+                    } else if (split_size && log_interface->sz >= split_size * 1024) {
+                        if (verbose)
+                            fmt::print(stderr, "* Closing pcap file {} after {}kb\n",
+                                    log_interface->name, log_interface->sz / 1024);
+                        fclose(log_interface->file);
+                        log_interface->file = nullptr;
+                        log_interface->sz = 0;
+                    }
                 }
 
-                if (skip_gps) {
-                    lat = 0;
-                    lon = 0;
-                    alt = 0;
+                // Advance the packet counter and reset its time
+                ++pkt;
+
+                pkt_time = 0;
+                pkt_time_us = 0;
+            } else if (gps_time != 0) {
+                auto ts_sec = sqlite3_column_as<unsigned long>(*gps, 0);
+                auto ts_usec = sqlite3_column_as<unsigned long>(*gps, 1);
+
+                if (pcapng && !split_interface) {
+                    Json::Value json;
+                    std::stringstream ss(sqlite3_column_as<std::string>(*gps, 2));
+
+                    try {
+                        ss >> json;
+
+                        auto alt = json["kismet.gps.last_location"]["kismet.common.location.alt"].asDouble();
+                        auto lat = json["kismet.gps.last_location"]["kismet.common.location.geopoint"][1].asDouble();
+                        auto lon = json["kismet.gps.last_location"]["kismet.common.location.geopoint"][0].asDouble();
+
+                        write_pcapng_gps(single_log->file, ts_sec, ts_usec, lat, lon, alt);
+
+                    } catch (const std::exception& e) {
+                        fmt::print(stderr, "WARNING: Could not process GPS JSON, skipping ({})\n", e.what());
+                    }
                 }
 
-                write_pcapng_packet(log_interface->file, bytes, ts_sec, ts_usec, tags, ngindex,
-                        lat, lon, alt);
+                // Advance and reset the gps query
+                ++gps;
 
-                log_interface->sz += bytes.size();
-                log_interface->count++;
-
-                if (split_packets && log_interface->count >= split_packets) {
-                    if (verbose)
-                        fmt::print(stderr, "* Closing pcapng file {} after {} packets\n",
-                                log_interface->name, log_interface->count);
-
-                    fclose(log_interface->file);
-                    log_interface->file = nullptr;
-                    log_interface->count = 0;
-                } else if (split_size && log_interface->sz >= split_size * 1024) {
-                    if (verbose)
-                        fmt::print(stderr, "* Closing pcap file {} after {}kb\n",
-                                log_interface->name, log_interface->sz / 1024);
-                    fclose(log_interface->file);
-                    log_interface->file = nullptr;
-                    log_interface->sz = 0;
-                }
+                gps_time = 0;
+                gps_time_us = 0;
             }
 
         }
@@ -1080,7 +1238,23 @@ int main(int argc, char *argv[]) {
         exit(0);
     }
 
+    fmt::print(stderr, "Done...\n");
+
     sqlite3_close(db);
+
+    if (single_log != nullptr) {
+        if (single_log->file != nullptr) {
+            fflush(single_log->file);
+            fclose(single_log->file);
+        }
+    }
+
+    for (const auto& l : per_interface_logs) {
+        if (l.second->file != nullptr) {
+            fflush(l.second->file);
+            fclose(l.second->file);
+        }
+    }
 
     return 0;
 }
