@@ -90,11 +90,11 @@ printf("\n");
             }
         if (resp_len > 0) {
             // looking for a response
-            while (ctr < 5000) {
-                usleep(25);
+            while (ctr < 5) {
+                //usleep(25);
                 memset(buf,0x00,255);
-		found = false;
-		res = read(localatzb->fd, buf, 255);
+                found = false;
+                res = read(localatzb->fd, buf, 255);
 if(res > 0)
 {
 printf("read(%d):",res);
@@ -105,37 +105,37 @@ printf("\n");
 		// currently if we get something back that is fine and continue
                 if (res > 0 && memcmp(buf, resp, resp_len) == 0) {
                     found = true;
-		    printf("found\n");
+                    printf("found\n");
                     break;
                 } else if (res > 0) {
                         //we got something from the device
-			printf("we got something from the device\n");
-			ctr = 0;
+                        printf("we got something from the device\n");
+                        ctr = 0;
                         try_ctr++;
                         if (try_ctr >= 10) {
                             res = -1;  // we fell through
                             printf("too many wrong answers\n");
-			    printf("flush the buffer\n");
-			    tcflush(localatzb->fd,TCIOFLUSH);
+                            printf("flush the buffer\n");
+                            tcflush(localatzb->fd,TCIOFLUSH);
                             break;
                         }
-		}
+		        }
 
                 ctr++;
             }//looking loop
             if (!found) {
                 res = -1;  // we fell through
                 printf("not found\n");
-	    }
+	        }
         } else
             res = 1;  // no response requested
     } else if (rx_max > 0) {
         res = read(localatzb->fd, rx_buf, rx_max);
-	if (res < 0) {
-            printf("Read Error %s\n", strerror(errno));
-            usleep(25);
-            res = 0;
-	}
+        if (res < 0) {
+                printf("Read Error %s\n", strerror(errno));
+                //usleep(25);
+                res = 0;
+        }
     }
 
     pthread_mutex_unlock(&(localatzb->serial_mutex));
@@ -437,6 +437,9 @@ printf("opendevice\n");
     localatzb->newtio.c_oflag = 0;
 
     /* newtio.c_lflag = ICANON; */
+
+    localatzb->newtio.c_lflag &= ~ICANON; /* Set non-canonical mode */
+    localatzb->newtio.c_cc[VTIME] = 1; /* Set timeout in deciseconds */
 
     /* flush and set up */
     tcflush(localatzb->fd, TCIFLUSH);
