@@ -242,8 +242,14 @@ void datasource_tracker_source_list::complete_list(std::shared_ptr<kis_datasourc
     if (cancelled)
         return;
 
+    /*
     for (auto i = in_list.begin(); i != in_list.end(); ++i) {
         listed_sources.push_back(*i);
+    }
+    */
+    
+    for (const auto& i : in_list) {
+        listed_sources.push_back(i);
     }
 
     auto v = ipc_list_map.find(in_transaction);
@@ -518,6 +524,7 @@ void datasource_tracker::trigger_deferred_startup() {
 
     alertracker->define_alert("SOURCEERROR", sat_second, 1, sat_second, 10);
     alertracker->activate_configured_alert("SOURCEERROR",
+            "SYSTEM", kis_alert_severity::high,
             "A data source encountered an error.  Depending on the source configuration "
             "Kismet may automatically attempt to re-open the source.");
 
@@ -1537,7 +1544,7 @@ void datasource_tracker::list_interfaces(const std::function<void (std::vector<s
     lock.unlock();
 
     // Initiate the probe
-    dst_list->list_sources(dst_list, [this, listid, in_cb](std::vector<shared_interface> interfaces) {
+    dst_list->list_sources(dst_list, [this, listid, in_cb, dst_list](std::vector<shared_interface> interfaces) {
         kis_unique_lock<kis_mutex> lock(dst_lock, std::defer_lock, "dst list_sources cancel lambda");
         lock.lock();
 
@@ -1559,7 +1566,9 @@ void datasource_tracker::list_interfaces(const std::function<void (std::vector<s
         }
 
         lock.unlock();
+
         in_cb(interfaces);
+
         lock.lock();
 
         auto i = listing_map.find(listid);
@@ -1575,6 +1584,8 @@ void datasource_tracker::list_interfaces(const std::function<void (std::vector<s
 }
 
 void datasource_tracker::schedule_cleanup() {
+    kis_lock_guard<kis_mutex> lg(dst_lock);
+
     if (completion_cleanup_id >= 0)
         return;
 
@@ -1583,12 +1594,15 @@ void datasource_tracker::schedule_cleanup() {
             kis_unique_lock<kis_mutex> lock(dst_lock, std::defer_lock, "dst schedule_cleanup lambda");
            
             lock.lock();
+
+            // Copy the vectors so we don't actually free the shared ptrs yet
             auto d_pcv = probing_complete_vec;
             auto d_lcv = listing_complete_vec;
             auto d_bsv = broken_source_vec;
 
             completion_cleanup_id = -1;
 
+            // Clear the tracker level copies
             probing_complete_vec.clear();
             listing_complete_vec.clear();
             broken_source_vec.clear();

@@ -84,6 +84,7 @@
 #include "datasource_dot11_scan.h"
 #include "datasource_bluetooth_scan.h"
 #include "datasource_bladerf_wiphy.h"
+#include "datasource_adsbproxy.h"
 
 #include "logtracker.h"
 #include "kis_ppilogfile.h"
@@ -906,6 +907,7 @@ int main(int argc, char *argv[], char *envp[]) {
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_rzkillerbee_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_ticc2531_builder()));
     datasourcetracker->register_datasource(shared_datasource_builder(new datasource_bladerf_wiphy_builder()));
+    datasourcetracker->register_datasource(shared_datasource_builder(new datasource_adsbproxy_builder()));
 
     // Virtual sources get a special meta-builder
     datasource_virtual_builder::create_virtualbuilder();
@@ -974,6 +976,7 @@ int main(int argc, char *argv[], char *envp[]) {
     if (getuid() == 0) {
         alertracker->define_alert("ROOTUSER", sat_second, 1, sat_second, 1);
         auto userref = alertracker->activate_configured_alert("ROOTUSER",
+                "SYSTEM", kis_alert_severity::high,
                 "Kismet is running as root; this is less secure than running Kismet "
                 "as an unprivileged user and installing it as suidroot.  Please consult "
                 "the Kismet README for more information about securely installing Kismet. "

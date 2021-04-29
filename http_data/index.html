@@ -54,6 +54,7 @@
 <script src="js/jquery.kismet.devicedata.js"></script>
 <script src="js/jquery.kismet.messagebus.js"></script>
 <script src="js/jquery.kismet.channeldisplay.js"></script>
+<script src="js/kismet.ui.alerts.js"></script>
 
 <script src="js/kismet.ui.iconbar.js"></script>
 <script src="js/jquery.kismet.battery.js"></script>
@@ -108,7 +109,14 @@ div.autosize {
 <script>
 const queryString = window.location.search;
 const urlParams = new URLSearchParams(queryString);
+
 window['censor_macs'] = urlParams.get('censor_macs')
+window['censor_location'] = urlParams.get('censor_location')
+
+if (urlParams.get('censor')) {
+    window['censor_macs'] = 1
+    window['censor_location'] = 1
+}
 
 var orig_title = "";
 

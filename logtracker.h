@@ -105,9 +105,12 @@ protected:
     virtual void register_fields() override {
         tracker_component::register_fields();
 
-        Globalreg::globalreg->entrytracker->register_field("kismet.log.type_driver",
+        auto self_id = 
+            Globalreg::globalreg->entrytracker->register_field("kismet.log.type_driver",
                 tracker_element_factory<tracker_element_map>(),
                 "logfile driver");
+
+        set_id(self_id);
 
         register_field("kismet.logfile.type.class", "class/type", &log_class);
         register_field("kismet.logfile.type.name", "base type name", &log_name);
@@ -223,7 +226,7 @@ protected:
 };
 
 class log_tracker : public tracker_component, public lifetime_global, public deferred_startup, 
-    std::enable_shared_from_this<log_tracker> {
+    public std::enable_shared_from_this<log_tracker> {
 public:
     static std::string global_name() { return "LOGTRACKER"; }
 

@@ -185,6 +185,7 @@ kis_btle_phy::kis_btle_phy(global_registry *in_globalreg, int in_phyid) :
 
     alert_bleedingtooth_ref =
         alertracker->activate_configured_alert("BLEEDINGTOOTH",
+                "EXPLOIT", kis_alert_severity::high,
                 "The BleedingTooth attack (CVE-2020-24490) exploits the lack of bounds "
                 "checking in the BlueZ stack and may lead to execution in the kernel.  "
                 "BleedingTooth attacks use over-sized advertisement packets.",
@@ -322,9 +323,7 @@ int kis_btle_phy::common_classifier(CHAINCALL_PARMS) {
                  UCD_UPDATE_SEENBY | UCD_UPDATE_ENCRYPTION),
                 "BTLE Device");
 
-    kis_unique_lock lk_list(mphy->devicetracker->get_devicelist_mutex(), std::defer_lock, "btle_phy common_classifier");
-    kis_unique_lock lk_device(device->device_mutex, std::defer_lock, "btle_phy common_classifier");
-    std::lock(lk_list, lk_device);
+    kis_lock_guard<kis_mutex> lk(mphy->devicetracker->get_devicelist_mutex(), "btle_common_classifier");
 
     auto new_dev = false;
 

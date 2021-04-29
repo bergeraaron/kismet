@@ -158,24 +158,28 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
         // Register the dissector alerts
         alert_netstumbler_ref = 
             alertracker->activate_configured_alert("NETSTUMBLER", 
+                    "PROBE", kis_alert_severity::low,
                     "Netstumbler (and similar older Windows tools) may generate unique "
                     "beacons which can be used to identify these tools in use.  These "
                     "tools and the cards which generate these frames are uncommon.",
                     phyid);
         alert_nullproberesp_ref =
-            alertracker->activate_configured_alert("NULLPROBERESP", 
+            alertracker->activate_configured_alert("NULLPROBERESP",
+                    "DENIAL", kis_alert_severity::medium,
                     "A probe response with a SSID length of 0 can be used to crash the "
                     "firmware in specific older Orinoco cards.  These cards are "
                     "unlikely to be in use in modern systems.",
                     phyid);
         alert_lucenttest_ref =
             alertracker->activate_configured_alert("LUCENTTEST", 
+                    "PROBE", kis_alert_severity::low,
                     "Specific Lucent Orinoco test tools generate identifiable frames, "
                     "which can indicate these tools are in use.  These tools and the "
                     "cards which generate these frames are uncommon.",
                     phyid);
         alert_msfbcomssid_ref =
             alertracker->activate_configured_alert("MSFBCOMSSID", 
+                    "EXPLOIT", kis_alert_severity::medium,
                     "Old versions of the Broadcom Windows drivers (and Linux NDIS drivers) "
                     "are vulnerable to overflow exploits.  The Metasploit framework "
                     "can attack these vulnerabilities.  These drivers are unlikely to "
@@ -184,6 +188,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                     phyid);
         alert_msfdlinkrate_ref =
             alertracker->activate_configured_alert("MSFDLINKRATE", 
+                    "EXPLOIT", kis_alert_severity::medium,
                     "Old versions of the D-Link Windows drivers are vulnerable to "
                     "malformed rate fields.  The Metasploit framework can attack these "
                     "vulnerabilities.  These drivers are unlikely to be found in "
@@ -192,14 +197,16 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                     phyid);
         alert_msfnetgearbeacon_ref =
             alertracker->activate_configured_alert("MSFNETGEARBEACON", 
+                    "EXPLOIT", kis_alert_severity::medium,
                     "Old versions of the Netgear windows drivers are vulnerable to "
                     "malformed beacons.  The Metasploit framework can attack these "
                     "vulnerabilities.  These drivers are unlikely to be found in "
-                "modern systems, but seeing these malformed frames indicates an "
-                "attempted attack is occurring.",
-                phyid);
+                    "modern systems, but seeing these malformed frames indicates an "
+                    "attempted attack is occurring.",
+                    phyid);
     alert_longssid_ref =
         alertracker->activate_configured_alert("LONGSSID", 
+                "EXPLOIT", kis_alert_severity::critical,
                 "The Wi-Fi standard allows for 32 characters in a SSID. "
                 "Historically, some drivers have had vulnerabilities related to "
                 "invalid over-long SSID fields.  Seeing these frames indicates that "
@@ -207,6 +214,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 phyid);
     alert_disconinvalid_ref =
         alertracker->activate_configured_alert("DISCONCODEINVALID", 
+                "EXPLOIT", kis_alert_severity::high,
                 "The 802.11 specification defines reason codes for disconnect "
                 "and deauthentication events.  Historically, various drivers "
                 "have been reported to improperly handle invalid reason codes.  "
@@ -215,6 +223,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 phyid);
     alert_deauthinvalid_ref =
         alertracker->activate_configured_alert("DEAUTHCODEINVALID", 
+                "EXPLOIT", kis_alert_severity::high,
                 "The 802.11 specification defines reason codes for disconnect "
                 "and deauthentication events.  Historically, various drivers "
                 "have been reported to improperly handle invalid reason codes.  "
@@ -223,6 +232,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 phyid);
     alert_wmm_ref =
         alertracker->activate_configured_alert("WMMOVERFLOW",
+                "EXPLOIT", kis_alert_severity::high,
                 "The Wi-Fi standard specifies 24 bytes for WMM IE tags.  Over-sized "
                 "WMM fields may indicate an attempt to exploit bugs in Broadcom chipsets "
                 "using the Broadpwn attack",
@@ -233,6 +243,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
 #endif
     alert_chan_ref =
         alertracker->activate_configured_alert("CHANCHANGE", 
+                "SPOOF", kis_alert_severity::low,
                 "An access point has changed channel.  This may occur on "
                 "enterprise equipment or on personal equipment with automatic "
                 "channel selection, but may also indicate a spoofed or "
@@ -240,12 +251,14 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 phyid);
 	alert_dhcpcon_ref =
 		alertracker->activate_configured_alert("DHCPCONFLICT", 
+                "SPOOF", kis_alert_severity::low,
                 "A DHCP exchange was observed and a client was given an IP via "
                 "DHCP, but is not using the assigned IP.  This may be a "
                 "mis-configured client device, or may indicate client spoofing.",
                 phyid);
 	alert_bcastdcon_ref =
 		alertracker->activate_configured_alert("BCASTDISCON", 
+                "DENIAL", kis_alert_severity::medium,
                 "A broadcast disconnect packet forces all clients on a network "
                 "to disconnect.  While these may rarely occur in some environments, "
                 "typically a broadcast disconnect indicates a denial of service "
@@ -254,12 +267,14 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 phyid);
 	alert_airjackssid_ref = 
 		alertracker->activate_configured_alert("AIRJACKSSID", 
+                "PROBE", kis_alert_severity::low,
                 "Very old wireless tools used the SSID 'Airjack' while configuring "
                 "card state.  It is very unlikely to see these tools in operation "
                 "in modern environments.",
                 phyid);
 	alert_wepflap_ref =
 		alertracker->activate_configured_alert("CRYPTODROP", 
+                "SPOOF", kis_alert_severity::high,
                 "A previously encrypted SSID has stopped advertising encryption.  "
                 "This may rarely occur when a network is reconfigured to an open "
                 "state, but more likely indicates some form of network spoofing or "
@@ -267,6 +282,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 phyid);
 	alert_dhcpname_ref =
 		alertracker->activate_configured_alert("DHCPNAMECHANGE", 
+                "SPOOF", kis_alert_severity::low,
                 "The DHCP protocol allows clients to put the host name and "
                 "DHCP client / vendor / operating system details in the DHCP "
                 "Discovery packet.  These values should old change if the client "
@@ -276,6 +292,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 phyid);
 	alert_dhcpos_ref =
 		alertracker->activate_configured_alert("DHCPOSCHANGE", 
+                "SPOOF", kis_alert_severity::low,
                 "The DHCP protocol allows clients to put the host name and "
                 "DHCP client / vendor / operating system details in the DHCP "
                 "Discovery packet.  These values should old change if the client "
@@ -285,6 +302,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 phyid);
 	alert_adhoc_ref =
 		alertracker->activate_configured_alert("ADHOCCONFLICT", 
+                "SPOOF", kis_alert_severity::high,
                 "The same SSID is being advertised as an access point and as an "
                 "ad-hoc network.  This may indicate a misconfigured or misbehaving "
                 "device, or could indicate an attempt at spoofing or an 'evil twin' "
@@ -292,12 +310,14 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 phyid);
 	alert_ssidmatch_ref =
 		alertracker->activate_configured_alert("APSPOOF", 
+                "SPOOF", kis_alert_severity::high,
                 "Kismet may be given a list of authorized MAC addresses for "
                 "a SSID.  If a beacon or probe response is seen from a MAC address "
                 "not listed in the authorized list, this alert will be raised.",
                 phyid);
 	alert_dot11d_ref =
 		alertracker->activate_configured_alert("DOT11D", 
+                "SPOOF", kis_alert_severity::high,
                 "Conflicting 802.11d (country code) data has been advertised by the "
                 "same SSID.  It is unlikely this is a normal configuration change, "
                 "and can indicate a spoofed or 'evil twin' network, or an attempt "
@@ -307,6 +327,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 phyid);
 	alert_beaconrate_ref =
 		alertracker->activate_configured_alert("BEACONRATE", 
+                "SPOOF", kis_alert_severity::high,
                 "The advertised beacon rate of a SSID has changed.  In an "
                 "enterprise or multi-SSID environment this may indicate a normal "
                 "configuration change, but can also indicate a spoofed or "
@@ -314,12 +335,14 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 phyid);
 	alert_cryptchange_ref =
 		alertracker->activate_configured_alert("ADVCRYPTCHANGE", 
+                "SPOOF", kis_alert_severity::high,
                 "A SSID has changed the advertised supported encryption standards.  "
                 "This may be a normal change when reconfiguring an access point, "
                 "but can also indicate a spoofed or 'evil twin' attack.",
                 phyid);
 	alert_malformmgmt_ref =
 		alertracker->activate_configured_alert("MALFORMMGMT", 
+                "EXPLOIT", kis_alert_severity::medium,
                 "Malformed management frames may indicate errors in the capture "
                 "source driver (such as not discarding corrupted packets), but can "
                 "also be indicative of an attempted attack against drivers which may "
@@ -327,65 +350,80 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 phyid);
 	alert_wpsbrute_ref =
 		alertracker->activate_configured_alert("WPSBRUTE", 
+                "EXPLOIT", kis_alert_severity::critical,
                 "Excessive WPS events may indicate a malformed client, or an "
                 "attack on the WPS system by a tool such as Reaver.",
                 phyid);
     alert_l33t_ref = 
         alertracker->activate_configured_alert("KARMAOUI",
+                "PROBE", kis_alert_severity::medium,
                 "Probe responses from MAC addresses with an OUI of 00:13:37 often "
-                "indicate an Karma AP impersonation attack.",
+                "indicate an Karma AP impersonation attack, such as that performed by a "
+                "Wi-Fi Pineapple device",
                 phyid);
     alert_tooloud_ref =
         alertracker->activate_configured_alert("OVERPOWERED",
+                "OTHER", kis_alert_severity::high,
                 "Signal levels are abnormally high, when using an external amplifier "
                 "this could indicate that the gain is too high.  Over-amplified signals "
                 "may miss packets entirely.",
                 phyid);
     alert_nonce_zero_ref =
         alertracker->activate_configured_alert("NONCEDEGRADE",
+                "EXPLOIT", kis_alert_severity::medium,
                 "A WPA handshake with an empty NONCE was observed; this could indicate "
                 "a WPA degradation attack such as the vanhoefm attack against BSD "
-                "(https://github.com/vanhoefm/blackhat17-pocs/tree/master/openbsd)",
+                "(https://github.com/vanhoefm/blackhat17-pocs/tree/master/openbsd), however "
+                "this may also be generated during partial handshake captures",
                 phyid);
     alert_nonce_duplicate_ref =
         alertracker->activate_configured_alert("NONCEREUSE",
+                "EXPLOIT", kis_alert_severity::high,
                 "A WPA handshake has attempted to re-use a previous nonce value; this may "
                 "indicate an attack against the WPA keystream such as the vanhoefm "
-                "KRACK attack (https://www.krackattacks.com/)");
+                "KRACK attack (https://www.krackattacks.com/), however this may also be a "
+                "normal retransmission of the handshake data packet in a busy environment.");
     alert_atheros_wmmtspec_ref =
         alertracker->activate_configured_alert("WMMTSPEC",
+                "EXPLOIT", kis_alert_severity::high,
                 "Too many WMMTSPEC options were seen in a probe response; this "
                 "may be triggered by CVE-2017-11013 as described at "
                 "https://pleasestopnamingvulnerabilities.com/");
     alert_atheros_rsnloop_ref =
         alertracker->activate_configured_alert("RSNLOOP",
+                "EXPLOIT", kis_alert_severity::high,
                 "Invalid RSN (802.11i) tags in beacon frames can be used to cause "
                 "loops in some Atheros drivers, as described in "
                 "CVE-2017-9714 and https://pleasestopnamingvulnerabilities.com/");
     alert_11kneighborchan_ref =
         alertracker->activate_configured_alert("BCOM11KCHAN",
+                "EXPLOIT", kis_alert_severity::high,
                 "Invalid channels in 802.11k neighbor report frames "
                 "can be used to exploit certain Broadcom HardMAC implementations, typically used "
                 "in mobile devices, as described in "
                 "https://bugs.chromium.org/p/project-zero/issues/detail?id=1289");
     alert_bssts_ref =
         alertracker->activate_configured_alert("BSSTIMESTAMP",
+                "SPOOF", kis_alert_severity::medium,
                 "Access points transmit a high-precision millisecond timestamp to "
                 "coordinate power saving and other time-sensitive events.  Out-of-sequence "
                 "timestamps may indicate spoofing or an 'evil twin' style attack.");
     alert_probechan_ref =
         alertracker->activate_configured_alert("PROBECHAN",
+                "SPOOF", kis_alert_severity::medium,
                 "Probe responses may include the Wi-Fi channel; this ought to be "
                 "identical to the channel advertised in the beacon.  Incorrect channels "
                 "in the probe response may indicate a spoofing or 'evil twin' style attack, "
                 "but can also be indicative of a misbehaving access point or repeater.");
     alert_qcom_extended_ref =
         alertracker->activate_configured_alert("QCOMEXTENDED",
+                "EXPLOIT", kis_alert_severity::high,
                 "IE 127 Extended Capabilities tags should always be 8 bytes; Some versions "
                 "of the Qualcomm drivers are vulnerable to a buffer overflow resulting in "
                 "execution on the host, as detailed in CVE-2019-10539.");
     alert_bad_fixlen_ie =
         alertracker->activate_configured_alert("BADFIXLENIE",
+                "EXPLOIT", kis_alert_severity::high,
                 "IE tags contain nested information in beacon and other management frames. "
                 "Some IE tags have constant fixed lengths; a tag advertising with the "
                 "incorrect length may indicate an attempted buffer overflow attack.  "
@@ -393,11 +431,13 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 "otherwise unknown, malformed tag.");
     alert_rtlwifi_p2p_ref =
         alertracker->activate_configured_alert("RTLWIFIP2P",
+                "EXPLOIT", kis_alert_severity::high,
                 "A bug in the Linux RTLWIFI P2P parsers could result in a crash "
                 "or potential code execution due to malformed notification of "
                 "absence records, as detailed in CVE-2019-17666");
     alert_deauthflood_ref =
         alertracker->activate_configured_alert("DEAUTHFLOOD",
+                "DENIAL", kis_alert_severity::medium,
                 "By spoofing disassociate or deauthenticate packets, an attacker "
                 "may disconnect clients from a network which does not support "
                 "management frame protection (MFP); This can be used to cause a "
@@ -406,6 +446,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                 phyid);
     alert_noclientmfp_ref =
         alertracker->activate_configured_alert("NOCLIENTMFP",
+                "SPOOF", kis_alert_severity::low,
                 "Client does not support management frame protection (MFP); By spoofing "
                 "disassociate or deauthenticate packets, an attacker may disconnect it "
                 "from a network. This can be used to cause a denial of service or to "
@@ -414,6 +455,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
 
     alert_rtl8195_vdoo_ref =
         alertracker->activate_configured_alert("RTL8195VD1406",
+                "EXPLOIT", kis_alert_severity::high,
                 "Realtek 8195 devices have multiple vulnerabilities in how EAPOL packets "
                 "are processed, leading to code execution as the kernel on the device, as "
                 "detailed in CVE-2020-9395 and VD-1406 and VD-1407");
@@ -740,10 +782,10 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                         kis_unique_lock<kis_mutex> lk_device(dev->device_mutex,
                                 std::defer_lock, "/phy/phy80211/related-to/devices find_clients");
                         std::lock(lk_list, lk_device);
-                        */
 
                         kis_unique_lock<kis_mutex> lk_device(dev->device_mutex,
                                 "/phy/phy80211/related-to/devices find_clients");
+                        */
 
                         // Don't add non-dot11 devices
                         auto dot11 =
@@ -773,7 +815,7 @@ kis_80211_phy::kis_80211_phy(global_registry *in_globalreg, int in_phyid) :
                     find_clients(dev);
 
                     return cl;
-                }));
+                }, devicetracker->get_devicelist_mutex()));
 
     httpd->register_route("/phy/phy80211/by-key/:key/pcap/handshake", {"GET"}, httpd->RO_ROLE, {"pcap"},
             std::make_shared<kis_net_web_function_endpoint>(
@@ -1030,6 +1072,9 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
     std::shared_ptr<dot11_tracked_device> receive_dot11;
     std::shared_ptr<dot11_tracked_device> transmit_dot11;
 
+    kis_unique_lock<kis_mutex> list_locker(d11phy->devicetracker->get_devicelist_mutex(),
+            "phy80211 common_classifier");
+
     if (dot11info->type == packet_management) {
         // Resolve the common structures of management frames; this is a lot of code
         // copy and paste, but because this happens *every single packet* we probably 
@@ -1088,9 +1133,6 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                         "Wi-Fi Device (Inferred)");
         }
 
-        auto list_locker = 
-            kis_unique_lock<kis_mutex>(d11phy->devicetracker->get_devicelist_mutex(), std::defer_lock);
-
         // Do we have a worker we have to call later?  We must defer workers until we release the locks
         // on devices
         bool associate_bssts = false;
@@ -1098,7 +1140,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
         std::function<void ()> handle_probed_ssid_f;
 
         if (bssid_dev != NULL) {
-            kis_lock_guard bssid_lk(bssid_dev->device_mutex, "phy80211 common_classifier");
+            // kis_lock_guard<kis_mutex> bssid_lk(bssid_dev->device_mutex, "phy80211 common_classifier");
 
             bssid_dot11 =
                 bssid_dev->get_sub_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
@@ -1200,7 +1242,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
         }
 
         if (source_dev != NULL) {
-            kis_lock_guard source_lk(source_dev->device_mutex, "phy80211 common_classifier");
+            // kis_lock_guard<kis_mutex> source_lk(source_dev->device_mutex, "phy80211 common_classifier");
 
             source_dot11 =
                 source_dev->get_sub_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
@@ -1246,7 +1288,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_CLIENT);
                 source_dev->set_type_string_ifnot([d11phy]() { 
                         return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Client"); 
-                        }, KIS_DEVICE_BASICTYPE_CLIENT);
+                        }, (KIS_DEVICE_BASICTYPE_CLIENT | KIS_DEVICE_BASICTYPE_AP));
             }
 
             if (dot11info->subtype == packet_sub_probe_req ||
@@ -1260,7 +1302,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
         }
 
         if (dest_dev != NULL) {
-            kis_lock_guard dest_lk(dest_dev->device_mutex, "phy80211 common_classifier");
+            // kis_lock_guard<kis_mutex> dest_lk(dest_dev->device_mutex, "phy80211 common_classifier");
 
             dest_dot11 =
                 dest_dev->get_sub_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
@@ -1282,7 +1324,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
             dest_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_CLIENT);
             dest_dev->set_type_string_ifnot([d11phy]() {
                     return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Client");
-                    }, KIS_DEVICE_BASICTYPE_AP);
+                    }, (KIS_DEVICE_BASICTYPE_CLIENT | KIS_DEVICE_BASICTYPE_AP));
 
             d11phy->devicetracker->update_view_device(dest_dev);
         }
@@ -1291,7 +1333,6 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
         if (bssid_dev != NULL) {
             // Perform multi-device correlation under devicelist lock
             
-            list_locker.lock();
             // Now we've instantiated and mapped all the possible devices and dot11 devices; now
             // populate the per-client records for any which have mgmt communication
             
@@ -1351,7 +1392,6 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                         dot11info->channel, al);
             }
 
-            list_locker.unlock();
         }
 
         // BSSTS relationship worker
@@ -1392,19 +1432,21 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
             d11phy->ap_view->do_device_work(bss_worker);
 
             // Lock the bssid device and set all the relationships
-            kis_unique_lock bssid_lk(bssid_dev->device_mutex, std::defer_lock, "phy80211 common_classifier bssts agg");
-            bssid_lk.lock();
+            // kis_unique_lock<kis_mutex> bssid_lk(bssid_dev->device_mutex, std::defer_lock, "phy80211 common_classifier bssts agg");
+            // bssid_lk.lock();
+
             for (const auto& ri : *(bss_worker.getMatchedDevices())) {
                 auto rdev = std::static_pointer_cast<kis_tracked_device_base>(ri);
                 bssid_dev->add_related_device("dot11_bssts_similar", rdev->get_key());
             }
-            bssid_lk.unlock();
+
+            // bssid_lk.unlock();
 
             // Assign the reverse map for each device under individual lock
             for (const auto& ri : *(bss_worker.getMatchedDevices())) {
                 auto rdev = std::static_pointer_cast<kis_tracked_device_base>(ri);
 
-                kis_lock_guard<kis_mutex> lg(rdev->device_mutex);
+                // kis_lock_guard<kis_mutex> lg(rdev->device_mutex);
                 rdev->add_related_device("dot11_bssts_similar", bssid_dev->get_key());
             }
         }
@@ -1512,12 +1554,8 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                         "Wi-Fi Device");
         }
 
-        auto list_locker = 
-            kis_unique_lock<kis_mutex>(d11phy->devicetracker->get_devicelist_mutex(), std::defer_lock,
-                    "phy80211 common_classifier");
-
         if (bssid_dev != NULL) {
-            kis_lock_guard bssid_lk(bssid_dev->device_mutex, "phy80211 common_classifier");
+            // kis_lock_guard<kis_mutex> bssid_lk(bssid_dev->device_mutex, "phy80211 common_classifier");
 
             bssid_dot11 =
                 bssid_dev->get_sub_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
@@ -1593,7 +1631,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
         // If we have a source device, we know it's not originating from the same radio as the AP,
         // since source != bssid
         if (source_dev != NULL) {
-            kis_lock_guard source_lk(source_dev->device_mutex, "phy80211 common_classifier");
+            // kis_lock_guard<kis_mutex> source_lk(source_dev->device_mutex, "phy80211 common_classifier");
 
             source_dot11 =
                 source_dev->get_sub_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
@@ -1631,7 +1669,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_CLIENT);
                 source_dev->set_type_string_ifnot([d11phy]() {
                         return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Client");
-                        }, KIS_DEVICE_BASICTYPE_AP);
+                        }, (KIS_DEVICE_BASICTYPE_CLIENT | KIS_DEVICE_BASICTYPE_AP));
             } else if (dot11info->distrib == distrib_inter) {
                 // If it's from the ess, we're some sort of wired device; set the type
                 // accordingly
@@ -1648,13 +1686,13 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_WIRED);
                 source_dev->set_type_string_ifnot([d11phy]() {
                         return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Bridged");
-                        }, KIS_DEVICE_BASICTYPE_CLIENT | KIS_DEVICE_BASICTYPE_AP);
+                        }, (KIS_DEVICE_BASICTYPE_CLIENT | KIS_DEVICE_BASICTYPE_AP));
             } else {
                 source_dev->bitset_basic_type_set(KIS_DEVICE_BASICTYPE_CLIENT);
 
                 source_dev->set_type_string_ifnot([d11phy]() {
                         return d11phy->devicetracker->get_cached_devicetype("Wi-Fi Client");
-                        }, KIS_DEVICE_BASICTYPE_AP);
+                        }, (KIS_DEVICE_BASICTYPE_CLIENT | KIS_DEVICE_BASICTYPE_AP));
             }
 
             source_dot11->inc_datasize(dot11info->datasize);
@@ -1699,7 +1737,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
         }
 
         if (dest_dev != NULL) {
-            kis_lock_guard dest_lk(dest_dev->device_mutex, "phy80211 common_classifier");
+            // kis_lock_guard<kis_mutex> dest_lk(dest_dev->device_mutex, "phy80211 common_classifier");
 
             dest_dot11 =
                 dest_dev->get_sub_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
@@ -1750,7 +1788,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
 
         // WDS transmitter must be a wifi device, and an AP peer
         if (transmit_dev != NULL) {
-            kis_lock_guard transmit_lk(transmit_dev->device_mutex, "phy80211 common_classifier");
+            // kis_lock_guard<kis_mutex> transmit_lk(transmit_dev->device_mutex, "phy80211 common_classifier");
 
             transmit_dot11 =
                 transmit_dev->get_sub_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
@@ -1795,7 +1833,7 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
 
         // WDS receiver must also be a wifi device, and an AP peer
         if (receive_dev != NULL) {
-            kis_lock_guard receive_lk(receive_dev->device_mutex, "phy80211 common_classifier");
+            // kis_lock_guard<kis_mutex> receive_lk(receive_dev->device_mutex, "phy80211 common_classifier");
 
             receive_dot11 =
                 receive_dev->get_sub_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
@@ -1828,8 +1866,6 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
         }
 
         if (bssid_dev != NULL) {
-            list_locker.lock();
-
             // Map clients
             if (source_dev != NULL) {
                 d11phy->process_client(bssid_dev, bssid_dot11, source_dev, source_dot11, 
@@ -1844,22 +1880,16 @@ int kis_80211_phy::packet_dot11_common_classifier(CHAINCALL_PARMS) {
                 d11phy->process_wpa_handshake(bssid_dev, bssid_dot11, dest_dev, dest_dot11,
                         in_pack, dot11info);
             }
-
-            list_locker.unlock();
         }
 
         // If we're WDS, link source and dest devices as clients of the transmitting WDS AP
         if (transmit_dev != NULL) {
-            list_locker.lock();
-
             if (source_dev != NULL) 
                 d11phy->process_client(transmit_dev, transmit_dot11, source_dev, source_dot11,
                         in_pack, dot11info, pack_gpsinfo, pack_datainfo);
             if (dest_dev != NULL)
                 d11phy->process_client(transmit_dev, transmit_dot11, source_dev, source_dot11,
                         in_pack, dot11info, pack_gpsinfo, pack_datainfo);
-
-            list_locker.unlock();
         }
     }
 
@@ -1956,12 +1986,11 @@ int kis_80211_phy::packet_dot11_scan_json_classifier(CHAINCALL_PARMS) {
                      UCD_UPDATE_SEENBY | UCD_UPDATE_ENCRYPTION),
                     "Wi-Fi Device");
 
-        /*
-        kis_unique_lock lk_list(d11phy->devicetracker->get_devicelist_mutex(), std::defer_lock, "dot11_scan_json_classifier");
-        kis_unique_lock lk_device(bssid_dev->device_mutex, std::defer_lock, "dot11_scan_json_classifier");
-        std::lock(lk_list, lk_device);
-        */
-        kis_unique_lock lk_device(bssid_dev->device_mutex, "dot11_scan_json_classifier");
+        kis_unique_lock<kis_mutex> list_locker(d11phy->devicetracker->get_devicelist_mutex(),
+                "phy80211 json_classifier");
+
+
+        // kis_unique_lock<kis_mutex> lk_device(bssid_dev->device_mutex, "dot11_scan_json_classifier");
 
         auto bssid_dot11 =
             bssid_dev->get_sub_as<dot11_tracked_device>(d11phy->dot11_device_entry_id);
@@ -2510,8 +2539,7 @@ void kis_80211_phy::handle_ssid(std::shared_ptr<kis_tracked_device_base> basedev
 
         // If we have a new ssid and we can consider raising an alert, do the 
         // regex compares to see if we trigger apspoof
-        if (dot11info->ssid_len != 0 &&
-                alertracker->potential_alert(alert_ssidmatch_ref)) {
+        if (dot11info->ssid_len != 0 && alertracker->potential_alert(alert_ssidmatch_ref)) {
             for (const auto& s : *ssid_regex_vec) {
                 std::shared_ptr<dot11_tracked_ssid_alert> sa =
                     std::static_pointer_cast<dot11_tracked_ssid_alert>(s);
@@ -2918,7 +2946,11 @@ void kis_80211_phy::handle_probed_ssid(std::shared_ptr<kis_tracked_device_base> 
     if (dot11info->subtype == packet_sub_probe_req ||
             dot11info->subtype == packet_sub_association_req ||
             dot11info->subtype == packet_sub_reassociation_req) {
-        kis_unique_lock<kis_mutex> lk(basedev->device_mutex, "handle_probed_ssid");
+
+        kis_unique_lock<kis_mutex> list_locker(devicetracker->get_devicelist_mutex(),
+                "phy80211 handle_probed_ssid");
+
+        // kis_unique_lock<kis_mutex> lk(basedev->device_mutex, "handle_probed_ssid");
 
         auto probemap(dot11dev->get_probed_ssid_map());
 
@@ -3017,7 +3049,7 @@ void kis_80211_phy::handle_probed_ssid(std::shared_ptr<kis_tracked_device_base> 
 
         if (dot11info->wps_uuid_e != "") {
             if (probessid->get_wps_uuid_e() != dot11info->wps_uuid_e) {
-                lk.unlock();
+                // lk.unlock();
 
                 device_tracker_view_function_worker dev_worker(
                         [this, dot11info, basedev, dot11dev](std::shared_ptr<kis_tracked_device_base> dev) -> bool {
@@ -3042,19 +3074,19 @@ void kis_80211_phy::handle_probed_ssid(std::shared_ptr<kis_tracked_device_base> 
                 devicetracker->do_device_work(dev_worker);
 
                 // Update main device under lock
-                lk.lock();
+                // lk.lock();
                 probessid->set_wps_uuid_e(dot11info->wps_uuid_e);
                 // Set a bidirectional relationship
                 for (const auto& ri : *(dev_worker.getMatchedDevices())) {
                     auto rdev = std::static_pointer_cast<kis_tracked_device_base>(ri);
                     basedev->add_related_device("dot11_uuid_e", rdev->get_key());
                 }
-                lk.unlock();
+                // lk.unlock();
 
                 // Update associated devices under single device lock
                 for (const auto& ri : *(dev_worker.getMatchedDevices())) {
                     auto rdev = std::static_pointer_cast<kis_tracked_device_base>(ri);
-                    kis_lock_guard<kis_mutex> lk(rdev->device_mutex, "handle_probed_ssid wps correlation");
+                    // kis_lock_guard<kis_mutex> lk(rdev->device_mutex, "handle_probed_ssid wps correlation");
                     rdev->add_related_device("dot11_uuid_e", basedev->get_key());
                 }
             }
@@ -3482,10 +3514,10 @@ std::string kis_80211_phy::crypt_to_string(uint64_t cryptset) {
     std::string ret;
 
     if (cryptset == crypt_none)
-        return "none";
+        return "Open";
 
     if (cryptset == crypt_unknown)
-        return "unknown";
+        return "Unknown";
 
     if (cryptset & crypt_wps)
         ret = "WPS";
@@ -3656,12 +3688,11 @@ void kis_80211_phy::generate_handshake_pcap(std::shared_ptr<kis_net_beast_httpd_
 
     stream.write((const char *) &hdr, sizeof(hdr));
 
-    /*
-    kis_unique_lock lk_list(devicetracker->get_devicelist_mutex(), std::defer_lock, "generate_handshake_pcap");
-    kis_unique_lock lk_device(dev->device_mutex, std::defer_lock, "generate_handshake_pcap");
-    std::lock(lk_list, lk_device);
-    */
-    kis_unique_lock lk_device(dev->device_mutex, "generate_handshake_pcap");
+    // kis_unique_lock<kis_mutex> lk_device(dev->device_mutex, "generate_handshake_pcap");
+    //
+    kis_unique_lock<kis_mutex> list_locker(devicetracker->get_devicelist_mutex(),
+            "phy80211 generate_handshake_pcap");
+
 
     /* Write the beacon */
     if (dot11dev->get_beacon_packet_present()) {

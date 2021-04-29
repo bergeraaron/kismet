@@ -111,6 +111,12 @@ void kis_net_beast_httpd::trigger_deferred_startup() {
     register_mime_type("txt", "text/plain");
     register_mime_type("pcap", "application/vnd.tcpdump.pcap");
     register_mime_type("pcapng", "application/vnd.tcpdump.pcap");
+    register_mime_type("ttf", "font/ttf");
+    register_mime_type("otf", "font/otf");
+    register_mime_type("eot", "application/vnd.ms-fontobject");
+    register_mime_type("woff", "font/woff");
+    register_mime_type("woff2", "font/woff2");
+
 
     for (const auto& m : Globalreg::globalreg->kismet_config->fetch_opt_vec("httpd_mime")) {
         auto comps = str_tokenize(m, ":");
@@ -148,6 +154,7 @@ void kis_net_beast_httpd::trigger_deferred_startup() {
             return;
         } else {
             alertracker->raise_one_shot("GLOBALHTTPDUSER",
+                    "SYSTEM", kis_alert_severity::info,
                     fmt::format("Found a httpd_username and httpd_password configuration in a global Kismet "
                         "config file, such as kismet.conf, kismet_httpd.conf, or kismet_site.conf.  "
                         "Any login in the user configuration file {} will be ignored.", user_config_path), -1);
@@ -919,7 +926,8 @@ std::shared_ptr<kis_net_beast_route> kis_net_beast_httpd::find_websocket_endpoin
 }
 
 void kis_net_beast_httpd::register_static_dir(const std::string& prefix, const std::string& path) {
-    kis_lock_guard<kis_mutex> lk(static_mutex, "beast_httpd register_static_dir");
+    kis_lock_guard<kis_shared_mutex> lk(static_mutex, "beast_httpd register_static_dir");
+
     static_dir_vec.emplace_back(static_content_dir(prefix, path));
 }
 
@@ -966,11 +974,7 @@ bool kis_net_beast_httpd::serve_file(std::shared_ptr<kis_net_beast_httpd_connect
     else if (uri.back() == '/') 
         uri += "index.html";
 
-    auto qpos = uri.find_first_of('?');
-    if (qpos != std::string::npos)
-        uri = uri.substr(0, qpos);
-
-    kis_lock_guard<kis_mutex> lk(static_mutex, "beast_httpd serve_file");
+    kis_lock_guard<kis_shared_mutex> lk(static_mutex, kismet::shared_lock, "beast_httpd serve_file");
 
     for (auto sd : static_dir_vec) {
         ec = {};
@@ -1015,7 +1019,7 @@ bool kis_net_beast_httpd::serve_file(std::shared_ptr<kis_net_beast_httpd_connect
         if (ec == boost::beast::errc::no_such_file_or_directory) {
             continue;
         } else if (ec) {
-            _MSG_ERROR("(DEBUG) {} - {}", uri, ec.message());
+            // _MSG_ERROR("(DEBUG) {} - {}", uri, ec.message());
             continue;
         }
 
@@ -1160,6 +1164,37 @@ bool kis_net_beast_httpd_connection::start() {
         if (connection_decode == "close") {
             client_req_close = true;
         }
+    }
+
+    // Handle CORS before auth and route finding; always returns
+    if (request_.method() == boost::beast::http::verb::options && httpd->allow_cors()) {
+        response.result(boost::beast::http::status::ok);
+
+        std::string uri_rewrite = "";
+        append_common_headers(response, uri_rewrite);
+
+        response.set(boost::beast::http::field::content_length, "0");
+
+        boost::beast::http::response_serializer<boost::beast::http::buffer_body,
+            boost::beast::http::fields> sr{response};
+
+        boost::system::error_code error;
+        boost::beast::http::write_header(stream_, sr, error);
+
+        if (error) 
+            return do_close();
+
+        // Send the completion record for the chunked response
+        response.body().data = nullptr;
+        response.body().size = 0;
+        response.body().more = false;
+
+        boost::beast::http::write(stream_, sr, error);
+
+        if (error || client_req_close) 
+            return do_close();
+
+        return true;
     }
 
     // Extract the auth cookie
@@ -1368,31 +1403,7 @@ bool kis_net_beast_httpd_connection::start() {
 
     append_common_headers(response, uri_);
 
-    if (request_.method() == boost::beast::http::verb::options && httpd->allow_cors()) {
-        // Handle a CORS OPTION request
-        response.result(boost::beast::http::status::ok);
-
-        boost::beast::http::response_serializer<boost::beast::http::buffer_body,
-            boost::beast::http::fields> sr{response};
-
-        boost::system::error_code error;
-        boost::beast::http::write_header(stream_, sr, error);
-
-        if (error) 
-            return do_close();
-
-        // Send the completion record for the chunked response
-        response.body().data = nullptr;
-        response.body().size = 0;
-        response.body().more = false;
-
-        boost::beast::http::write(stream_, sr, error);
-
-        if (error || client_req_close) 
-            return do_close();
-
-        return true;
-    } else if (request_.method() == boost::beast::http::verb::post) {
+    if (request_.method() == boost::beast::http::verb::post) {
         // Handle POST data fields
         http_post = request_.body();
 
@@ -1472,7 +1483,7 @@ bool kis_net_beast_httpd_connection::start() {
                 boost::beast::http::write_header(stream_, sr, error);
 
                 if (error) {
-                    _MSG_ERROR("(DEBUG) {} {} - Error writing headers - {}", verb_, uri_, error.message());
+                    // _MSG_ERROR("(DEBUG) {} {} - Error writing headers - {}", verb_, uri_, error.message());
                     return do_close();
                 }
             }
@@ -1498,7 +1509,7 @@ bool kis_net_beast_httpd_connection::start() {
                 // as a non-error
                 error = {};
             } else if (error) {
-                _MSG_INFO("(DEBUG) {} {} - chunk write error {}", verb_, uri_, error.message());
+                // _MSG_INFO("(DEBUG) {} {} - chunk write error {}", verb_, uri_, error.message());
                 response_stream_.cancel();
                 return do_close();
             }
@@ -1520,7 +1531,7 @@ bool kis_net_beast_httpd_connection::start() {
     boost::beast::http::write(stream_, sr, error);
 
     if (error) {
-        _MSG_INFO("(DEBUG) {} {} - Error writing conclusion of stream: {}", verb_, uri_, error.message());
+        // _MSG_INFO("(DEBUG) {} {} - Error writing conclusion of stream: {}", verb_, uri_, error.message());
         return do_close();
     }
 
@@ -1624,8 +1635,7 @@ bool kis_net_beast_route::match_url(const std::string& url,
         return false;
 
     if (match_values.size() != match_keys.size() + 1) {
-        _MSG_ERROR("(DEBUG) HTTP req {} didn't match enough elements, {} wanted {}", url, match_values.size(),
-                match_keys.size());
+        // _MSG_ERROR("(DEBUG) HTTP req {} didn't match enough elements, {} wanted {}", url, match_values.size(), match_keys.size());
         return false;
     }
 
@@ -1638,7 +1648,7 @@ bool kis_net_beast_route::match_url(const std::string& url,
         }
 
         if (key_num >= match_keys.size()) {
-            _MSG_ERROR("(DEBUG) HTTP req {} matched more values than known keys in route, something is wrong key pos {}", url, key_num);
+            // _MSG_ERROR("(DEBUG) HTTP req {} matched more values than known keys in route, something is wrong key pos {}", url, key_num);
             continue;
         }
 
@@ -1837,13 +1847,13 @@ void kis_net_web_websocket_endpoint::handle_request(std::shared_ptr<kis_net_beas
         running = false;
         if (se.code() != boost::beast::websocket::error::closed &&
                 se.code() != boost::asio::stream_errc::eof) {
-            _MSG_ERROR("Websocket read error: {}", se.code().message());
+            // _MSG_ERROR("Websocket read error: {}", se.code().message());
         } else {
             return close();
         }
     } catch (const std::exception& e) {
         running = false;
-        _MSG_ERROR("Websocket read error: {}", e.what());
+        // _MSG_ERROR("Websocket read error: {}", e.what());
         return close();
     }
 }

@@ -291,14 +291,15 @@ void kis_datasource::open_interface(std::string in_definition, unsigned int in_t
     // If we got here we're valid; start a PING timer
     timetracker->remove_timer(ping_timer_id);
     ping_timer_id = timetracker->register_timer(std::chrono::seconds(5), true, [this](int) -> int {
-        kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource ping_timer lambda");
-        
+        // kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource ping_timer lambda");
+
         if (!get_source_running()) {
             ping_timer_id = -1;
             return 0;
         }
        
         send_ping();
+
         return 1;
     });
 
@@ -442,11 +443,8 @@ void kis_datasource::connect_remote(std::string in_definition, kis_datasource* i
     if (in_tcp)  {
         attach_tcp_socket(in_remote->tcpsocket);
     } else {
-        if (in_remote->write_cb != nullptr)
-            write_cb = std::move(in_remote->write_cb);
-
-        if (in_remote->closure_cb != nullptr)
-            closure_cb = std::move(in_remote->closure_cb);
+        write_cb = in_remote->move_write_cb();
+        closure_cb = in_remote->move_closure_cb();
     }
 
     in_buf.consume(in_buf.size());
@@ -517,6 +515,8 @@ void kis_datasource::resume_source() {
 }
 
 void kis_datasource::handle_error(const std::string& in_error) {
+    kis_lock_guard<kis_mutex> lk(ext_mutex, "datasource handle_error");
+
     if (!quiet_errors && in_error.length()) {
         _MSG_ERROR("Data source '{} / {}' ('{}') encountered an error: {}",
                 get_source_name(), get_source_definition(), get_source_interface(), in_error);
@@ -721,8 +721,6 @@ void kis_datasource::cancel_command(uint32_t in_transaction, std::string in_erro
             cmd->configure_cb = NULL;
             cb(cmd->transaction, false, in_error);
         }
-
-        cmd.reset();
     }
 }
 
@@ -846,7 +844,9 @@ void kis_datasource::handle_packet_probesource_report(uint32_t in_seqno,
 
 void kis_datasource::handle_packet_opensource_report(uint32_t in_seqno, 
         const std::string& in_content) {
-    kis_unique_lock<kis_mutex> lock(ext_mutex, std::defer_lock, "datasource handle_packet_opensource_report");
+
+    kis_unique_lock<kis_mutex> lock(ext_mutex, std::defer_lock, 
+            "datasource handle_packet_opensource_report");
     lock.lock();
 
     KismetDatasource::OpenSourceReport report;
@@ -865,6 +865,11 @@ void kis_datasource::handle_packet_opensource_report(uint32_t in_seqno,
     if (report.has_message()) {
         msg = report.message().msgtext();
     }
+
+    if (!report.success().success()) {
+        trigger_error(msg);
+        set_int_source_error_reason(msg);
+    } 
 
     if (report.has_channels()) {
         source_channels_vec->clear();
@@ -1048,12 +1053,6 @@ void kis_datasource::handle_packet_opensource_report(uint32_t in_seqno,
         }
     }
 
-    // If we were successful, reset our retry attempts
-    if (!report.success().success()) {
-        trigger_error(msg);
-        set_int_source_error_reason(msg);
-        return;
-    } 
 }
 
 void kis_datasource::handle_packet_interfaces_report(uint32_t in_seqno, 
@@ -1735,7 +1734,9 @@ void kis_datasource::handle_source_error() {
 
             std::shared_ptr<alert_tracker> alertracker =
                 Globalreg::fetch_mandatory_global_as<alert_tracker>("ALERTTRACKER");
-            alertracker->raise_one_shot("SOURCEERROR", ss.str(), -1);
+            alertracker->raise_one_shot("SOURCEERROR", 
+                    "SYSTEM", kis_alert_severity::critical,
+                    ss.str(), -1);
 
             _MSG(ss.str(), MSGFLAG_ERROR);
         }
@@ -1752,7 +1753,9 @@ void kis_datasource::handle_source_error() {
 
             std::shared_ptr<alert_tracker> alertracker =
                 Globalreg::fetch_mandatory_global_as<alert_tracker>("ALERTTRACKER");
-            alertracker->raise_one_shot("SOURCEERROR", ss.str(), -1);
+            alertracker->raise_one_shot("SOURCEERROR", 
+                    "SYSTEM", kis_alert_severity::critical,
+                    ss.str(), -1);
 
             _MSG(ss.str(), MSGFLAG_ERROR);
         }
@@ -1780,7 +1783,9 @@ void kis_datasource::handle_source_error() {
 
         std::shared_ptr<alert_tracker> alertracker =
             Globalreg::fetch_mandatory_global_as<alert_tracker>("ALERTTRACKER");
-        alertracker->raise_one_shot("SOURCEERROR", ss.str(), -1);
+        alertracker->raise_one_shot("SOURCEERROR", 
+                "SYSTEM", kis_alert_severity::critical,
+                ss.str(), -1);
 
         _MSG(ss.str(), MSGFLAG_ERROR);
 
@@ -1809,7 +1814,9 @@ void kis_datasource::handle_source_error() {
 
                             std::shared_ptr<alert_tracker> alertracker =
                                 Globalreg::fetch_mandatory_global_as<alert_tracker>("ALERTTRACKER");
-                            alertracker->raise_one_shot("SOURCEOPEN", ss.str(), -1);
+                            alertracker->raise_one_shot("SOURCEOPEN", 
+                                    "SYSTEM", kis_alert_severity::critical,
+                                    ss.str(), -1);
 
                             if (get_source_hopping()) {
                                 // Reset the channel hop if we're hopping

@@ -43,6 +43,8 @@
 Systemmonitor::Systemmonitor() :
     lifetime_global() {
 
+    monitor_mutex.set_name("systemmonitor");
+
     devicetracker = Globalreg::fetch_mandatory_global_as<device_tracker>();
     eventbus = Globalreg::fetch_mandatory_global_as<event_bus>();
     timetracker = Globalreg::fetch_mandatory_global_as<time_tracker>();
@@ -114,7 +116,7 @@ Systemmonitor::Systemmonitor() :
                 auto use = std::make_shared<tracker_element_map>();
                 use->insert(status->get_tracker_username());
                 return use;
-                });
+                }, monitor_mutex);
     httpd->register_unauth_route("/system/user_status", {"GET", "POST"}, {}, user_monitor_endp);
 
     timestamp_endp = 
@@ -132,7 +134,7 @@ Systemmonitor::Systemmonitor() :
                 status->set_timestamp_usec(now.tv_usec);
 
                 return tse;
-            });
+            }, monitor_mutex);
     httpd->register_route("/system/timestamp", {"GET", "POST"}, httpd->RO_ROLE, {}, timestamp_endp);
 
     if (Globalreg::globalreg->kismet_config->fetch_opt_bool("kis_log_system_status", true)) {
@@ -147,15 +149,14 @@ Systemmonitor::Systemmonitor() :
                         if (kismetdb == nullptr)
                             return 1;
 
+                        kis_lock_guard<kis_mutex> lk(monitor_mutex);
+
                         struct timeval tv;
                         gettimeofday(&tv, nullptr);
 
                         std::stringstream js;
 
-                        {
-                            kis_lock_guard<kis_mutex> lk(monitor_mutex);
-                            Globalreg::globalreg->entrytracker->serialize("json", js, status, NULL);
-                        }
+                        Globalreg::globalreg->entrytracker->serialize("json", js, status, NULL);
 
                         kismetdb->log_snapshot(nullptr, tv, "SYSTEM", js.str());
 
@@ -174,15 +175,14 @@ Systemmonitor::Systemmonitor() :
                 if (kismetdb == nullptr)
                     return;
 
+                kis_lock_guard<kis_mutex> lk(monitor_mutex);
+
                 struct timeval tv;
                 gettimeofday(&tv, nullptr);
 
                 std::stringstream js;
 
-                {
-                    kis_lock_guard<kis_mutex> lk(monitor_mutex);
-                    Globalreg::globalreg->entrytracker->serialize("json", js, status, NULL);
-                }
+                Globalreg::globalreg->entrytracker->serialize("json", js, status, NULL);
 
                 kismetdb->log_snapshot(nullptr, tv, "SYSTEM", js.str());
             });
@@ -190,6 +190,7 @@ Systemmonitor::Systemmonitor() :
     event_timer_id = 
         timetracker->register_timer(std::chrono::seconds(1), true, 
                 [this](int) -> int {
+                kis_lock_guard<kis_mutex> lg(monitor_mutex, "system monitor eventtimer");
 
                 status->pre_serialize();
 
@@ -284,7 +285,7 @@ void tracked_system_status::register_fields() {
 }
 
 int Systemmonitor::timetracker_event(int eventid) {
-    kis_lock_guard<kis_mutex> lk(monitor_mutex);
+    kis_lock_guard<kis_mutex> lg(monitor_mutex, "system monitor timer");
 
     int num_devices = devicetracker->fetch_num_devices();
 

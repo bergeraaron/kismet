@@ -51,7 +51,8 @@ void kis_datasource_ticc2531::handle_rx_packet(kis_packet *packet) {
     //uint8_t corr = fcs2 & 0x7f;
     uint8_t channel = cc_chunk->data[2];
 
-    if (crc_ok > 0) {
+    // check the CRC and check to see if the length, somehow matches the first byte of what should be the fcf
+    if (crc_ok > 0 && (cc_chunk->data[7] != cc_chunk->data[8])) {
 
         int rssi = (fcs1 + (int) pow(2, 7)) % (int) pow(2, 8) - (int) pow(2, 7) - 73;
 
@@ -63,28 +64,28 @@ void kis_datasource_ticc2531::handle_rx_packet(kis_packet *packet) {
         // Copy the actual packet payload into the header
         memcpy(conv_header->payload, &cc_chunk->data[8], cc_payload_len);
 
-        conv_header->version = 0;// currently only one version
-        conv_header->reserved = 0;// must be set to 0
+        conv_header->version = kis_htole16(0);// currently only one version
+        conv_header->reserved = kis_htole16(0);// must be set to 0
 
-        // fcs setting
-        conv_header->tlv[0].type = 0;
-        conv_header->tlv[0].length = 1;
-        conv_header->tlv[0].value = 0;
+         // fcs setting
+        conv_header->tlv[0].type = kis_htole16(0);
+        conv_header->tlv[0].length = kis_htole16(1);
+        conv_header->tlv[0].value = kis_htole32(0);
 
         // rssi
-        conv_header->tlv[1].type = 10;
-        conv_header->tlv[1].length = 1;
-        conv_header->tlv[1].value = rssi;
-        
+        conv_header->tlv[1].type = kis_htole16(10);
+        conv_header->tlv[1].length = kis_htole16(1);
+        conv_header->tlv[1].value = kis_htole32(rssi);
+
         // channel
-        conv_header->tlv[2].type = 3;
-        conv_header->tlv[2].length = 3;
-        conv_header->tlv[2].value = channel;//need to try to pull from some where, but it is not in the packet
-        
+        conv_header->tlv[2].type = kis_htole16(3);
+        conv_header->tlv[2].length = kis_htole16(3);
+        conv_header->tlv[2].value = kis_htole32(channel);
+
         // size
-        conv_header->length = sizeof(conv_header)+sizeof(conv_header->tlv)-4;
-        cc_chunk->set_data((uint8_t *)conv_header, conv_buf_len, false);
-        cc_chunk->dlt = KDLT_IEEE802_15_4_TAP; 	
+        conv_header->length = sizeof(_802_15_4_tap);
+        cc_chunk->set_data((uint8_t *) conv_header, conv_buf_len, false);
+        cc_chunk->dlt = KDLT_IEEE802_15_4_TAP;
 
         auto radioheader = new kis_layer1_packinfo();
         radioheader->signal_type = kis_l1_signal_type_dbm;
@@ -93,9 +94,7 @@ void kis_datasource_ticc2531::handle_rx_packet(kis_packet *packet) {
         radioheader->channel = fmt::format("{}", (channel));
         packet->insert(pack_comp_radiodata, radioheader);
 
-        // Pass the packet on
-        packetchain->process_packet(packet);
-
+        kis_datasource::handle_rx_packet(packet);
     } else {
         //printf("delete packet\n");
         delete (packet);

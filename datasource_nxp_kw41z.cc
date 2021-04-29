@@ -75,27 +75,26 @@ void kis_datasource_nxpkw41z::handle_rx_packet(kis_packet *packet) {
         // Copy the actual packet payload into the header
         memcpy(conv_header->payload, &nxp_chunk->data[11], nxp_payload_len);
 
-        conv_header->version = 0;   // currently only one version
-        conv_header->reserved = 0;  // must be set to 0
+        conv_header->version = kis_htole16(0);// currently only one version
+        conv_header->reserved = kis_htole16(0);// must be set to 0
 
-        // fcs setting
-        conv_header->tlv[0].type = 0;
-        conv_header->tlv[0].length = 1;
-        conv_header->tlv[0].value = 0;
+         // fcs setting
+        conv_header->tlv[0].type = kis_htole16(0);
+        conv_header->tlv[0].length = kis_htole16(1);
+        conv_header->tlv[0].value = kis_htole32(0);
 
         // rssi
-        conv_header->tlv[1].type = 10;
-        conv_header->tlv[1].length = 1;
-        conv_header->tlv[1].value = rssi;
+        conv_header->tlv[1].type = kis_htole16(10);
+        conv_header->tlv[1].length = kis_htole16(1);
+        conv_header->tlv[1].value = kis_htole32(rssi);
 
         // channel
-        conv_header->tlv[2].type = 3;
-        conv_header->tlv[2].length = 3;
-        conv_header->tlv[2].value = channel;  // need to try to pull from some where
+        conv_header->tlv[2].type = kis_htole16(3);
+        conv_header->tlv[2].length = kis_htole16(3);
+        conv_header->tlv[2].value = kis_htole32(channel);
 
         // size
-        conv_header->length =
-            sizeof(conv_header) + sizeof(conv_header->tlv) - 4;
+        conv_header->length = sizeof(_802_15_4_tap); 
         nxp_chunk->set_data((uint8_t *) conv_header, conv_buf_len, false);
         nxp_chunk->dlt = KDLT_IEEE802_15_4_TAP;
 
@@ -107,7 +106,7 @@ void kis_datasource_nxpkw41z::handle_rx_packet(kis_packet *packet) {
         packet->insert(pack_comp_radiodata, radioheader);
 
         // Pass the packet on
-        packetchain->process_packet(packet);
+        kis_datasource::handle_rx_packet(packet);
 
     } else if (nxp_chunk->data[0] == 0x02 && nxp_chunk->data[1] == 0x4E &&
                nxp_chunk->data[2] == 0x7F) {
@@ -177,8 +176,7 @@ void kis_datasource_nxpkw41z::handle_rx_packet(kis_packet *packet) {
         decapchunk->dlt = KDLT_BLUETOOTH_LE_LL;
         packet->insert(pack_comp_decap, decapchunk);
 
-        // Pass the packet on
-        packetchain->process_packet(packet);
+        kis_datasource::handle_rx_packet(packet);
     } else {
         delete (packet);
         return;

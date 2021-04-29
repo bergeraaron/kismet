@@ -54,14 +54,23 @@ typedef struct pcap_packet_hdr pcap_packet_hdr_t;
 /* Generic option block */
 struct pcapng_option {
     uint16_t option_code;
-    // Length of actual option data
+    /* Length of actual option data */
     uint16_t option_length;
-    // Must be padded to 32 bit
+    /* Must be padded to 32 bit */
     uint8_t option_data[0];
 } __attribute__((packed));
 typedef struct pcapng_option pcapng_option_t;
 #define PCAPNG_OPT_ENDOFOPT     0
 #define PCAPNG_OPT_COMMENT      1
+
+/* pcapng custom block */
+struct pcapng_custom_option {
+    uint16_t option_code;
+    uint16_t option_length;
+    uint32_t option_pen;
+    uint8_t option_data[0];
+} __attribute__((packed));
+typedef struct pcapng_custom_option pcapng_custom_option_t;
 
 /* Header block found at start of file */
 struct pcapng_shb {
@@ -82,6 +91,11 @@ typedef struct pcapng_shb pcapng_shb_t;
 #define PCAPNG_OPT_SHB_HW           2
 #define PCAPNG_OPT_SHB_OS           3
 #define PCAPNG_OPT_SHB_USERAPPL     4
+
+#define PCAPNG_OPT_CUSTOM_UTF8          2988
+#define PCAPNG_OPT_CUSTOM_BINARY        2989
+#define PCAPNG_OPT_CUSTOM_UTF8_NOCOPY   19372
+#define PCAPNG_OPT_CUSTOM_BINARY_NOCOPY 19373
 
 
 /* Interface definition */
@@ -113,15 +127,60 @@ struct pcapng_epb {
     uint32_t timestamp_high;
     uint32_t timestamp_low;
 
-    // Length of actual packet
+    /* Length of actual packet */
     uint32_t captured_length;
     uint32_t original_length;
 
-    // Data must be padded to 32bit
+    /* Data must be padded to 32bit */
     uint8_t data[0];
+
     /* Options go here and must be dynamically calculated */
 } __attribute__((packed));
 typedef struct pcapng_epb pcapng_epb_t;
 #define PCAPNG_EPB_BLOCK_TYPE       6
+
+/* Custom pcapng block */
+struct pcapng_custom_block {
+    uint32_t block_type;
+    uint32_t block_length;
+    uint32_t custom_pen;
+    
+    /* Data must be padded to 32bit */
+    uint8_t data[0];
+
+    /* Options must be dynamically calculated */
+
+} __attribute__((packed));
+typedef struct pcapng_custom_block pcapng_custom_block_t;
+#define PCAPNG_CB_BLOCK_TYPE        0xBAD
+
+/* Kismet IANA PEN */
+#define KISMET_IANA_PEN 55922
+
+/* Kismet GPS record, matches PPI GPS definition */
+struct kismet_pcapng_gps_chunk {
+    uint8_t gps_magic;
+    uint8_t gps_verison;
+    uint16_t gps_len;
+    uint32_t gps_fields_present;
+    uint8_t gps_data[0];
+} __attribute__((packed));
+typedef struct kismet_pcapng_gps_chunk kismet_pcapng_gps_chunk_t;
+
+#define PCAPNG_GPS_MAGIC            0x47
+
+#define PCAPNG_GPS_VERSION          0x1
+
+#define PCAPNG_GPS_FLAG_LON         0x2
+#define PCAPNG_GPS_FLAG_LAT	    	0x4
+#define PCAPNG_GPS_FLAG_ALT		    0x8
+#define PCAPNG_GPS_FLAG_ALT_G		0x10
+#define PCAPNG_GPS_FLAG_GPSTIME		0x20
+#define PCAPNG_GPS_FLAG_FRACTIME	0x40
+#define PCAPNG_GPS_FLAG_EPH         0x80
+#define PCAPNG_GPS_FLAG_EPV         0x100
+#define PCAPNG_GPS_FLAG_EPT         0x200
+#define PCAPNG_GPS_TS_HIGH          0x400
+#define PCAPNG_GPS_TS_LOW           0x800
 
 #endif

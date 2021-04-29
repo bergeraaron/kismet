@@ -28,7 +28,6 @@
 #include <thread>
 #include <unordered_map>
 
-
 #include "boost/asio.hpp"
 #include "boost/beast.hpp"
 #include "boost/optional.hpp"
@@ -168,7 +167,7 @@ protected:
     kis_mutex auth_mutex;
     std::vector<std::shared_ptr<kis_net_beast_auth>> auth_vec;
 
-    kis_mutex static_mutex;
+    kis_shared_mutex static_mutex;
     class static_content_dir {
     public:
         static_content_dir(const std::string& prefix, const std::string& path) :
@@ -360,7 +359,7 @@ public:
     // Returns a summarized vector (if passed a vector) or summarized device (if passed
     // a summarized device)
     template<typename T>
-    std::shared_ptr<tracker_element> summarize_with_json(const std::shared_ptr<T>& in_data,
+    std::shared_ptr<tracker_element> summarize_with_json(std::shared_ptr<T> in_data,
             std::shared_ptr<tracker_element_serializer::rename_map> rename_map) {
 
         auto summary_vec = std::vector<SharedElementSummary>{};
@@ -381,15 +380,6 @@ public:
         return summarize_tracker_element(in_data, summary_vec, rename_map);
     }
 };
-
-
-class kis_net_beat_httpd_websocket {
-public:
-
-protected:
-
-};
-
 
 
 class kis_net_web_endpoint {
@@ -451,7 +441,7 @@ public:
             wrapper_func_t post_func = nullptr) : 
         content{content},
         mutex{mutex}, 
-        use_mutex{false},
+        use_mutex{true},
         pre_func{pre_func},
         post_func{post_func} { }
 

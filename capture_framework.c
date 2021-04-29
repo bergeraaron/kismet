@@ -1171,7 +1171,7 @@ void *cf_int_capture_thread(void *arg) {
         fprintf(stderr, "ERROR - No capture handler defined for capture thread\n");
     }
 
-    cf_send_error(caph, 0, "capture thread ended, source is closed.");
+    // cf_send_error(caph, 0, "capture thread ended, source is closed.");
    
     cf_handler_spindown(caph);
 
@@ -1184,6 +1184,7 @@ int cf_handler_launch_capture_thread(kis_capture_handler_t *caph) {
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
 
     pthread_mutex_lock(&(caph->handler_lock));
     if (caph->capture_running) {
@@ -1432,6 +1433,7 @@ int cf_handler_launch_hopping_thread(kis_capture_handler_t *caph) {
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
 
     pthread_mutex_lock(&(caph->handler_lock));
     if (caph->hopping_running) {
@@ -2160,7 +2162,6 @@ void ws_connect_attempt(kis_capture_handler_t *caph) {
 
     if (!lws_client_connect_via_info(&caph->lwsci)) {
         fprintf(stderr, "FATAL - Datasource could not connect websocket\n");
-        caph->spindown = 1;
         return;
     }
 }
@@ -2184,10 +2185,12 @@ int ws_remotecap_broker(struct lws *wsi, enum lws_callback_reasons reason,
         case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
             pthread_mutex_lock(&caph->handler_lock);
             caph->lwsclientwsi = NULL;
-            fprintf(stderr, "FATAL - Datasource could not connect websocket client\n");
-            caph->spindown = 1;
+            caph->lwsestablished = 0;
+            caph->shutdown = 1;
             pthread_mutex_unlock(&caph->handler_lock);
-            return -1;
+
+            fprintf(stderr, "FATAL: Datasource could not connect websocket client\n");
+            lws_cancel_service(caph->lwscontext);
             break;
         case LWS_CALLBACK_CLIENT_ESTABLISHED:
             caph->lwsestablished = 1;
@@ -2204,7 +2207,7 @@ int ws_remotecap_broker(struct lws *wsi, enum lws_callback_reasons reason,
                     wmsg->len, LWS_WRITE_BINARY);
 
             if (m != (int) wmsg->len) {
-                fprintf(stderr, "FATAL - Datasource could not write data to websocket\n");
+                fprintf(stderr, "FATAL: Datasource could not write data to websocket\n");
                 caph->shutdown = 1;
                 lws_cancel_service(caph->lwscontext);
                 pthread_mutex_unlock(&caph->out_ringbuf_lock);
@@ -2231,7 +2234,7 @@ skip:
             pthread_mutex_unlock(&caph->out_ringbuf_lock);
             break;
         case LWS_CALLBACK_CLIENT_CLOSED:
-            fprintf(stderr, "FATAL - Datasource websocket closed\n");
+            fprintf(stderr, "FATAL: Datasource websocket closed\n");
             pthread_mutex_lock(&caph->handler_lock);
             caph->lwsclientwsi = NULL;
             caph->lwsestablished = 0;
@@ -2321,7 +2324,7 @@ int cf_handler_loop(kis_capture_handler_t *caph) {
             }
 
             if (caph->last_ping != 0 && time(NULL) - caph->last_ping > 15) {
-                fprintf(stderr, "FATAL - Capture source %u did not get PING from Kismet for "
+                fprintf(stderr, "FATAL: Capture source %u did not get PING from Kismet for "
                         "over 15 seconds; shutting down\n", getpid());
                 pthread_mutex_unlock(&(caph->handler_lock));
                 rv = -1;
@@ -3625,6 +3628,9 @@ void cf_handler_remote_capture(kis_capture_handler_t *caph) {
     }
 
     while (1) {
+        caph->spindown = 0;
+        caph->shutdown = 0;
+
         if (caph->remote_retry && (chpid = fork()) > 0) {
             while (1) {
                 pid_t wpid;
@@ -3670,6 +3676,7 @@ void cf_handler_remote_capture(kis_capture_handler_t *caph) {
                     fprintf(stderr, "FATAL:  Could not create websockets context\n");
                     exit(KIS_EXTERNAL_RETCODE_WEBSOCKET);
                 }
+
 #else
                 fprintf(stderr, "FATAL:  Not compiled with websocket support\n");
                 exit(KIS_EXTERNAL_RETCODE_WSCOMPILE);
@@ -3688,6 +3695,7 @@ void cf_handler_remote_capture(kis_capture_handler_t *caph) {
         fprintf(stderr, "INFO: Sleeping 5 seconds before attempting to reconnect to "
                 "remote server\n");
         sleep(5);
+
     }
 }
 
